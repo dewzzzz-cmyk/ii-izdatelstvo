@@ -1119,6 +1119,66 @@ const PROJECT_TPLS = {
   nonfic:{ label:'📚 Нон-фикшн', roles:['scout','dev','writer','factcheck','meta'], genre:'Нон-фикшн', brief:'Книга на основе экспертизы автора' },
   novel:{ label:'✍️ Роман', roles:['scout','dev','writer','logedit','line','proof','continuity','art','layout','meta','mkt'], genre:'Роман', brief:'Полный производственный цикл' }
 };
+function applyTemplate(key){
+  // Map template key to agent roles
+  const roleMap = {
+    'solo':  ['writer'],
+    'story': ['dev','writer','proof'],
+    'novel': ['scout','dev','writer','line','proof','continuity','meta','mkt'],
+  };
+  const roles = roleMap[key] || roleMap['story'];
+  const tpls = roles.map(r => TEMPLATES.find(t => t.role === r)).filter(Boolean);
+  if(!tpls.length) return;
+  state.nodes = tpls.map((tp,i) => freshNode(tp, 60+(i%3)*260, 40+Math.floor(i/3)*190));
+  state.edges = [];
+  for(let i=0; i<state.nodes.length-1; i++)
+    state.edges.push({id:uid(), from:state.nodes[i].id, to:state.nodes[i+1].id, condition:''});
+  save(); render();
+}
+
+let _simpTpl = 'story';
+function initSimplifiedMode(){
+  const row = document.querySelector('#simp-tpl-row');
+  if(!row) return;
+  row.innerHTML = '';
+  [{key:'solo',label:'⚡ Соло',desc:'1 агент, быстро'},
+   {key:'story',label:'📖 Рассказ',desc:'3 агента'},
+   {key:'novel',label:'✍️ Роман',desc:'полный цикл'}
+  ].forEach(t => {
+    const btn = document.createElement('button');
+    btn.className = 'simp-tpl-btn' + (t.key === _simpTpl ? ' selected' : '');
+    btn.textContent = t.label;
+    btn.title = t.desc;
+    btn.onclick = () => {
+      _simpTpl = t.key;
+      row.querySelectorAll('.simp-tpl-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    };
+    row.appendChild(btn);
+  });
+  const sti=document.querySelector('#simp-title'), sb=document.querySelector('#simp-brief');
+  const sg=document.querySelector('#simp-genre'), sa=document.querySelector('#simp-aud');
+  if(sti) sti.value = state.project.title || '';
+  if(sb)  sb.value  = state.project.brief || '';
+  if(sg)  sg.value  = state.project.genre || '';
+  if(sa)  sa.value  = state.project.audience || '';
+  const runBtn = document.querySelector('#simp-run');
+  if(runBtn) runBtn.onclick = () => {
+    const brief = document.querySelector('#simp-brief')?.value.trim();
+    if(!brief){ toast('Опишите книгу — хотя бы в двух словах','warn'); return; }
+    state.project.title    = document.querySelector('#simp-title')?.value.trim() || state.project.title;
+    state.project.brief    = brief;
+    state.project.genre    = document.querySelector('#simp-genre')?.value.trim() || '';
+    state.project.audience = document.querySelector('#simp-aud')?.value.trim()   || '';
+    save();
+    applyTemplate(_simpTpl);
+    switchView('canvas');
+    runPipeline();
+  };
+  const expertBtn = document.querySelector('#simp-to-expert');
+  if(expertBtn) expertBtn.onclick = () => switchView('canvas');
+}
+
 function openTemplates(){
   openDrawer('🗂 Шаблоны проекта',`
     <p class="hint" style="margin-top:0">Выберите стартовый пакет. Текущий холст будет заменён.</p>
@@ -1366,18 +1426,27 @@ function openBaselineCompare(){
   `);
 }
 
-/* ============ ПЕРЕКЛЮЧЕНИЕ ВИДА (Холст / Книга) ============ */
+/* ============ ПЕРЕКЛЮЧЕНИЕ ВИДА (Холст / Книга / Просто) ============ */
 function switchView(view){
   _currentView=view;
   const canvas=$('#canvas'), reader=$('#reader');
-  const tabC=$('#tab-canvas'), tabR=$('#tab-reader');
+  const simp=$('#simplified');
+  const tabC=$('#tab-canvas'), tabR=$('#tab-reader'), tabS=$('#tab-simple');
+  if(canvas) canvas.style.display='none';
+  if(reader) reader.style.display='none';
+  if(simp)   simp.style.display='none';
+  [tabC,tabR,tabS].forEach(t=>t?.classList.remove('active'));
   if(view==='reader'){
-    canvas.style.display='none'; reader.style.display='block';
-    tabC.classList.remove('active'); tabR.classList.add('active');
+    if(reader) reader.style.display='block';
+    tabR?.classList.add('active');
     renderReader();
+  } else if(view==='simple'){
+    if(simp) simp.style.display='';
+    tabS?.classList.add('active');
+    initSimplifiedMode();
   } else {
-    canvas.style.display=''; reader.style.display='none';
-    tabC.classList.add('active'); tabR.classList.remove('active');
+    if(canvas) canvas.style.display='';
+    tabC?.classList.add('active');
   }
 }
 
