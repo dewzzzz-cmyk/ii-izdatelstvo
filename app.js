@@ -275,6 +275,25 @@ const nodeCost=n=>{ const p=PRICES[cfg(n).model]||{in:0.14,out:0.28}; return (n.
 const projectCost=()=>state.nodes.reduce((s,n)=>s+nodeCost(n),0);
 const money=v=>'$'+v.toFixed(v<1?4:2);
 
+function showPromptPreview(n){
+  const msgs = buildMessages(n);
+  let html = '';
+  msgs.forEach(m => {
+    const roleLabel = m.role === 'system' ? '⚙ System' : m.role === 'user' ? '👤 User' : '🤖 Assistant';
+    html += `<div class="pp-msg">
+      <div class="pp-role">${roleLabel}</div>
+      <pre class="pp-content">${esc(m.content)}</pre>
+    </div>`;
+  });
+  const fullText = msgs.map(m => m.content).join(' ');
+  const toks = tokEst(fullText);
+  const c = cfg(n);
+  const priceIn = PRICES[c.model]?.in || 0.15;
+  const cost = (toks / 1e6 * priceIn).toFixed(4);
+  html += `<div class="pp-stats">~${toks} токенов · ~$${cost}</div>`;
+  openDrawer('Предпросмотр промпта: ' + esc(n.name), html);
+}
+
 /* ============ EPUB / ZIP ============ */
 // CRC-32 (IEEE 802.3) — нужен для правильного ZIP
 const CRC32_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c;}return t;})();
@@ -806,11 +825,7 @@ function openNode(id){
         });
     };
     b.querySelector('#f-run').onclick=()=>{ collect(); n.cacheHash=''; save(); render(); runNode(n.id); };
-    b.querySelector('#f-preview').onclick=()=>{ collect(); const msgs=buildMessages(n);
-      openDrawer('👁 Предпросмотр промта — '+esc(n.name),
-        `<div class="section-label">System</div><pre style="white-space:pre-wrap;font-size:11.5px;color:var(--dim);background:var(--panel2);padding:10px;border-radius:8px;overflow:auto;max-height:200px">${esc(msgs[0].content)}</pre>
-         <div class="section-label">User</div><pre style="white-space:pre-wrap;font-size:11.5px;color:var(--dim);background:var(--panel2);padding:10px;border-radius:8px;overflow:auto;max-height:300px">${esc(msgs[1].content)}</pre>
-         <div class="hint">Это именно то, что получит модель. ~${tokEst(msgs.map(m=>m.content).join(''))} токенов.</div>`); };
+    b.querySelector('#f-preview').onclick=()=>{ collect(); showPromptPreview(n); };
     b.querySelector('#f-del').onclick=()=>{ state.nodes=state.nodes.filter(x=>x.id!==n.id); state.edges=state.edges.filter(e=>e.from!==n.id&&e.to!==n.id); save(); render(); closeDrawer(); toast('Агент удалён'); };
     b.querySelector('#f-clone').onclick=()=>{ collect(); const copy=JSON.parse(JSON.stringify(n)); copy.id=uid(); copy.x=n.x+30; copy.y=n.y+30; copy.output=''; copy.summary=''; copy.cacheHash=''; copy.tokensIn=0; copy.tokensOut=0; copy.ms=0; copy.status='idle'; copy.error=''; copy.approved=false; copy.promptHistory=[]; state.nodes.push(copy); save(); render(); closeDrawer(); toast('Агент скопирован','ok'); };
     b.querySelectorAll('[data-revert]').forEach(btn=>btn.onclick=()=>{ const h=n.promptHistory[+btn.dataset.revert]; if(h){ b.querySelector('#f-prompt').value=h.prompt; toast('Версия подставлена — нажмите Сохранить'); } });
