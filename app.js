@@ -76,7 +76,7 @@ function checkSchema(n){
 function defaultState(){
   const nodes=TEMPLATES.filter(t=>!['continuity','factcheck'].includes(t.role)).map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:''});
-  return { project:{title:'',genre:'',audience:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ'},
+  return { project:{title:'',genre:'',audience:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
@@ -247,6 +247,9 @@ function parseBibleLines(text){ return (text||'').split('\n').map(l=>l.trim()).f
   .map(l=>{ const i=l.indexOf('|'); return { keys:l.slice(0,i).replace(/^[-•*\d.)\s]+/,'').trim(), text:l.slice(i+1).trim() }; }).filter(e=>e.text); }
 function buildMessages(n){
   const pr=state.project;
+  const styleBlock = pr.styleRef
+    ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${smartTrunc(pr.styleRef, 600)}\n"""`
+    : '';
   const preds=state.edges.filter(e=>e.to===n.id).map(e=>node(e.from)).filter(Boolean);
   const budget=state.global.maxContextChars||8000;
   const predsWithOutput=preds.filter(p=>p.output);
@@ -265,7 +268,7 @@ function buildMessages(n){
     user+=`\nТекущая глава: ${ch.num}. «${ch.title}»`+(ch.brief?`\nЗадача главы: ${ch.brief}`:'')+'\n';
     if(ch.prevSummary) user+=`\nСодержание предыдущих глав:\n${ch.prevSummary}\n`; }
   user+=`\nВыполни свою роль и выдай конкретный результат.`;
-  return [ {role:'system',content:n.prompt}, {role:'user',content:user} ];
+  return [ {role:'system',content:n.prompt + styleBlock}, {role:'user',content:user} ];
 }
 async function callLLM(c, messages){
   const r = await fetch('/api/generate', {
@@ -315,6 +318,25 @@ const tokEst=s=>{ s=s||''; const cyr=(s.match(/[а-яёА-ЯЁ]/g)||[]).length; 
 const nodeCost=n=>{ const p=PRICES[cfg(n).model]||{in:0.14,out:0.28}; return (n.tokensIn||0)/1e6*p.in+(n.tokensOut||0)/1e6*p.out; };
 const projectCost=()=>state.nodes.reduce((s,n)=>s+nodeCost(n),0);
 const money=v=>'$'+v.toFixed(v<1?4:2);
+
+function showPromptPreview(n){
+  const msgs = buildMessages(n);
+  let html = '';
+  msgs.forEach(m => {
+    const roleLabel = m.role === 'system' ? '⚙ System' : m.role === 'user' ? '👤 User' : '🤖 Assistant';
+    html += `<div class="pp-msg">
+      <div class="pp-role">${roleLabel}</div>
+      <pre class="pp-content">${esc(m.content)}</pre>
+    </div>`;
+  });
+  const fullText = msgs.map(m => m.content).join(' ');
+  const toks = tokEst(fullText);
+  const c = cfg(n);
+  const priceIn = PRICES[c.model]?.in || 0.15;
+  const cost = (toks / 1e6 * priceIn).toFixed(4);
+  html += `<div class="pp-stats">~${toks} токенов · ~$${cost}</div>`;
+  openDrawer('Предпросмотр промпта: ' + esc(n.name), html);
+}
 
 /* ============ EPUB / ZIP ============ */
 // CRC-32 (IEEE 802.3) — нужен для правильного ZIP
@@ -420,6 +442,11 @@ function render(){
   $('#canvas-hint').textContent='Тяни блок за шапку • соединяй кружки (выход→вход) • клик по связи — удалить';
   renderNodes(); renderEdges();
   if(_currentView==='reader') renderReader();
+  updateStyleRefBadge();
+}
+function updateStyleRefBadge(){
+  const badge = document.querySelector('#style-ref-badge');
+  if(badge) badge.style.display = state.project.styleRef ? '' : 'none';
 }
 function renderNodes(){
   const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
@@ -845,11 +872,7 @@ function openNode(id){
         });
     };
     b.querySelector('#f-run').onclick=()=>{ collect(); n.cacheHash=''; save(); render(); runNode(n.id); };
-    b.querySelector('#f-preview').onclick=()=>{ collect(); const msgs=buildMessages(n);
-      openDrawer('👁 Предпросмотр промта — '+esc(n.name),
-        `<div class="section-label">System</div><pre style="white-space:pre-wrap;font-size:11.5px;color:var(--dim);background:var(--panel2);padding:10px;border-radius:8px;overflow:auto;max-height:200px">${esc(msgs[0].content)}</pre>
-         <div class="section-label">User</div><pre style="white-space:pre-wrap;font-size:11.5px;color:var(--dim);background:var(--panel2);padding:10px;border-radius:8px;overflow:auto;max-height:300px">${esc(msgs[1].content)}</pre>
-         <div class="hint">Это именно то, что получит модель. ~${tokEst(msgs.map(m=>m.content).join(''))} токенов.</div>`); };
+    b.querySelector('#f-preview').onclick=()=>{ collect(); showPromptPreview(n); };
     b.querySelector('#f-del').onclick=()=>{ state.nodes=state.nodes.filter(x=>x.id!==n.id); state.edges=state.edges.filter(e=>e.from!==n.id&&e.to!==n.id); save(); render(); closeDrawer(); toast('Агент удалён'); };
     b.querySelector('#f-clone').onclick=()=>{ collect(); const copy=JSON.parse(JSON.stringify(n)); copy.id=uid(); copy.x=n.x+30; copy.y=n.y+30; copy.output=''; copy.summary=''; copy.cacheHash=''; copy.tokensIn=0; copy.tokensOut=0; copy.ms=0; copy.status='idle'; copy.error=''; copy.approved=false; copy.promptHistory=[]; state.nodes.push(copy); save(); render(); closeDrawer(); toast('Агент скопирован','ok'); };
     b.querySelectorAll('[data-revert]').forEach(btn=>btn.onclick=()=>{ const h=n.promptHistory[+btn.dataset.revert]; if(h){ b.querySelector('#f-prompt').value=h.prompt; toast('Версия подставлена — нажмите Сохранить'); } });
@@ -896,6 +919,20 @@ function openSettings(){
     </div>
     <button class="btn ghost" id="g-bkopen" style="margin-bottom:12px">📂 Открыть список копий</button>
     <div class="actions"><button class="btn ok" id="g-save">Сохранить</button></div>
+    <div class="set-section" style="margin-top:20px;border-top:1px solid var(--line2);padding-top:16px">
+      <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">✍️ Стиль автора</div>
+      <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Вставьте 300–500 слов своего текста — агенты будут писать в этом стиле</p>
+      <textarea id="set-style-ref" rows="6" placeholder="Вставьте фрагмент своего текста…"
+        style="width:100%;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px;color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"
+      >${esc(state.project.styleRef||'')}</textarea>
+      <div style="font-size:12px;color:var(--txt2);margin-top:4px">
+        ${state.project.styleRef ? '✅ Стиль-ориентир задан (' + state.project.styleRef.split(/\s+/).length + ' слов)' : ''}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button class="btn ghost sm" id="set-style-save">💾 Сохранить стиль</button>
+        <button class="btn ghost sm" id="set-style-clear">🗑 Очистить</button>
+      </div>
+    </div>
   `,b=>{
     b.querySelector('#g-preset').onchange=ev=>{ if(!ev.target.value) return; const [u,m]=ev.target.value.split('|'); b.querySelector('#g-base').value=u; b.querySelector('#g-model').value=m; };
     b.querySelector('#g-bkopen').onclick=()=>{ closeDrawer(); setTimeout(openBackupRestore,120); };
@@ -913,7 +950,15 @@ function openSettings(){
       g.backupIntervalMin=parseInt(b.querySelector('#g-bkint').value)||10;
       g.autoBackup=b.querySelector('#g-bkauto').checked;
       scheduleBackup();
-      save(); render(); toast('Настройки сохранены','ok'); }; });
+      save(); render(); toast('Настройки сохранены','ok'); };
+    b.querySelector('#set-style-save')?.addEventListener('click', () => {
+      state.project.styleRef = b.querySelector('#set-style-ref')?.value.trim() || '';
+      save(); toast('Стиль-ориентир сохранён', 'ok'); updateStyleRefBadge(); });
+    b.querySelector('#set-style-clear')?.addEventListener('click', () => {
+      state.project.styleRef = '';
+      const ta = b.querySelector('#set-style-ref');
+      if(ta) ta.value = '';
+      save(); toast('Стиль-ориентир очищен'); updateStyleRefBadge(); }); });
 }
 function openBible(){
   const rows=state.bible.map(b=>`<div class="bible-row" data-bid="${b.id}">
