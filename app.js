@@ -456,7 +456,7 @@ function logRow(node,status,msg,extra={}){ state.log.unshift({t:Date.now(),node,
 
 /* ============ РЕНДЕР ============ */
 const _VIEWS=['canvas','reader','simple'];
-let _currentView=(()=>{ const h=location.hash.slice(1); return _VIEWS.includes(h)?h:(localStorage.getItem('izd_view')||'canvas'); })();
+let _currentView=(()=>{ const h=location.hash.slice(1); return _VIEWS.includes(h)?h:'canvas'; })();
 const nodesEl=$('#nodes'), edgesEl=$('#edges');
 /* CTB state + SPEC_NODES — declared here so renderNodes() can reference them */
 let _activeTool='select', _snapGrid=false, _showMinimap=false, _zoomLevel=100;
@@ -1967,10 +1967,9 @@ function switchView(view){
   if(view==='simple') initSimplifiedMode();
   // CTB-тулбар холста
   $('#ctb')?.classList.toggle('ctb-visible', view==='canvas');
-  // Сохранение: hash + localStorage
+  // Сохранение в URL-хэше (кнопка «Назад» работает, ссылка сохраняет вид)
   if(view==='canvas') history.replaceState(null,'',location.pathname+location.search);
-  else location.hash=view;
-  localStorage.setItem('izd_view',view);
+  else history.replaceState(null,'',location.pathname+location.search+'#'+view);
 }
 
 function renderReader(){
@@ -2448,13 +2447,8 @@ function initCtb(){
 }
 
 initCtb();
-// Восстановить вид из hash/localStorage и правильно выставить data-view + CTB
+localStorage.removeItem('izd_view'); // очищаем устаревший ключ
 switchView(_currentView);
-// Кнопка «Назад» в браузере переключает вид
-window.addEventListener('hashchange',()=>{
-  const h=location.hash.slice(1);
-  switchView(_VIEWS.includes(h)?h:'canvas');
-});
 
 // Canvas context menu (right-click on empty canvas)
 (function(){
