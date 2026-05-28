@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ИИ-Издательство · Конвейер</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-dot"></span> ИИ-Издательство</div>
+  <input id="proj-title" class="title-input" placeholder="Название книги…">
+  <button class="btn primary" data-action="run" id="run-btn" title="Запустить конвейер (все агенты по порядку)">▶ Запустить</button>
+  <button class="btn danger" data-action="stop" id="stop-btn" style="display:none" title="Остановить конвейер">■ Стоп</button>
+  <div class="spacer"></div>
+  <span class="hint-pill" id="cost-state" title="Суммарная стоимость токенов">Σ $0.00</span>
+  <span class="hint-pill" id="api-state" title="Статус API-ключа">● ключ не задан</span>
+  <button class="btn ghost" data-action="settings" title="Глобальные настройки: API-ключ, модель, лимиты">⚙ Настройки</button>
+  <button class="btn ghost" data-action="export"   title="Экспорт книги (.md/.docx/.epub) и импорт/экспорт схемы">⬇ Экспорт</button>
+  <div class="topbar-sep"></div>
+  <button class="btn ghost" data-action="templates" title="Готовые пакеты агентов: Соло, Рассказ, Роман…">🗂 Шаблоны</button>
+  <button class="btn ghost" data-action="bible"     title="Библия книги: персонажи, мир, таймлайн — канон для всех агентов">📖 Библия</button>
+  <button class="btn ghost" data-action="guide"     title="Быстрый гайд по работе с редактором">? Гайд</button>
+  <div class="more-wrap" id="more-wrap">
+    <button class="btn ghost" id="more-btn" title="Дополнительные инструменты">⋯ Ещё</button>
+    <div class="more-dropdown" id="more-dropdown">
+      <button class="btn ghost" data-action="add-node"    title="Добавить нового агента на холст">＋ Агент</button>
+      <button class="btn ghost" data-action="auto-layout" title="Выстроить агентов в цепочку">⤢ Схема</button>
+      <button class="btn ghost" data-action="log"         title="Журнал вызовов: агент / статус / токены / время">📋 Журнал</button>
+      <button class="btn ghost" data-action="chapters"    title="Режим «глава-за-главой»">📚 Главы</button>
+      <button class="btn ghost" data-action="entities"    title="Трекер сущностей">🗃 Сущности</button>
+      <button class="btn ghost" data-action="group"       title="Создать группу узлов">⊞ Группа</button>
+      <button class="btn ghost" data-action="selfeval"    title="Авто-оценка результатов">⭐ Оценить</button>
+    </div>
+  </div>
+</header>
+
+<div class="projbar">
+  <input id="proj-genre" placeholder="Жанр — напр. «Детектив» или «Фэнтези»">
+  <input id="proj-aud" placeholder="Для кого — напр. «взрослые 25–45»">
+  <input id="proj-brief" class="grow" placeholder="О чём книга — кто герой, в чём конфликт, чем заканчивается">
+  <select id="proj-mode">
+    <option value="write">✒️ писать с нуля</option>
+    <option value="edit">📖 редактировать исходник</option>
+  </select>
+  <button class="btn ghost sm" data-action="edit-input" id="input-btn" title="Вставить исходный текст для редактирования">📄 Исходник</button>
+</div>
+
+<div class="viewbar" id="viewbar">
+  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas">🗺 Холст</button>
+  <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader">📖 Книга</button>
+</div>
+<div class="canvas" id="canvas">
+  <svg class="edges" id="edges"></svg>
+  <div class="nodes" id="nodes"></div>
+  <div class="canvas-hint" id="canvas-hint"></div>
+</div>
+
+<div class="reader" id="reader"><div class="reader-inner" id="reader-inner"></div></div>
+<div class="completion-banner" id="completion-banner" style="display:none">
+  <div class="cb-text">✅ <span id="cb-stats">Книга готова!</span></div>
+  <div class="cb-btns">
+    <button class="btn ok sm" id="cb-read">📖 Читать</button>
+    <button class="btn ghost sm" id="cb-docx">📄 Word</button>
+    <button class="btn ghost sm" id="cb-epub">📗 EPUB</button>
+    <button class="icon-btn" id="cb-dismiss" title="Закрыть">✕</button>
+  </div>
+</div>
+<div class="drawer-scrim" id="scrim"></div>
+<section class="drawer" id="drawer" aria-hidden="true">
+  <header class="drawer-head"><div class="drawer-title" id="drawer-title">—</div>
+    <button class="icon-btn" id="drawer-close">✕</button></header>
+  <div class="drawer-body" id="drawer-body"></div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<!-- ═══ CANVAS TOOLBAR ═══ -->
+<div class="ctb" id="ctb">
+  <button class="ctb-btn active" data-tool="select">↖<div class="ctb-tip"><div class="ctb-ti"><b>Выбор</b><p>Перетаскивать узлы</p><kbd>V</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="pan">✋<div class="ctb-tip"><div class="ctb-ti"><b>Навигация</b><p>Прокручивать доску</p><kbd>H</kbd></div></div></button>
+  <div class="ctb-sep"></div>
+  <button class="ctb-btn ctb-add-btn" data-tool="add">⊕<div class="ctb-tip"><div class="ctb-ti"><b>Агенты</b><p>Открыть палитру агентов</p><kbd>A</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-branch"><span style="color:#60a5fa">⎇</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#60a5fa">Ветвь</b><p>Параллельные потоки</p><kbd>B</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-condition"><span style="color:#fbbf24">◇</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#fbbf24">Условие</b><p>if / else развилка</p><kbd>C</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-loop"><span style="color:#f87171">↻</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#f87171">Повтор</b><p>Цикл до N итераций</p><kbd>L</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-gate"><span style="color:#34d399">⏸</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#34d399">Ожидание</b><p>Пауза для одобрения</p><kbd>G</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-note"><span style="color:#8d92a8">✏</span><div class="ctb-tip"><div class="ctb-ti"><b>Заметка</b><p>Аннотация, не выполняется</p><kbd>N</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-merge"><span style="color:#19d3c5">⬡</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#19d3c5">Слияние</b><p>Объединить параллельные потоки</p><kbd>M</kbd></div></div></button>
+  <div class="ctb-sep"></div>
+  <button class="ctb-btn" data-tool="layout-chain">⤢<div class="ctb-tip"><div class="ctb-ti"><b>Цепочка</b><p>Выстроить узлы в линию</p></div></div></button>
+  <button class="ctb-btn" data-tool="layout-tree">⊤<div class="ctb-tip"><div class="ctb-ti"><b>Дерево</b><p>Иерархия по уровням</p></div></div></button>
+  <button class="ctb-btn" data-tool="fit-screen">⊙<div class="ctb-tip"><div class="ctb-ti"><b>Вместить</b><p>Все узлы на экран</p><kbd>F</kbd></div></div></button>
+  <button class="ctb-btn" id="ctb-snap" data-tool="snap">⊞<div class="ctb-tip"><div class="ctb-ti"><b>Сетка</b><p>Привязка к точкам 26px</p></div></div></button>
+  <div class="ctb-sep"></div>
+  <button class="ctb-btn" data-tool="zoom-in">＋<div class="ctb-tip"><div class="ctb-ti"><b>Увеличить</b><p>Масштаб +20%</p><kbd>+</kbd></div></div></button>
+  <button class="ctb-btn ctb-zlbl" id="ctb-zoom-lbl" data-tool="zoom-reset">100%<div class="ctb-tip"><div class="ctb-ti"><b>Масштаб</b><p>Сбросить до 100%</p></div></div></button>
+  <button class="ctb-btn" data-tool="zoom-out">－<div class="ctb-tip"><div class="ctb-ti"><b>Уменьшить</b><p>Масштаб −20%</p><kbd>−</kbd></div></div></button>
+  <button class="ctb-btn" id="ctb-minimap-btn" data-tool="minimap">▤<div class="ctb-tip"><div class="ctb-ti"><b>Миникарта</b><p>Обзор всей доски</p></div></div></button>
+</div>
+
+<!-- Agent Palette -->
+<div class="ctb-palette" id="ctb-palette"></div>
+
+<!-- Minimap -->
+<div class="minimap-wrap" id="minimap-wrap" style="display:none">
+  <canvas id="minimap-canvas" width="150" height="96"></canvas>
+  <div class="minimap-lbl">обзор доски</div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
