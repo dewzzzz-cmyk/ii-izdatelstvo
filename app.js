@@ -455,7 +455,8 @@ function md2html(text){
 function logRow(node,status,msg,extra={}){ state.log.unshift({t:Date.now(),node,status,msg,...extra}); if(state.log.length>200) state.log.pop(); }
 
 /* ============ РЕНДЕР ============ */
-let _currentView='canvas';
+const _VIEWS=['canvas','reader','simple'];
+let _currentView=(()=>{ const h=location.hash.slice(1); return _VIEWS.includes(h)?h:(localStorage.getItem('izd_view')||'canvas'); })();
 const nodesEl=$('#nodes'), edgesEl=$('#edges');
 /* CTB state + SPEC_NODES — declared here so renderNodes() can reference them */
 let _activeTool='select', _snapGrid=false, _showMinimap=false, _zoomLevel=100;
@@ -1947,26 +1948,24 @@ function openBaselineCompare(){
 
 /* ============ ПЕРЕКЛЮЧЕНИЕ ВИДА (Холст / Книга / Просто) ============ */
 function switchView(view){
+  if(!_VIEWS.includes(view)) view='canvas';
   _currentView=view;
-  const canvas=$('#canvas'), reader=$('#reader');
-  const simp=$('#simplified');
-  const tabC=$('#tab-canvas'), tabR=$('#tab-reader'), tabS=$('#tab-simple');
-  if(canvas) canvas.style.display='none';
-  if(reader) reader.style.display='none';
-  if(simp)   simp.style.display='none';
-  [tabC,tabR,tabS].forEach(t=>t?.classList.remove('active'));
-  if(view==='reader'){
-    if(reader) reader.style.display='block';
-    tabR?.classList.add('active');
-    renderReader();
-  } else if(view==='simple'){
-    if(simp) simp.style.display='';
-    tabS?.classList.add('active');
-    initSimplifiedMode();
-  } else {
-    if(canvas) canvas.style.display='';
-    tabC?.classList.add('active');
-  }
+  // CSS-переключение через data-view на body — один источник правды
+  document.body.dataset.view=view;
+  // Табы
+  [$('#tab-canvas'),$('#tab-reader'),$('#tab-simple')].forEach(t=>t?.classList.remove('active'));
+  if(view==='reader') $('#tab-reader')?.classList.add('active');
+  else if(view==='simple') $('#tab-simple')?.classList.add('active');
+  else $('#tab-canvas')?.classList.add('active');
+  // Сайд-эффекты экранов
+  if(view==='reader') renderReader();
+  if(view==='simple') initSimplifiedMode();
+  // CTB-тулбар холста
+  $('#ctb')?.classList.toggle('ctb-visible', view==='canvas');
+  // Сохранение: hash + localStorage
+  if(view==='canvas') history.replaceState(null,'',location.pathname+location.search);
+  else location.hash=view;
+  localStorage.setItem('izd_view',view);
 }
 
 function renderReader(){
@@ -2443,17 +2442,14 @@ function initCtb(){
   ctbSync();
 }
 
-// Show/hide toolbar based on view
-const _origSwitchView=switchView;
-switchView=function(view){
-  _origSwitchView(view);
-  const ctb=$('#ctb');
-  if(ctb) ctb.classList.toggle('ctb-visible', view==='canvas');
-};
-
 initCtb();
-// Show toolbar on canvas view on first load
-if(_currentView==='canvas') $('#ctb')?.classList.add('ctb-visible');
+// Восстановить вид из hash/localStorage и правильно выставить data-view + CTB
+switchView(_currentView);
+// Кнопка «Назад» в браузере переключает вид
+window.addEventListener('hashchange',()=>{
+  const h=location.hash.slice(1);
+  switchView(_VIEWS.includes(h)?h:'canvas');
+});
 
 // Canvas context menu (right-click on empty canvas)
 (function(){
