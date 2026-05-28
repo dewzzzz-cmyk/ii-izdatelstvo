@@ -44,6 +44,7 @@
 <div class="viewbar" id="viewbar">
   <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas">🗺 Холст</button>
   <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader">📖 Книга</button>
+  <button class="view-tab" id="tab-simple" data-action="switch-view" data-view="simple">✨ Просто</button>
 </div>
 <div class="canvas" id="canvas">
   <svg class="edges" id="edges"></svg>
@@ -52,6 +53,36 @@
 </div>
 
 <div class="reader" id="reader"><div class="reader-inner" id="reader-inner"></div></div>
+<div class="simplified" id="simplified" style="display:none">
+  <div class="simplified-inner">
+    <h2 class="simp-title">Расскажите о вашей книге</h2>
+    <div class="simp-field">
+      <label>📖 Название книги</label>
+      <input id="simp-title" placeholder="Например: «Тени над городом»" />
+    </div>
+    <div class="simp-field">
+      <label>🎭 О чём книга <span class="required">*</span></label>
+      <textarea id="simp-brief" rows="4"
+        placeholder="Главный герой — детектив в ретро-Питере. Расследует исчезновение художника. Конфликт — между долгом и совестью. Финал — неожиданный поворот с заказчиком."></textarea>
+    </div>
+    <div class="simp-row">
+      <div class="simp-field">
+        <label>📚 Жанр</label>
+        <input id="simp-genre" placeholder="Детектив, фэнтези…" />
+      </div>
+      <div class="simp-field">
+        <label>👥 Аудитория</label>
+        <input id="simp-aud" placeholder="Взрослые 25-45" />
+      </div>
+    </div>
+    <div class="simp-field">
+      <label>🎨 Шаблон</label>
+      <div class="simp-tpl-row" id="simp-tpl-row"><!-- заполняется JS --></div>
+    </div>
+    <button class="btn primary lg" id="simp-run">▶ Написать книгу</button>
+    <button class="btn ghost sm simp-expert" id="simp-to-expert">⚙ Перейти в режим эксперта →</button>
+  </div>
+</div>
 <div class="completion-banner" id="completion-banner" style="display:none">
   <div class="cb-text">✅ <span id="cb-stats">Книга готова!</span></div>
   <div class="cb-btns">

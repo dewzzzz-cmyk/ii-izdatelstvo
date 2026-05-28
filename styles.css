@@ -589,3 +589,56 @@ button{font-family:inherit}
 }
 .proj-toggle input { accent-color: var(--accent); cursor: pointer; }
 
+/* ─── Simplified Mode ─── */
+.simplified {
+  position: absolute;
+  inset: 150px 0 0 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.simplified-inner {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.simp-title { font-size: 22px; font-weight: 700; color: var(--txt); margin-bottom: 4px; }
+.simp-field { display: flex; flex-direction: column; gap: 6px; }
+.simp-field label { font-size: 13px; color: var(--txt2); font-weight: 500; }
+.simp-field input, .simp-field textarea {
+  background: var(--panel);
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: var(--txt);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+.simp-field input:focus, .simp-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.simp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.simp-tpl-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.simp-tpl-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--txt2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.simp-tpl-btn.selected, .simp-tpl-btn:hover {
+  border-color: var(--accent);
+  color: var(--txt);
+  background: var(--panel3);
+}
+.btn.lg { padding: 14px 28px; font-size: 16px; border-radius: 12px; width: 100%; }
+.simp-expert { margin-top: -8px; align-self: center; font-size: 12px; opacity: .6; }
+.required { color: var(--danger); }
+
