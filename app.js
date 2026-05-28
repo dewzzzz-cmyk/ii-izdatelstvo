@@ -1256,7 +1256,9 @@ function openExport(){
     <div class="field"><label>Раскрытие ИИ (для площадок)</label><input id="x-disc" value="${esc(state.project.disclosure)}"></div>
     <div class="actions"><button class="btn ok" id="x-book">📕 Скачать книгу (.md)</button>
       <button class="btn ok" id="x-docx">📄 Скачать Word (.doc)</button>
-      <button class="btn ok" id="x-epub">📗 Скачать EPUB</button></div>
+      <button class="btn ok" id="x-epub">📗 Скачать EPUB</button>
+      <button class="btn ok" id="x-pdf">🖨 PDF</button>
+      <button class="btn ok" id="x-fb2">📱 FB2</button></div>
     <div class="section-label">Схема пайплайна</div>
     <div class="actions"><button class="btn ghost" id="x-exp">⬇ Экспорт проекта (.json)</button>
       <button class="btn ghost" id="x-pipe">⬇ Только пайплайн (без данных)</button>
@@ -1276,6 +1278,8 @@ function openExport(){
     b.querySelector('#x-book').onclick=exportBook;
     b.querySelector('#x-docx').onclick=exportDocx;
     b.querySelector('#x-epub').onclick=exportEpub;
+    b.querySelector('#x-pdf').onclick=exportPDF;
+    b.querySelector('#x-fb2').onclick=exportFb2;
     b.querySelector('#x-exp').onclick=()=>download((state.project.title||'pipeline')+'.json', JSON.stringify(state,(k,v)=>k==='_vec'?undefined:v,2));
     b.querySelector('#x-pipe').onclick=()=>{
       const clean={nodes:state.nodes.map(n=>({...n,output:'',summary:'',error:'',cacheHash:'',tokensIn:0,tokensOut:0,ms:0,apiKey:'',approved:false,status:'idle'})),edges:state.edges,bible:state.bible,groups:state.groups||[],global:{...state.global,apiKey:'',proxyToken:''}};
@@ -1287,6 +1291,65 @@ function openExport(){
     b.querySelector('#x-bl-save').onclick=()=>{ saveBaseline(); openExport(); };
     if(state.baseline) b.querySelector('#x-bl-cmp').onclick=openBaselineCompare;
   });
+}
+function exportPDF(){
+  if(!state.project.disclosure.trim()){toast('Заполните поле «Раскрытие ИИ»','err');return;}
+  const pr=state.project;
+  const chapters=state.nodes.filter(n=>n.output);
+  if(!chapters.length){toast('Нет результатов для PDF — запустите конвейер','err');return;}
+  const body=chapters.map(n=>`<h2>${esc(n.emoji+' '+n.name)}</h2>${md2html(typo(n.output))}`).join('<hr style="margin:20pt 0">');
+  const win=window.open('','_blank');
+  if(!win){toast('Заблокирован всплывающий окно — разрешите для этой страницы','err');return;}
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(typo(pr.title||'Книга'))}</title>
+<style>
+body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.8;margin:2cm 2.5cm;color:#000;background:#fff}
+h1{font-size:20pt;text-align:center;margin-bottom:6pt;page-break-after:avoid}
+h2{font-size:14pt;margin-top:28pt;margin-bottom:6pt;page-break-after:avoid}
+p{margin:0 0 8pt;text-indent:1.5em}
+ul,ol{margin:0 0 8pt 2em}li{margin:2pt 0}
+hr{border:none;border-top:1px solid #bbb;margin:20pt 0}
+.meta{text-align:center;color:#555;font-size:10pt;margin-bottom:24pt}
+@media print{
+  @page{margin:2cm 2.5cm;size:A4}
+  body{margin:0}
+  h2{page-break-after:avoid}
+  h2+*{page-break-before:avoid}
+}
+</style></head><body>
+<h1>${esc(typo(pr.title||'Без названия'))}</h1>
+<div class="meta">
+  <div>Жанр: ${esc(pr.genre||'—')} · Аудитория: ${esc(pr.audience||'—')}</div>
+  <div style="margin-top:4pt;font-style:italic">Раскрытие: ${esc(pr.disclosure)}</div>
+</div>
+<hr>
+${body}
+<script>window.onload=function(){window.print();};<\/script>
+</body></html>`);
+  win.document.close();
+  toast('Открыта страница печати / сохранения в PDF','ok');
+}
+function exportFb2(){
+  if(!state.project.disclosure.trim()){toast('Заполните поле «Раскрытие ИИ»','err');return;}
+  const pr=state.project;
+  const chapters=state.nodes.filter(n=>n.output);
+  if(!chapters.length){toast('Нет результатов для FB2 — запустите конвейер','err');return;}
+  const X=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const md2fb2=s=>{
+    s=typo(s||'');
+    return s.split(/\n\n+/).map(p=>{
+      p=p.trim(); if(!p) return '';
+      if(/^#{1,2}\s/.test(p)) return `<subtitle><p>${X(p.replace(/^#{1,3}\s*/,''))}</p></subtitle>`;
+      if(/^### /.test(p)) return `<subtitle><p>${X(p.replace(/^### /,''))}</p></subtitle>`;
+      p=p.replace(/\*\*([^*]+)\*\*/g,(m,t)=>`<strong>${X(t)}</strong>`)
+         .replace(/\*([^*]+)\*/g,(m,t)=>`<emphasis>${X(t)}</emphasis>`);
+      return `<p>${p.replace(/\n/g,' ')}</p>`;
+    }).filter(Boolean).join('\n    ');
+  };
+  const sects=chapters.map(n=>`  <section>\n    <title><p>${X((n.emoji||'')+' '+(n.name||''))}</p></title>\n    ${md2fb2(n.output)}\n  </section>`).join('\n');
+  const date=new Date().toISOString().slice(0,10);
+  const xml=`<?xml version="1.0" encoding="UTF-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n      <genre>${X(pr.genre||'prose_contemporary')}</genre>\n      <author><first-name>${X(pr.title?pr.title.split(' ')[0]:'')} </first-name><last-name></last-name></author>\n      <book-title>${X(typo(pr.title||'Без названия'))}</book-title>\n      <annotation><p>${X(pr.brief||'')}</p></annotation>\n      <lang>ru</lang>\n    </title-info>\n    <document-info>\n      <author><nickname>ии-издательство</nickname></author>\n      <program-used>ИИ-Издательство</program-used>\n      <date value="${date}">${date}</date>\n      <id>${uid()}</id>\n      <version>1.0</version>\n    </document-info>\n  </description>\n  <body>\n${sects}\n  </body>\n</FictionBook>`;
+  download((pr.title||'book').replace(/[\\/:*?"<>|]/g,'-')+'.fb2', xml, 'application/xml');
+  toast('FB2 готов','ok');
 }
 function download(name,text,mime='text/plain'){ const u=URL.createObjectURL(new Blob([text],{type:mime})); const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
 // Типографический постпроцессинг: ASCII-символы → типографические
