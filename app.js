@@ -77,7 +77,7 @@ function checkSchema(n){
 }
 function defaultState(){
   const nodes=TEMPLATES.filter(t=>!['continuity','factcheck'].includes(t.role)).map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
-  const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:''});
+  const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { project:{title:'',genre:'',audience:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
@@ -526,10 +526,15 @@ function edgePath(a,b){ const dx=Math.max(40,Math.abs(b.x-a.x)*0.5); return `M $
 function renderEdges(){
   const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
   edgesEl.innerHTML=renderGroups()+state.edges.filter(e=>!collapsedIds.has(e.from)&&!collapsedIds.has(e.to)).map(e=>{ if(!node(e.from)||!node(e.to)) return '';
-    const d=edgePath(portPos(e.from,'out'),portPos(e.to,'in'));
+    const p1=portPos(e.from,'out'), p2=portPos(e.to,'in');
+    const d=edgePath(p1,p2);
     const flow=node(e.from).status==='running'||node(e.to).status==='running';
     const cond=e.condition&&e.condition.trim()?'conditional':'';
-    return `<path class="edge ${flow?'flow':''} ${cond}" d="${d}"></path><path class="edge hit" d="${d}" data-edge="${e.id}" title="${cond?'Условие: '+esc(e.condition):''}"></path>`; }).join('');
+    const isCyclic=(e.maxRetries||0)>0;
+    const cyclicStyle=isCyclic?` style="stroke:#f59e0b;stroke-dasharray:8 4 2 4"`:'';
+    const midX=(p1.x+p2.x)/2, midY=(p1.y+p2.y)/2;
+    const badge=isCyclic?`<text x="${midX}" y="${midY-6}" text-anchor="middle" fill="#f59e0b" font-size="10" font-family="monospace" style="pointer-events:none">↩${e._retryCount||0}/${e.maxRetries}</text>`:'';
+    return `<path class="edge ${flow?'flow':''} ${isCyclic?'cyclic':cond}" d="${d}"${cyclicStyle}></path><path class="edge hit" d="${d}" data-edge="${e.id}" title="${isCyclic?'Повторы: '+(e._retryCount||0)+'/'+e.maxRetries+(cond?' | Условие: '+esc(e.condition):''):cond?'Условие: '+esc(e.condition):''}"></path>${badge}`; }).join('');
 }
 const GROUP_COLORS=['#6c63ff','#19d3c5','#34d399','#fbbf24','#f87171','#a78bfa'];
 function renderGroups(){
@@ -602,7 +607,7 @@ window.addEventListener('mouseup',e=>{
 function addEdge(from,to){ if(from===to) return toast('Нельзя соединить агента с собой','err');
   if(state.edges.some(x=>x.from===from&&x.to===to)) return;
   if(wouldCycle(from,to)) return toast('Связь создаёт петлю — отклонено','err');
-  state.edges.push({id:uid(),from,to,condition:''}); save(); renderEdges(); }
+  state.edges.push({id:uid(),from,to,condition:'',maxRetries:0,_retryCount:0}); save(); renderEdges(); }
 function wouldCycle(from,to){ const seen=new Set(),st=[to]; while(st.length){ const c=st.pop(); if(c===from) return true; if(seen.has(c)) continue; seen.add(c); state.edges.filter(e=>e.from===c).forEach(e=>st.push(e.to)); } return false; }
 edgesEl.addEventListener('click',e=>{
   const tog=e.target.closest('[data-toggle]'); if(tog){ const g=(state.groups||[]).find(x=>x.id===tog.dataset.toggle); if(g){ g.collapsed=!g.collapsed; save(); render(); return; } }
@@ -614,13 +619,19 @@ edgesEl.addEventListener('click',e=>{
     <div class="field"><label>Условие (JS)</label>
       <textarea id="ec-cond" rows="3" placeholder="Оставьте пустым — всегда активна&#10;Пример: output.includes('отклонить')">${esc(ed.condition||'')}</textarea>
       <div class="hint">Переменная <code>output</code> — текст вывода агента-источника. При <code>false</code> этот путь пропускается.</div></div>
+    <div class="field"><label>Повторы при fail</label>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="number" min="0" max="5" id="ec-retries" value="${ed.maxRetries||0}" style="width:60px">
+        <span style="font-size:11px;color:var(--dim)">перезапусков источника (0 = нет). Работает только при заданном условии.</span>
+      </div>
+    </div>
     <div class="actions">
       <button class="btn ok" id="ec-save">Сохранить</button>
       <button class="btn ghost" id="ec-test">▶ Тест</button>
       <button class="btn danger" id="ec-del">🗑 Удалить связь</button>
     </div>`,
   b=>{
-    b.querySelector('#ec-save').onclick=()=>{ ed.condition=b.querySelector('#ec-cond').value.trim(); save(); renderEdges(); closeDrawer(); toast('Условие сохранено','ok'); };
+    b.querySelector('#ec-save').onclick=()=>{ ed.condition=b.querySelector('#ec-cond').value.trim(); ed.maxRetries=parseInt(b.querySelector('#ec-retries')?.value)||0; save(); renderEdges(); closeDrawer(); toast('Условие сохранено','ok'); };
     b.querySelector('#ec-test').onclick=()=>{ const cond=b.querySelector('#ec-cond').value.trim(); const r=evalCondition(cond,src?.output); toast(cond?(r?'✅ true — ребро активно':'❌ false — ребро пропущено'):'(пусто) → всегда активно',r?'ok':'err'); };
     b.querySelector('#ec-del').onclick=()=>{ state.edges=state.edges.filter(x=>x.id!==ed.id); save(); renderEdges(); closeDrawer(); toast('Связь удалена'); };
   });
@@ -724,7 +735,25 @@ function runnableNodes(){
     const hasConditions=inEdges.some(e=>e.condition&&e.condition.trim());
     if(!hasConditions) return true;
     const anyActive=inEdges.some(e=>evalCondition(e.condition, node(e.from)?.output));
-    if(!anyActive){ n.status='skip'; logRow(n.name,'skip','все условия рёбер → false, узел пропущен'); save(); return false; }
+    if(!anyActive){
+      // Cyclic retry: рёбра с условием, которое не прошло, у которых есть оставшиеся попытки
+      const retryEdges=inEdges.filter(e=>{
+        if(!e.condition||!e.condition.trim()) return false;
+        if(evalCondition(e.condition,node(e.from)?.output)) return false;
+        const src=node(e.from);
+        return src && (e.maxRetries||0)>0 && (e._retryCount||0)<e.maxRetries;
+      });
+      if(retryEdges.length>0){
+        retryEdges.forEach(e=>{
+          e._retryCount=(e._retryCount||0)+1;
+          const src=node(e.from);
+          if(src){ src.status='idle'; src.output=''; src.cacheHash='';
+            logRow(src.name,'retry',`Повтор ${e._retryCount}/${e.maxRetries} — условие не прошло`); }
+        });
+        save(); return false;
+      }
+      n.status='skip'; logRow(n.name,'skip','все условия рёбер → false, узел пропущен'); save(); return false;
+    }
     return true;
   });
 }
@@ -750,6 +779,7 @@ async function runPipeline(resume){
     state.runs.unshift({t:Date.now(),nodes:JSON.parse(JSON.stringify(state.nodes)),edges:JSON.parse(JSON.stringify(state.edges))});
     if(state.runs.length>5) state.runs.pop();
     state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;});
+    state.edges.forEach(e=>{ e._retryCount=0; });
     hideCompletionBanner();
     save(); renderNodes(); renderEdges();
     // Предоценка стоимости
@@ -1326,7 +1356,7 @@ function applyTemplate(key){
   state.nodes = tpls.map((tp,i) => freshNode(tp, 60+(i%3)*260, 40+Math.floor(i/3)*190));
   state.edges = [];
   for(let i=0; i<state.nodes.length-1; i++)
-    state.edges.push({id:uid(), from:state.nodes[i].id, to:state.nodes[i+1].id, condition:''});
+    state.edges.push({id:uid(), from:state.nodes[i].id, to:state.nodes[i+1].id, condition:'',maxRetries:0,_retryCount:0});
   save(); render();
 }
 
@@ -1384,13 +1414,13 @@ function openTemplates(){
     const t=PROJECT_TPLS[btn.dataset.tpl]; if(!t) return;
     const tpls=t.roles.map(r=>TEMPLATES.find(x=>x.role===r)).filter(Boolean);
     state.nodes=tpls.map((tp,i)=>freshNode(tp,60+(i%3)*260,40+Math.floor(i/3)*190));
-    state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id});
+    state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
     state.project.genre=t.genre; state.project.brief=t.brief;
     save(); render(); closeDrawer(); toast(t.label+' — пайплайн создан','ok');
   }); });
 }
 function autoLayout(){ state.nodes.forEach((n,i)=>{ n.x=60+(i%3)*250; n.y=40+Math.floor(i/3)*180; });
-  state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id}); save(); render(); toast('Схема выстроена в цепочку'); }
+  state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0}); save(); render(); toast('Схема выстроена в цепочку'); }
 function colorChips(sel,elId){
   return `<div id="${elId}" style="display:flex;gap:8px;flex-wrap:wrap">`+
     GROUP_COLORS.map(c=>`<div data-color="${c}" data-sel="${c===sel?'1':'0'}" style="width:28px;height:28px;border-radius:8px;background:${c};cursor:pointer;box-shadow:${c===sel?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}" onclick="this.parentNode.querySelectorAll('[data-color]').forEach(function(x){x.dataset.sel='0';x.style.boxShadow='none'});this.dataset.sel='1';this.style.boxShadow='0 0 0 3px #fff,0 0 0 5px '+this.dataset.color"></div>`).join('')+
@@ -1763,7 +1793,7 @@ function showOnboarding(){
     if(t){
       const tpls=t.roles.map(r=>TEMPLATES.find(x=>x.role===r)).filter(Boolean);
       state.nodes=tpls.map((tp,i)=>freshNode(tp,60+(i%3)*260,40+Math.floor(i/3)*190));
-      state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id});
+      state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
       state.project.genre=t.genre; state.project.brief=t.brief;
     }
     dismiss(); render();

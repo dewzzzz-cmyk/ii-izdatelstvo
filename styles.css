@@ -131,6 +131,9 @@ button{font-family:inherit}
 .edge.hit{stroke:transparent;stroke-width:18;cursor:pointer;pointer-events:stroke}
 .edge.flow{stroke:var(--accent2);stroke-width:3;stroke-dasharray:7 6;animation:dash .6s linear infinite}
 .edge.conditional{stroke:#a78bfa;stroke-dasharray:6 4;stroke-width:2.4}
+.edge.cyclic{stroke:#f59e0b;stroke-dasharray:8 4 2 4;stroke-width:2.4}
+/* ─── Cyclic Edges ─── */
+.edge-retry-badge{fill:var(--warn);font-size:10px;font-family:monospace}
 /* ---------- NODE GROUPS ---------- */
 [data-group-drag]{cursor:grab}
 [data-group-drag]:hover{opacity:.7}
