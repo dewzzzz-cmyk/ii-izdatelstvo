@@ -60,7 +60,7 @@ function evalCondition(cond,output){
 }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
-  output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'' }; }
+  output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'', outputVersions:[] }; }
 function checkSchema(n){
   if(!n.outputSchema||!n.outputSchema.trim()) return null; // нет схемы → всё ок
   try{
@@ -201,6 +201,28 @@ const cfg=n=>{ if(!n.useGlobal) return { baseURL:n.baseURL||state.global.baseURL
   return { baseURL:state.global.baseURL, apiKey:pickKey(), model:state.global.model, temperature:state.global.temperature }; };
 const hasKey=()=> state.nodes.some(n=>!n.useGlobal&&n.apiKey) || !!state.global.apiKey || _poolKeys().length>0;
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ─── Undo/Redo for canvas ───
+const _undoStack = [];
+const _redoStack = [];
+const MAX_UNDO = 20;
+function pushUndo(){
+  _undoStack.push(JSON.stringify(state.nodes.map(n=>({id:n.id,x:n.x,y:n.y}))));
+  _redoStack.length = 0;
+  if(_undoStack.length > MAX_UNDO) _undoStack.shift();
+}
+function undoCanvas(){
+  if(!_undoStack.length) return;
+  _redoStack.push(JSON.stringify(state.nodes.map(n=>({id:n.id,x:n.x,y:n.y}))));
+  JSON.parse(_undoStack.pop()).forEach(s=>{ const n=node(s.id); if(n){n.x=s.x;n.y=s.y;} });
+  save(); render();
+}
+function redoCanvas(){
+  if(!_redoStack.length) return;
+  _undoStack.push(JSON.stringify(state.nodes.map(n=>({id:n.id,x:n.x,y:n.y}))));
+  JSON.parse(_redoStack.pop()).forEach(s=>{ const n=node(s.id); if(n){n.x=s.x;n.y=s.y;} });
+  save(); render();
+}
 
 /* ============ КОНТЕКСТ + БИБЛИЯ ============ */
 // Умное сжатие: сохраняет начало и конец, убирает середину (модель лучше помнит края)
@@ -540,7 +562,7 @@ function updateGroupMembership(movedId){
 nodesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('.port.out'); if(p){ wire={from:p.dataset.id}; e.stopPropagation(); e.preventDefault(); return; }
   const h=e.target.closest('[data-drag]'); if(!h) return;
-  const n=node(h.dataset.drag); const pt=canvasPoint(e); drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y}; e.preventDefault();
+  const n=node(h.dataset.drag); const pt=canvasPoint(e); pushUndo(); drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y}; e.preventDefault();
 });
 edgesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('[data-group-drag]'); if(!p) return;
@@ -645,6 +667,17 @@ async function runNode(id){
       const relevantBible=bibleFor(acc); if(relevantBible) logRow(n.name,'bible','Проверьте каноны: '+bibleFor(acc).split('\n').map(l=>l.split(':')[0].replace('•','').trim()).filter(Boolean).join(', '));
       // Проверка JSON-схемы выхода (если задана)
       const schemaErr=checkSchema(n); if(schemaErr) logRow(n.name,'warn','⚠ Схема: '+schemaErr);
+      // Save output version history
+      if(n.output){
+        if(!n.outputVersions) n.outputVersions = [];
+        n.outputVersions.unshift({
+          ts: Date.now(),
+          output: n.output,
+          tokensIn: n.tokensIn || 0,
+          tokensOut: n.tokensOut || 0,
+        });
+        if(n.outputVersions.length > 5) n.outputVersions = n.outputVersions.slice(0, 5);
+      }
       save(); renderNodes(); renderEdges();
       // Auto-bible update (non-blocking, fire-and-forget)
       autoBibleUpdate(n.output, TEMPLATES.find(t=>t.name===n.name)?.role || '').catch(()=>{});
@@ -808,7 +841,22 @@ function openDrawer(title,html,mount){ $('#drawer-title').textContent=title; con
   drawer.classList.add('show'); scrim.classList.add('show'); if(mount) mount(b); }
 function closeDrawer(){ drawer.classList.remove('show'); scrim.classList.remove('show'); }
 $('#drawer-close').onclick=closeDrawer; scrim.onclick=closeDrawer;
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+// ─── Keyboard shortcuts ───
+document.addEventListener('keydown', e => {
+  if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if(ctrl && e.key==='z'){ e.preventDefault(); undoCanvas(); return; }
+  if(ctrl && e.key==='y'){ e.preventDefault(); redoCanvas(); return; }
+  if(ctrl && e.key==='Enter'){ e.preventDefault(); runPipeline(); return; }
+  if(e.key==='Escape'){ closeDrawer(); return; }
+  if(e.key==='r' && !ctrl){
+    switchView(typeof _currentView!=='undefined' && _currentView==='reader'?'canvas':'reader');
+    return;
+  }
+  // Delete selected node — no persistent selected-node variable exists in this app;
+  // deletion is handled via the node drawer's "Удалить" button (#f-del).
+  // if(e.key==='Delete' || e.key==='Backspace'){ /* no _selNode available */ }
+});
 
 function openNode(id){
   const n=node(id);
@@ -818,6 +866,21 @@ function openNode(id){
   const nearestEval=t=>{ const e=evalHist.filter(x=>x.t>=t).sort((a,b)=>a.t-b.t)[0]; return e&&e.score?` · ⭐${e.score}/40`:''; };
   const hist=n.promptHistory.length?`<div class="section-label">История промта (${n.promptHistory.length})</div>`+
     n.promptHistory.slice(0,5).map((h,i)=>`<div class="histrow"><span>${new Date(h.t).toLocaleString('ru-RU')}${nearestEval(h.t)}</span><button class="btn ghost sm" data-revert="${i}">↩ вернуть</button></div>`).join(''):'';
+  let versSection = '';
+  if(n.outputVersions && n.outputVersions.length > 1){
+    versSection = `<div class="set-section"><div class="set-section-title">🕐 Версии вывода (${n.outputVersions.length})</div>`;
+    n.outputVersions.forEach((v, i) => {
+      const d = new Date(v.ts);
+      const label = i === 0 ? '(текущая)' : 'от ' + d.toLocaleTimeString('ru');
+      const wc = Math.round((v.output||'').split(/\s+/).length);
+      versSection += `<div class="ver-row">
+        <span class="ver-label">Версия ${n.outputVersions.length - i} ${esc(label)}</span>
+        <span class="ver-meta">${wc} сл.</span>
+        ${i > 0 ? `<button class="btn ghost xs" data-action="restore-version" data-node="${n.id}" data-ver="${i}">↩</button>` : ''}
+      </div>`;
+    });
+    versSection += '</div>';
+  }
   openDrawer(`${n.emoji} ${esc(n.name)}`,`
     <div class="row2"><div class="field"><label>Имя</label><input id="f-name" value="${esc(n.name)}"></div>
       <div class="field"><label>Должность</label><input id="f-role" value="${esc(n.role)}"></div></div>
@@ -847,6 +910,7 @@ function openNode(id){
     ${hist}
     <div class="section-label">Текущий результат</div>
     ${outBlock||'<div class="hint" style="color:var(--faint)">Пока пусто.</div>'}
+    ${versSection}
   `,b=>{
     b.querySelector('#f-global').onchange=ev=>{ b.querySelector('#own-cfg').style.display=ev.target.checked?'none':''; };
     const collect=()=>{ const np=b.querySelector('#f-prompt').value; if(np!==n.prompt){ n.promptHistory.unshift({t:Date.now(),prompt:n.prompt}); if(n.promptHistory.length>20) n.promptHistory.pop(); }
@@ -1204,6 +1268,16 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='edit-input') openInput(); else if(a==='open-node') openNode(id); else if(a==='run-node') runNode(id);
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
+  else if(a==='restore-version'){
+    const nodeId = t.dataset.node;
+    const verIdx = parseInt(t.dataset.ver);
+    const n = node(nodeId);
+    if(n && n.outputVersions?.[verIdx]){
+      n.output = n.outputVersions[verIdx].output;
+      save(); render();
+      toast('Версия восстановлена');
+    }
+  }
 });
 function bindProj(sel,key){ const el=$(sel); el.addEventListener('change',()=>{ state.project[key]=el.value; save(); render(); }); }
 ['title','genre','audience','brief'].forEach(k=>bindProj('#proj-'+(k==='audience'?'aud':k),k));
@@ -1421,6 +1495,17 @@ function openGuide(){
     <p>В настройках узла → «Постпроцессор (JS)»: трансформирует вывод до передачи downstream. Пример: <code>return output.trim()</code></p>
     <h2>💡 Горячие клавиши</h2>
     <ul><li><b>Esc</b> — закрыть панель</li><li><b>Авто-схема</b> — выстроить узлы в цепочку</li></ul>
+    </div>
+    <div class="set-section" style="margin-top:16px">
+      <div class="set-section-title">⌨️ Горячие клавиши</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Ctrl+Enter</td><td style="color:var(--dim)">Запустить пайплайн</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Ctrl+Z</td><td style="color:var(--dim)">Отменить перемещение узла</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Ctrl+Y</td><td style="color:var(--dim)">Повторить</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">R</td><td style="color:var(--dim)">Переключить Reader / Canvas</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Esc</td><td style="color:var(--dim)">Закрыть панель</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Delete</td><td style="color:var(--dim)">Удалить выбранный узел (через панель)</td></tr>
+      </table>
     </div>
   `);
 }
