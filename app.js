@@ -85,7 +85,7 @@ function defaultState(){
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
-      backupDir:'', autoBackup:true, backupIntervalMin:10 },
+      backupDir:'', autoBackup:true, backupIntervalMin:10, gdriveClientId:'', gdriveLastBackup:null },
     nodes, edges };
 }
 let state=load(); rebuildBibleVecs();
@@ -1160,6 +1160,19 @@ function openSettings(){
         <button class="btn ghost sm" id="set-style-clear">🗑 Очистить</button>
       </div>
     </div>
+    <div class="set-section" style="margin-top:20px;border-top:1px solid var(--line2);padding-top:16px">
+      <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">☁️ Google Drive</div>
+      <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Бэкап проекта в облако. Нужен Client ID OAuth 2.0 (тип «Веб-приложение», разрешённый origin: http://localhost:8787, redirect URI: http://localhost:8787/oauth-callback.html).</p>
+      <div class="field"><label>Client ID</label>
+        <input id="set-gdrive-cid" value="${esc(g.gdriveClientId||'')}" placeholder="xxxx.apps.googleusercontent.com">
+      </div>
+      ${g.gdriveLastBackup?`<div style="font-size:12px;color:var(--txt2);margin-bottom:8px">✅ Последний бэкап: ${new Date(g.gdriveLastBackup).toLocaleString('ru-RU')}</div>`:''}
+      <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+        <button class="btn ghost sm" id="set-gdrive-auth">🔑 Подключить Google Drive</button>
+        <button class="btn ghost sm" id="set-gdrive-backup">☁️ Бэкап сейчас</button>
+        <button class="btn ghost sm" id="set-gdrive-revoke">🔓 Выйти</button>
+      </div>
+    </div>
   `,b=>{
     b.querySelector('#g-preset').onchange=ev=>{ if(!ev.target.value) return; const [u,m]=ev.target.value.split('|'); b.querySelector('#g-base').value=u; b.querySelector('#g-model').value=m; };
     b.querySelector('#g-bkopen').onclick=()=>{ closeDrawer(); setTimeout(openBackupRestore,120); };
@@ -1177,6 +1190,7 @@ function openSettings(){
       g.backupDir=b.querySelector('#g-bkdir').value.trim();
       g.backupIntervalMin=parseInt(b.querySelector('#g-bkint').value)||10;
       g.autoBackup=b.querySelector('#g-bkauto').checked;
+      g.gdriveClientId=b.querySelector('#set-gdrive-cid')?.value.trim()||g.gdriveClientId||'';
       scheduleBackup();
       save(); render(); toast('Настройки сохранены','ok'); };
     b.querySelector('#set-style-save')?.addEventListener('click', () => {
@@ -1186,7 +1200,17 @@ function openSettings(){
       state.project.styleRef = '';
       const ta = b.querySelector('#set-style-ref');
       if(ta) ta.value = '';
-      save(); toast('Стиль-ориентир очищен'); updateStyleRefBadge(); }); });
+      save(); toast('Стиль-ориентир очищен'); updateStyleRefBadge(); });
+    b.querySelector('#set-gdrive-auth')?.addEventListener('click', () => {
+      const cid=(b.querySelector('#set-gdrive-cid')?.value||g.gdriveClientId||'').trim();
+      if(!cid){toast('Введите Google Client ID','err');return;}
+      g.gdriveClientId=cid; save();
+      gdriveAuth(cid);
+    });
+    b.querySelector('#set-gdrive-backup')?.addEventListener('click', ()=>backupToDrive());
+    b.querySelector('#set-gdrive-revoke')?.addEventListener('click', ()=>{
+      localStorage.removeItem('gdrive_token'); toast('Выход из Google Drive выполнен');
+    }); });
 }
 function openBible(){
   const rows=state.bible.map(b=>`<div class="bible-row" data-bid="${b.id}">
@@ -1287,6 +1311,51 @@ function openExport(){
     b.querySelector('#x-bl-save').onclick=()=>{ saveBaseline(); openExport(); };
     if(state.baseline) b.querySelector('#x-bl-cmp').onclick=openBaselineCompare;
   });
+}
+/* ============ GOOGLE DRIVE BACKUP ============ */
+function gdriveAuth(clientId){
+  const redirectUri=location.origin+'/oauth-callback.html';
+  const scope='https://www.googleapis.com/auth/drive.file';
+  const url=`https://accounts.google.com/o/oauth2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${encodeURIComponent(scope)}`;
+  window._gdriveAuthCallback=function(token){
+    localStorage.setItem('gdrive_token',token);
+    toast('Google Drive подключён ✓','ok');
+  };
+  const w=window.open(url,'gdrive_auth','width=520,height=620,left=200,top=100');
+  if(!w) toast('Разрешите всплывающие окна для этой страницы','err');
+}
+window.receiveGdriveToken=function(token){
+  if(window._gdriveAuthCallback) window._gdriveAuthCallback(token);
+};
+async function backupToDrive(){
+  const token=localStorage.getItem('gdrive_token');
+  if(!token){ toast('Сначала подключите Google Drive в настройках','err'); return; }
+  const title=state.project.title||'проект';
+  const filename=`ии-издательство-${title.replace(/[^\wЀ-ӿ]/g,'-')}-${new Date().toISOString().slice(0,10)}.json`;
+  const content=JSON.stringify(state,(k,v)=>k==='_vec'?undefined:v,2);
+  toast('Загружаю в Drive…');
+  try{
+    // Check if file exists (search by name)
+    const searchRes=await fetch(`https://www.googleapis.com/drive/v3/files?q=name%3D%27${encodeURIComponent(filename)}%27%20and%20trashed%3Dfalse&fields=files(id,name)`,
+      {headers:{Authorization:'Bearer '+token}});
+    if(searchRes.status===401){localStorage.removeItem('gdrive_token');toast('Сессия Google Drive истекла — переподключитесь','err');return;}
+    const meta={name:filename,mimeType:'application/json'};
+    const blob=new Blob([content],{type:'application/json'});
+    const form=new FormData();
+    form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'}));
+    form.append('file',blob);
+    const upRes=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+      {method:'POST',headers:{Authorization:'Bearer '+token},body:form});
+    if(!upRes.ok){
+      const err=await upRes.text();
+      if(upRes.status===401){localStorage.removeItem('gdrive_token');toast('Сессия истекла — переподключитесь','err');}
+      else toast('Ошибка Drive: '+upRes.status,'err');
+      return;
+    }
+    state.global.gdriveLastBackup=Date.now(); save();
+    toast('Бэкап в Google Drive сохранён ✓','ok');
+    logRow('Drive backup','ok',filename);
+  }catch(err){toast('Ошибка: '+err.message,'err');}
 }
 function download(name,text,mime='text/plain'){ const u=URL.createObjectURL(new Blob([text],{type:mime})); const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
 // Типографический постпроцессинг: ASCII-символы → типографические

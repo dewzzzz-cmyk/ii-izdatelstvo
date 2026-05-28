@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Google Drive — авторизация</title>
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center;
+           height: 100vh; margin: 0; background: #f0f4f8; color: #333; text-align: center; }
+    .box { background: white; border-radius: 12px; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,.12); max-width: 360px; }
+    h2 { margin: 0 0 12px; font-size: 20px; }
+    p  { margin: 0; color: #666; font-size: 14px; }
+    .ok { color: #22c55e; font-size: 36px; margin-bottom: 12px; }
+    .err { color: #ef4444; font-size: 36px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+<div class="box" id="box">
+  <div class="ok">⏳</div>
+  <h2>Авторизация…</h2>
+  <p>Передаём токен в приложение</p>
+</div>
+<script>
+(function(){
+  const hash = location.hash.slice(1);
+  const params = {};
+  hash.split('&').forEach(p => { const [k,v]=p.split('='); if(k) params[k]=decodeURIComponent(v||''); });
+  const box = document.getElementById('box');
+  if(params.access_token){
+    if(window.opener && window.opener.receiveGdriveToken){
+      window.opener.receiveGdriveToken(params.access_token);
+      box.innerHTML = '<div class="ok">✅</div><h2>Готово!</h2><p>Окно закроется автоматически</p>';
+      setTimeout(()=>window.close(), 1200);
+    } else {
+      box.innerHTML = '<div class="err">⚠️</div><h2>Не удалось передать токен</h2><p>Закройте это окно и попробуйте снова</p>';
+    }
+  } else if(params.error){
+    box.innerHTML = `<div class="err">✗</div><h2>Отменено</h2><p>${params.error_description||params.error}</p>`;
+    setTimeout(()=>window.close(), 2000);
+  } else {
+    box.innerHTML = '<div class="err">⚠️</div><h2>Нет токена</h2><p>Неожиданный ответ от Google</p>';
+  }
+})();
+</script>
+</body>
+</html>
