@@ -1969,6 +1969,7 @@ function ctbAction(tool){
     case 'add-gate':      ctbSetTool('place-gate');      break;
     case 'add-note':      ctbSetTool('place-note');      break;
     case 'add-merge':     ctbSetTool('place-merge');     break;
+    case 'add-fanout':    ctbSetTool('place-fanout');    break;
     case 'layout-chain':  ctbLayoutChain(); break;
     case 'layout-tree':   ctbLayoutTree();  break;
     case 'fit-screen':    ctbFitScreen();   break;
