@@ -202,6 +202,28 @@ const cfg=n=>{ if(!n.useGlobal) return { baseURL:n.baseURL||state.global.baseURL
 const hasKey=()=> state.nodes.some(n=>!n.useGlobal&&n.apiKey) || !!state.global.apiKey || _poolKeys().length>0;
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 
+// ─── Undo/Redo for canvas ───
+const _undoStack = [];
+const _redoStack = [];
+const MAX_UNDO = 20;
+function pushUndo(){
+  _undoStack.push(JSON.stringify(state.nodes.map(n=>({id:n.id,x:n.x,y:n.y}))));
+  _redoStack.length = 0;
+  if(_undoStack.length > MAX_UNDO) _undoStack.shift();
+}
+function undoCanvas(){
+  if(!_undoStack.length) return;
+  _redoStack.push(JSON.stringify(state.nodes.map(n=>({id:n.id,x:n.x,y:n.y}))));
+  JSON.parse(_undoStack.pop()).forEach(s=>{ const n=node(s.id); if(n){n.x=s.x;n.y=s.y;} });
+  save(); render();
+}
+function redoCanvas(){
+  if(!_redoStack.length) return;
+  _undoStack.push(JSON.stringify(state.nodes.map(n=>({id:n.id,x:n.x,y:n.y}))));
+  JSON.parse(_redoStack.pop()).forEach(s=>{ const n=node(s.id); if(n){n.x=s.x;n.y=s.y;} });
+  save(); render();
+}
+
 /* ============ КОНТЕКСТ + БИБЛИЯ ============ */
 // Умное сжатие: сохраняет начало и конец, убирает середину (модель лучше помнит края)
 function smartTrunc(text, maxLen){
@@ -469,7 +491,7 @@ function updateGroupMembership(movedId){
 nodesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('.port.out'); if(p){ wire={from:p.dataset.id}; e.stopPropagation(); e.preventDefault(); return; }
   const h=e.target.closest('[data-drag]'); if(!h) return;
-  const n=node(h.dataset.drag); const pt=canvasPoint(e); drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y}; e.preventDefault();
+  const n=node(h.dataset.drag); const pt=canvasPoint(e); pushUndo(); drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y}; e.preventDefault();
 });
 edgesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('[data-group-drag]'); if(!p) return;
@@ -745,7 +767,22 @@ function openDrawer(title,html,mount){ $('#drawer-title').textContent=title; con
   drawer.classList.add('show'); scrim.classList.add('show'); if(mount) mount(b); }
 function closeDrawer(){ drawer.classList.remove('show'); scrim.classList.remove('show'); }
 $('#drawer-close').onclick=closeDrawer; scrim.onclick=closeDrawer;
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+// ─── Keyboard shortcuts ───
+document.addEventListener('keydown', e => {
+  if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if(ctrl && e.key==='z'){ e.preventDefault(); undoCanvas(); return; }
+  if(ctrl && e.key==='y'){ e.preventDefault(); redoCanvas(); return; }
+  if(ctrl && e.key==='Enter'){ e.preventDefault(); runPipeline(); return; }
+  if(e.key==='Escape'){ closeDrawer(); return; }
+  if(e.key==='r' && !ctrl){
+    switchView(typeof _currentView!=='undefined' && _currentView==='reader'?'canvas':'reader');
+    return;
+  }
+  // Delete selected node — no persistent selected-node variable exists in this app;
+  // deletion is handled via the node drawer's "Удалить" button (#f-del).
+  // if(e.key==='Delete' || e.key==='Backspace'){ /* no _selNode available */ }
+});
 
 function openNode(id){
   const n=node(id);
@@ -1292,6 +1329,17 @@ function openGuide(){
     <p>В настройках узла → «Постпроцессор (JS)»: трансформирует вывод до передачи downstream. Пример: <code>return output.trim()</code></p>
     <h2>💡 Горячие клавиши</h2>
     <ul><li><b>Esc</b> — закрыть панель</li><li><b>Авто-схема</b> — выстроить узлы в цепочку</li></ul>
+    </div>
+    <div class="set-section" style="margin-top:16px">
+      <div class="set-section-title">⌨️ Горячие клавиши</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Ctrl+Enter</td><td style="color:var(--dim)">Запустить пайплайн</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Ctrl+Z</td><td style="color:var(--dim)">Отменить перемещение узла</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Ctrl+Y</td><td style="color:var(--dim)">Повторить</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">R</td><td style="color:var(--dim)">Переключить Reader / Canvas</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Esc</td><td style="color:var(--dim)">Закрыть панель</td></tr>
+        <tr><td style="padding:4px 8px;color:var(--accent);font-family:monospace">Delete</td><td style="color:var(--dim)">Удалить выбранный узел (через панель)</td></tr>
+      </table>
     </div>
   `);
 }
