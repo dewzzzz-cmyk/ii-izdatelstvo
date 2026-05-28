@@ -1877,5 +1877,35 @@ switchView=function(view){
 initCtb();
 // Show toolbar on canvas view on first load
 if(_currentView==='canvas') $('#ctb')?.classList.add('ctb-visible');
+
+// Canvas context menu (right-click on empty canvas)
+(function(){
+  const _canvasEl = document.querySelector('#canvas');
+  if(!_canvasEl) return;
+  _canvasEl.addEventListener('contextmenu', e => {
+    if(e.target.closest('.node-card,.ctb')) return; // only on empty canvas
+    e.preventDefault();
+    const old = document.getElementById('_cvs-ctx');
+    if(old) old.remove();
+    const menu = document.createElement('div');
+    menu.id = '_cvs-ctx';
+    menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:9999;background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:4px;display:flex;flex-direction:column;gap:2px;box-shadow:0 4px 16px rgba(0,0,0,.3);min-width:160px`;
+    [
+      {label:'⤢ Выровнять узлы', fn:()=>autoLayout()},
+      {label:'⊞ Создать группу',  fn:()=>openGroupCreator()},
+      {label:'＋ Добавить агента', fn:()=>addNodePicker()},
+    ].forEach(item=>{
+      const btn=document.createElement('button');
+      btn.className='btn ghost';
+      btn.style.cssText='width:100%;text-align:left;padding:8px 12px;border-radius:7px;font-size:13px';
+      btn.textContent=item.label;
+      btn.onclick=()=>{ menu.remove(); item.fn(); };
+      menu.appendChild(btn);
+    });
+    document.body.appendChild(menu);
+    setTimeout(()=>document.addEventListener('click',()=>menu.remove(),{once:true}),0);
+  });
+})();
+
 // Запуск таймера авто-бэкапа
 scheduleBackup();
