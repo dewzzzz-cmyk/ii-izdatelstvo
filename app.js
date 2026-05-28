@@ -366,10 +366,10 @@ function render(){
   const runPfx=running?'⏳ ':'';
   document.title=runPfx+(state.project.title?state.project.title+' · ':'')+'ИИ-Издательство'+(running?' ('+done+'/'+total+')':'');
   $('#proj-title').value=state.project.title; $('#proj-genre').value=state.project.genre;
-  $('#proj-aud').value=state.project.audience; $('#proj-brief').value=state.project.brief; $('#proj-mode').value=state.project.mode;
+  $('#proj-aud').value=state.project.audience; $('#proj-brief').value=state.project.brief;
+  const _ecb=$('#proj-edit-mode'); if(_ecb) _ecb.checked=state.project.mode==='edit';
   const ks=$('#api-state'); ks.textContent=hasKey()?'● ключ задан':'● ключ не задан'; ks.classList.toggle('ok',hasKey());
   $('#cost-state').textContent='Σ '+money(projectCost());
-  $('#input-btn').style.display=state.project.mode==='edit'?'':'none';
   const paused=isPaused();
   const rb=$('#run-btn'); rb.textContent=paused?'▶ Продолжить':'▶ Запустить';
   const sb=$('#stop-btn'); if(sb){ sb.style.display=running?'':'none'; }
@@ -1112,7 +1112,19 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
 });
 function bindProj(sel,key){ const el=$(sel); el.addEventListener('change',()=>{ state.project[key]=el.value; save(); render(); }); }
-['title','genre','audience','brief','mode'].forEach(k=>bindProj('#proj-'+(k==='audience'?'aud':k),k));
+['title','genre','audience','brief'].forEach(k=>bindProj('#proj-'+(k==='audience'?'aud':k),k));
+// Чекбокс режима редактирования (заменяет select#proj-mode)
+(function(){
+  const editModeCb = document.querySelector('#proj-edit-mode');
+  if(editModeCb){
+    editModeCb.checked = state.project.mode === 'edit';
+    editModeCb.onchange = () => {
+      state.project.mode = editModeCb.checked ? 'edit' : 'write';
+      save();
+      if(editModeCb.checked) openInput();
+    };
+  }
+})();
 const PROJECT_TPLS = {
   solo:{ label:'🤖 Соло-агент', roles:['writer'], genre:'', brief:'Один агент — задаёте промт, получаете результат' },
   story:{ label:'📖 Рассказ', roles:['scout','writer','logedit','proof'], genre:'Рассказ', brief:'Короткий рассказ до 5000 слов' },

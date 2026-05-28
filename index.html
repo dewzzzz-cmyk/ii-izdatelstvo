@@ -36,14 +36,12 @@
 </header>
 
 <div class="projbar">
-  <input id="proj-genre" placeholder="Жанр — напр. «Детектив» или «Фэнтези»">
-  <input id="proj-aud" placeholder="Для кого — напр. «взрослые 25–45»">
+  <input id="proj-genre" placeholder="Жанр: детектив, фэнтези, нон-фикшн…">
+  <input id="proj-aud" placeholder="Аудитория: взрослые 25-45, подростки, бизнес…">
   <input id="proj-brief" class="grow" placeholder="О чём книга — кто герой, в чём конфликт, чем заканчивается">
-  <select id="proj-mode">
-    <option value="write">✒️ писать с нуля</option>
-    <option value="edit">📖 редактировать исходник</option>
-  </select>
-  <button class="btn ghost sm" data-action="edit-input" id="input-btn" title="Вставить исходный текст для редактирования">📄 Исходник</button>
+  <label class="proj-toggle" title="Включить если хотите улучшить готовый текст, а не писать с нуля">
+    <input type="checkbox" id="proj-edit-mode"> 📄 Редактировать исходник
+  </label>
 </div>
 
 <div class="viewbar" id="viewbar">

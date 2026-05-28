@@ -575,3 +575,17 @@ button{font-family:inherit}
 }
 .ctb-place-hint.show{display:block}
 
+/* proj-toggle checkbox */
+.proj-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--txt2);
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+.proj-toggle input { accent-color: var(--accent); cursor: pointer; }
+
