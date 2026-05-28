@@ -25,7 +25,11 @@ function serveStatic(req, res){
   if (rel === '/' || rel === '') rel = '/index.html';
   const fp = path.normalize(path.join(ROOT, rel));
   if (!fp.startsWith(ROOT)) return send(res, 403, 'Forbidden');
-  fs.readFile(fp, (e, d) => e ? send(res,404,'Not found') : send(res,200,d,MIME[path.extname(fp)]||'application/octet-stream'));
+  fs.readFile(fp, (e, d) => {
+    if(e) return send(res,404,'Not found');
+    res.writeHead(200,{'Content-Type':MIME[path.extname(fp)]||'application/octet-stream','Cache-Control':'no-store'});
+    res.end(d);
+  });
 }
 
 async function handleGenerate(req, res){

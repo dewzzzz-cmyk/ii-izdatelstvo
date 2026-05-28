@@ -1950,7 +1950,12 @@ function openBaselineCompare(){
 function switchView(view){
   if(!_VIEWS.includes(view)) view='canvas';
   _currentView=view;
-  // CSS-переключение через data-view на body — один источник правды
+  // Явное управление display — надёжнее CSS-каскада
+  const canvas=$('#canvas'), reader=$('#reader'), simp=$('#simplified');
+  if(canvas) canvas.style.display = view==='canvas' ? '' : 'none';
+  if(reader) reader.style.display = view==='reader' ? 'block' : 'none';
+  if(simp)   simp.style.display   = view==='simple'  ? ''     : 'none';
+  // data-view на body — для CSS-тем/хуков снаружи
   document.body.dataset.view=view;
   // Табы
   [$('#tab-canvas'),$('#tab-reader'),$('#tab-simple')].forEach(t=>t?.classList.remove('active'));

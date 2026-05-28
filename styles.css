@@ -195,14 +195,8 @@ button{font-family:inherit}
 .view-tab.active{background:var(--panel3);color:var(--txt)}
 .view-tab:hover:not(.active){color:var(--dim);background:var(--panel2)}
 
-/* ---------- MULTI-VIEW: data-view на body управляет видимостью ---------- */
-#canvas, #reader, #simplified { display: none; }
-body[data-view="canvas"]  #canvas     { display: block; }
-body[data-view="reader"]  #reader     { display: block; }
-body[data-view="simple"]  #simplified { display: block; }
-
 /* ---------- READER VIEW ---------- */
-.reader{position:absolute;inset:150px 0 0 0;overflow:auto;background:var(--bg)}
+.reader{position:absolute;inset:150px 0 0 0;overflow:auto;background:var(--bg);display:none}
 .reader-inner{max-width:740px;margin:0 auto;padding:36px 24px 80px}
 .reader-text .md{font-size:14.5px;line-height:1.85;color:#d4d7e6}
 .reader-text .md p{margin:0 0 10px}
