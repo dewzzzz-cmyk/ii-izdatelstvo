@@ -32,6 +32,7 @@ async function handleGenerate(req, res){
   let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>5e5) req.destroy(); });
   req.on('end', async ()=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{}
+    const wantStream = b.stream !== false;
     if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
     const apiKey = (b.apiKey||'').trim();
     const baseURL = (b.baseURL||'https://api.deepseek.com').replace(/\/+$/,'');
@@ -42,11 +43,38 @@ async function handleGenerate(req, res){
       up = await fetch(`${baseURL}/chat/completions`, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages:b.messages||[], stream:true,
+        body: JSON.stringify({ model, messages:b.messages||[], stream: wantStream,
           temperature: typeof b.temperature==='number'? b.temperature : 1.0 }),
       });
     }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
     if(!up.ok || !up.body){ const t=await up.text().catch(()=> ''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,400)); }
+    if(!wantStream){
+      let fullBody = '';
+      const reader2 = up.body.getReader();
+      const dec2 = new TextDecoder();
+      try{
+        while(true){
+          const {value, done} = await reader2.read();
+          if(done) break;
+          fullBody += dec2.decode(value, {stream:true});
+        }
+      } catch(e){ return send(res, 502, 'READ_ERROR: '+e.message); }
+      // upstream returns JSON when stream:false
+      let content = '';
+      try {
+        const parsed = JSON.parse(fullBody);
+        content = parsed.choices?.[0]?.message?.content || '';
+      } catch(e) {
+        // fallback: parse SSE-style lines
+        content = fullBody.split('\n')
+          .filter(l => l.startsWith('data: ') && l !== 'data: [DONE]')
+          .map(l => { try{ return JSON.parse(l.slice(6)).choices?.[0]?.delta?.content||''; }catch{ return ''; } })
+          .join('');
+      }
+      res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-cache'});
+      res.end(content);
+      return;
+    }
     res.writeHead(200, { 'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'no-cache' });
     const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
     try{

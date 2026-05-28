@@ -79,7 +79,7 @@ function defaultState(){
   return { project:{title:'',genre:'',audience:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ'},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
-      maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
+      maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
       backupDir:'', autoBackup:true, backupIntervalMin:10 },
     nodes, edges };
 }
@@ -266,6 +266,50 @@ function buildMessages(n){
     if(ch.prevSummary) user+=`\nСодержание предыдущих глав:\n${ch.prevSummary}\n`; }
   user+=`\nВыполни свою роль и выдай конкретный результат.`;
   return [ {role:'system',content:n.prompt}, {role:'user',content:user} ];
+}
+async function callLLM(c, messages){
+  const r = await fetch('/api/generate', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      baseURL: c.baseURL || state.global.baseURL,
+      apiKey:  c.apiKey  || pickKey(),
+      model:   c.model   || state.global.model,
+      temperature: c.temperature ?? 0.1,
+      messages,
+      stream: false
+    })
+  });
+  if(!r.ok) throw new Error(await r.text());
+  return await r.text();
+}
+async function autoBibleUpdate(output, role){
+  if(!['writer','logedit','line'].includes(role)) return;
+  if(!output || output.length < 200) return;
+  if(!state.global.autoBibleExtract) return;
+  const msgs = [{
+    role: 'system',
+    content: 'Ты — архивариус. Извлеки из текста НОВЫЕ факты о персонажах, местах, временной линии и ключевых событиях. Отвечай строго в формате:\nИмя персонажа | факт о нём\nНазвание места | описание\nСобытие | дата или позиция в сюжете\n\nТолько факты, присутствующие в тексте. Не придумывай. Если новых фактов нет — ответь: ПУСТО'
+  },{
+    role: 'user',
+    content: `Уже известно из Библии:\n${state.bible.map(b=>b.keys+'|'+b.text).join('\n') || '(пусто)'}\n\nНовый текст:\n${smartTrunc(output, 3000)}`
+  }];
+  try {
+    const c = { baseURL: state.global.baseURL, apiKey: pickKey(), model: state.global.model, temperature: 0.1 };
+    const resp = await callLLM(c, msgs);
+    if(!resp || resp.trim() === 'ПУСТО') return;
+    const newEntries = parseBibleLines(resp);
+    if(!newEntries.length) return;
+    const existingKeys = new Set(state.bible.map(b => b.keys.toLowerCase()));
+    const toAdd = newEntries.filter(e => !existingKeys.has(e.keys.toLowerCase()));
+    if(!toAdd.length) return;
+    state.bible.push(...toAdd);
+    rebuildBibleVecs();
+    save();
+    toast(`📚 Библия: +${toAdd.length} новых записей`, 'ok');
+  } catch(e){
+    console.warn('autoBibleUpdate error', e);
+  }
 }
 const tokEst=s=>{ s=s||''; const cyr=(s.match(/[а-яёА-ЯЁ]/g)||[]).length; return Math.max(1,Math.round(s.length/(cyr/s.length>.5?2:4))); };
 const nodeCost=n=>{ const p=PRICES[cfg(n).model]||{in:0.14,out:0.28}; return (n.tokensIn||0)/1e6*p.in+(n.tokensOut||0)/1e6*p.out; };
@@ -574,7 +618,10 @@ async function runNode(id){
       const relevantBible=bibleFor(acc); if(relevantBible) logRow(n.name,'bible','Проверьте каноны: '+bibleFor(acc).split('\n').map(l=>l.split(':')[0].replace('•','').trim()).filter(Boolean).join(', '));
       // Проверка JSON-схемы выхода (если задана)
       const schemaErr=checkSchema(n); if(schemaErr) logRow(n.name,'warn','⚠ Схема: '+schemaErr);
-      save(); renderNodes(); renderEdges(); return true;
+      save(); renderNodes(); renderEdges();
+      // Auto-bible update (non-blocking, fire-and-forget)
+      autoBibleUpdate(n.output, TEMPLATES.find(t=>t.name===n.name)?.role || '').catch(()=>{});
+      return true;
     }catch(err){
       if(err.name==='AbortError'){ n.status='idle'; n.error=''; if(acc) n.output=acc; logRow(n.name,'error','остановлено'); save(); renderNodes(); renderEdges(); return false; }
       if(attempt<maxR && /network|fetch|Failed/i.test(String(err.message))){ logRow(n.name,'retry','сеть, повтор #'+(attempt+1)); await wait(1000*2**attempt); continue; }
@@ -833,6 +880,7 @@ function openSettings(){
     <div class="row2"><div class="field"><label>Лимит бюджета, $ (0 = без)</label><input id="g-cap" type="number" step="0.1" value="${g.costCapUSD}"></div>
       <div class="field"><label>Токен прокси (если выложен в сеть)</label><input id="g-ptok" value="${esc(g.proxyToken)}" placeholder="не обязательно"></div></div>
     <label class="check"><input type="checkbox" id="g-summ" ${g.autoSummarize?'checked':''}> Авто-саммари узлов (доп. вызов LLM после каждого агента)</label>
+    <label class="check"><input type="checkbox" id="g-bible-extract" ${g.autoBibleExtract?'checked':''}> Авто-Библия: извлекать персонажей и факты после каждой главы</label>
     <label class="check"><input type="checkbox" id="g-eval" ${g.autoEval?'checked':''}> Авто-оценка после пайплайна (LLM-judge: 4 критерия, запись в журнал)</label>
     <div class="field"><label>Таймаут приёмки, мин (0 = без)</label><input id="g-aptout" type="number" min="0" value="${g.approvalTimeoutMin||0}">
       <div class="hint">Если агент ждёт одобрения дольше — пайплайн прерывается автоматически.</div></div>
@@ -856,6 +904,7 @@ function openSettings(){
       g.maxContextChars=parseInt(b.querySelector('#g-ctx').value)||8000; g.maxRetries=parseInt(b.querySelector('#g-retry').value)||0;
       g.costCapUSD=parseFloat(b.querySelector('#g-cap').value)||0; g.proxyToken=b.querySelector('#g-ptok').value.trim();
       g.autoSummarize=b.querySelector('#g-summ').checked;
+      g.autoBibleExtract=b.querySelector('#g-bible-extract').checked;
       g.autoEval=b.querySelector('#g-eval').checked;
       g.fallbackURL=b.querySelector('#g-fallback').value.trim();
       g.approvalTimeoutMin=parseInt(b.querySelector('#g-aptout').value)||0;
