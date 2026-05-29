@@ -741,7 +741,9 @@ function logRow(node,status,msg,extra={}){ state.log.unshift({t:Date.now(),node,
 
 /* ============ РЕНДЕР ============ */
 const _VIEWS=['canvas','reader','simple'];
-let _currentView=(()=>{ const h=location.hash.slice(1); return _VIEWS.includes(h)?h:'canvas'; })();
+let _currentView=(()=>{ const h=location.hash.slice(1); if(_VIEWS.includes(h)) return h;
+  const hasOutput=(state.nodes||[]).some(n=>n.output&&n.output.trim());
+  return hasOutput?'reader':'simple'; })();
 const nodesEl=$('#nodes'), edgesEl=$('#edges');
 /* CTB state + SPEC_NODES — declared here so renderNodes() can reference them */
 let _activeTool='select', _snapGrid=false, _showMinimap=false, _zoomLevel=100;
@@ -793,7 +795,7 @@ function render(){
    Структура книги (главы/агенты) + навигация. Чисто аддитивно:
    зовёт существующие функции open... и switchView. Не падает на пустом проекте. */
 function renderLeftRail(){
-  const rail=$('#left-rail'); if(!rail) return;
+  const rail=$('#lr-body'); if(!rail) return;
   const pr=state.project||{};
   const chapters=(typeof bookNodes==='function')?bookNodes():[];
   const STAT={done:'✓',error:'❌',running:'⏳',review:'⏳',variants:'⏳',skip:'•',idle:'•'};
@@ -829,10 +831,12 @@ function renderLeftRail(){
       <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
       <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
       <button class="lr-nav-btn" data-action="style-school"><span class="lr-nav-ic">🎓</span> Школа стиля</button>
+      <button class="lr-nav-btn" data-action="text-analysis"><span class="lr-nav-ic">📊</span> Анализ текста</button>
       <button class="lr-nav-btn" data-action="chapters"><span class="lr-nav-ic">📚</span> Главы</button>
       <button class="lr-nav-btn" data-action="entities"><span class="lr-nav-ic">🗃</span> Сущности</button>
-      <button class="lr-nav-btn" data-action="text-analysis"><span class="lr-nav-ic">📊</span> Анализ текста</button>
       <button class="lr-nav-btn" data-action="add-node"><span class="lr-nav-ic">＋</span> Агент</button>
+      <button class="lr-nav-btn" data-action="log"><span class="lr-nav-ic">📋</span> Журнал</button>
+      <button class="lr-nav-btn" data-action="guide"><span class="lr-nav-ic">?</span> Гайд</button>
     </div>
     <div class="lr-foot">
       <button class="lr-nav-btn" data-action="settings"><span class="lr-nav-ic">⚙</span> Настройки</button>
