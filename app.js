@@ -87,7 +87,8 @@ function defaultState(){
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
-      backupDir:'', autoBackup:true, backupIntervalMin:10, gdriveClientId:'', gdriveLastBackup:null, banList:'' },
+      backupDir:'', autoBackup:true, backupIntervalMin:10, gdriveClientId:'', gdriveLastBackup:null, banList:'',
+      maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'' },
     nodes, edges };
 }
 let state=load(); rebuildBibleVecs();
@@ -110,7 +111,8 @@ function save(){
   if(state.log.length>100) state.log=state.log.slice(0,100);
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
-    const data=JSON.stringify(state,(k,v)=>k==='_vec'?undefined:v);
+    // Транзиентные поля не сериализуем: _vec (TF-IDF), а также служебные поля петли (Item 25/29)
+    const data=JSON.stringify(state,(k,v)=>(k==='_vec'||k==='_bestOutput'||k==='_scoreHistory'||k==='_loopPrev')?undefined:v);
     if(data.length>4*1024*1024) toast('⚠ Хранилище почти полно ('+Math.round(data.length/1024)+' KB). Очистите журнал или экспортируйте.','warn');
     localStorage.setItem(KEY,data);
   },40);
@@ -208,6 +210,47 @@ const cfg=n=>{ if(!n.useGlobal) return { baseURL:n.baseURL||state.global.baseURL
   return { baseURL:state.global.baseURL, apiKey:pickKey(), model:state.global.model, temperature:state.global.temperature }; };
 const hasKey=()=> state.nodes.some(n=>!n.useGlobal&&n.apiKey) || !!state.global.apiKey || _poolKeys().length>0;
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+// Item 27: семафор параллелизма — запускает не более limit задач одновременно
+async function runWithLimit(tasks, limit){
+  limit=Math.max(1,limit|0||1);
+  const results=new Array(tasks.length);
+  let idx=0;
+  async function worker(){
+    while(idx<tasks.length){
+      const cur=idx++;
+      results[cur]=await tasks[cur]();
+    }
+  }
+  const workers=[]; for(let i=0;i<Math.min(limit,tasks.length);i++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// Item 11: пост-проверка стоп-слов. Учитывает словоформы через stem (префиксный матч основы).
+function scanBanList(text){
+  const raw=(state.global.banList||'').split(/[,\n]/).map(s=>s.trim()).filter(Boolean);
+  if(!raw.length||!text) return [];
+  const words=(text.toLowerCase().replace(/ё/g,'е').match(/[а-яa-z0-9-]+/gi)||[]);
+  const stems=words.map(stem);
+  const hits=[];
+  for(const ban of raw){
+    const banWords=ban.toLowerCase().replace(/ё/g,'е').split(/\s+/).filter(Boolean);
+    let count=0;
+    if(banWords.length>1){
+      // многословная фраза — ищем по подстроке основ
+      const low=text.toLowerCase().replace(/ё/g,'е');
+      const re=new RegExp(banWords.map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('\\s+'),'gi');
+      count=(low.match(re)||[]).length;
+    } else {
+      const bs=stem(banWords[0]||ban);
+      if(bs.length<3) count=words.filter(w=>w===banWords[0]).length;
+      else count=stems.filter(s=>s===bs||s.startsWith(bs)).length;
+    }
+    if(count>0) hits.push({word:ban, count});
+  }
+  return hits;
+}
 
 // ─── Undo/Redo for canvas ───
 const _undoStack = [];
@@ -328,14 +371,31 @@ async function callLLM(c, messages){
   if(!r.ok) throw new Error(await r.text());
   return await r.text();
 }
+// Item 31: отдельная конфигурация судьи (если judgeModel задан — используем его, иначе cfg узла)
+function judgeCfg(n){
+  const base=cfg(n);
+  const g=state.global;
+  if(g.judgeModel&&g.judgeModel.trim()){
+    return { baseURL:g.judgeBaseURL&&g.judgeBaseURL.trim()?g.judgeBaseURL.trim():base.baseURL,
+      apiKey:g.judgeApiKey&&g.judgeApiKey.trim()?g.judgeApiKey.trim():base.apiKey,
+      model:g.judgeModel.trim(), temperature:0.1 };
+  }
+  return base;
+}
+// Возвращает {score, reason}. Item 25: судья отдаёт «балл|краткая причина»
 async function runAutoEval(output, n){
-  const c=cfg(n);
+  const c=judgeCfg(n);
   const resp=await callLLM(c,[
-    {role:'system',content:'Ты — строгий редактор. Оцени текст по критериям: логическая связность, соответствие брифу, качество нарратива, отсутствие противоречий. Ответь ТОЛЬКО одним целым числом от 1 до 10. Никаких пояснений.'},
+    {role:'system',content:'Ты — строгий редактор. Оцени текст по критериям: логическая связность, соответствие брифу, качество нарратива, отсутствие противоречий. Ответь СТРОГО в формате «балл|краткая причина», где балл — целое число от 1 до 10, а причина — одно короткое предложение. Пример: «7|Хороший ритм, но провисает середина».'},
     {role:'user',content:`Проект: «${state.project.title||'без названия'}»\nБриф: ${state.project.brief||'не задан'}\n\nТекст:\n${smartTrunc(output||'',3000)}`}
   ]);
   const num=parseInt((resp||'').match(/\d+/)?.[0]||'0');
-  return Math.min(10,Math.max(1,num||5));
+  const score=Math.min(10,Math.max(1,num||5));
+  let reason='';
+  const pipe=(resp||'').indexOf('|');
+  if(pipe>=0) reason=(resp||'').slice(pipe+1).trim().slice(0,160);
+  else reason=(resp||'').replace(/^\D*\d+\D*/,'').trim().slice(0,160);
+  return {score, reason};
 }
 async function autoBibleUpdate(output, role){
   if(!['writer','logedit','line'].includes(role)) return;
@@ -761,7 +821,12 @@ ${ed._autoScore!=null?`<div style="font-size:11px;color:var(--accent);margin-top
 async function runNode(id){
   const n=node(id); const c=cfg(n);
   if(!c.apiKey){ n.status='error'; n.error='не задан API-ключ'; logRow(n.name,'error','нет ключа'); save(); renderNodes(); openSettings(); return false; }
-  const msgs=await buildMessages(n); const hash=JSON.stringify([msgs,c.model,c.temperature]);
+  const msgs=await buildMessages(n);
+  // Item 29: накопление правок в цикле — передаём предыдущий вывод как контекст для улучшения
+  if(n._loopPrev){
+    msgs.push({role:'user',content:'Предыдущая версия (улучши её, не пиши с нуля):\n'+n._loopPrev});
+  }
+  const hash=JSON.stringify([msgs,c.model,c.temperature]);
   if(n.cacheHash===hash && n.output){ n.status='done'; n.error=''; logRow(n.name,'cache','из кэша (без вызова)'); save(); renderNodes(); renderEdges(); return true; }
 
   // ── T11: Multi-variant mode ──────────────────────────────────────────────
@@ -900,14 +965,24 @@ async function runNode(id){
         });
         if(n.outputVersions.length > 5) n.outputVersions = n.outputVersions.slice(0, 5);
       }
+      // Item 11: пост-проверка стоп-слов в выводе
+      n.banHits=scanBanList(n.output);
+      if(n.banHits.length){
+        const tot=n.banHits.reduce((s,h)=>s+h.count,0);
+        logRow(n.name,'warn',`найдено ${tot} запрещённых слов: `+n.banHits.map(h=>`${h.word}×${h.count}`).join(', '));
+      }
       save(); renderNodes(); renderEdges();
-      // Auto-eval for outgoing loop edges
+      // Auto-eval for outgoing loop edges (Item 25: regression-guard + best-output)
       const loopEdges=state.edges.filter(e=>e.from===n.id && e.isLoop && e.autoEval);
       for(const le of loopEdges){
         try{
-          const score=await runAutoEval(n.output, n);
+          const {score,reason}=await runAutoEval(n.output, n);
           le._autoScore=score;
-          logRow(n.name,'ok',`авто-оценка: ${score}/10`);
+          if(!le._scoreHistory) le._scoreHistory=[];
+          le._scoreHistory.push(score);
+          // Запоминаем лучшую версию вывода (Item 25: regression-guard)
+          if(le._bestScore==null || score>le._bestScore){ le._bestScore=score; le._bestOutput=n.output; }
+          logRow(n.name,'ok',`авто-оценка: ${score}/10${reason?' — '+reason:''}`);
           save();
         }catch(err){ console.warn('auto-eval failed',err); }
       }
@@ -958,23 +1033,64 @@ function runnableNodes(){
     const anyActive=inEdges.some(e=>edgeActive(e));
     if(!anyActive){
       // Cyclic/loop retry: рёбра, условие которых не прошло, у которых есть оставшиеся попытки
-      const retryEdges=inEdges.filter(e=>{
+      const candidates=inEdges.filter(e=>{
         if(edgeActive(e)) return false;
         if(!e.isLoop && (!e.condition||!e.condition.trim())) return false;
         const src=node(e.from);
-        return src && (e.maxRetries||0)>0 && (e._retryCount||0)<e.maxRetries;
+        return src && (e.maxRetries||0)>0;
+      });
+      // Item 25: regression-guard для авто-оценочных петель — стоп при регрессе/плато
+      const retryEdges=candidates.filter(e=>{
+        if((e._retryCount||0)>=e.maxRetries) return false; // достигнут предел итераций
+        if(e.isLoop && e.autoEval){
+          const h=e._scoreHistory||[];
+          if(h.length>=2){
+            const last=h[h.length-1], prev=h[h.length-2];
+            if(last<prev) return false; // регресс — стоп, вернём лучшую версию
+            if(h.length>=3 && last<=prev && prev<=h[h.length-3]) return false; // плато 2 итерации — стоп
+          }
+        }
+        return true;
       });
       if(retryEdges.length>0){
         retryEdges.forEach(e=>{
           e._retryCount=(e._retryCount||0)+1;
           const src=node(e.from);
-          if(src){ src.status='idle'; src.output=''; src.cacheHash='';
+          if(src){
+            // Item 29: накапливаем правки — прошлый вывод идёт в следующую итерацию как контекст
+            src._loopPrev=src.output||'';
+            src.status='idle'; src.output=''; src.cacheHash='';
             logRow(src.name,'retry',`Повтор ${e._retryCount}/${e.maxRetries}${e.isLoop?' (петля)':' — условие не прошло'}`); }
         });
         save(); return false;
       }
+      // Выход из петли: подставляем лучшую версию вывода (Item 25), а не последнюю
+      candidates.forEach(e=>{
+        const src=node(e.from);
+        if(src && e.isLoop && e.autoEval && e._bestOutput!=null && e._bestOutput!==src.output){
+          const lastScore=(e._scoreHistory||[]).slice(-1)[0];
+          logRow(src.name,'ok',`Петля завершена — выбрана лучшая версия (балл ${e._bestScore}/10 против последней ${lastScore!=null?lastScore+'/10':'?'})`);
+          src.output=e._bestOutput;
+        }
+        if(src) delete src._loopPrev;
+      });
       n.status='skip'; logRow(n.name,'skip','все условия рёбер → false, узел пропущен'); save(); return false;
     }
+    // Узел становится runnable: петля вышла по условию/порогу.
+    // Item 25: если лучшая версия была раньше последней — подставляем её. Чистим контекст накопления.
+    inEdges.forEach(e=>{
+      if(!edgeActive(e)) return;
+      const src=node(e.from);
+      if(!src) return;
+      if(e.isLoop && e.autoEval && e._bestOutput!=null && e._bestScore!=null){
+        const lastScore=(e._scoreHistory||[]).slice(-1)[0];
+        if(lastScore!=null && e._bestScore>lastScore && e._bestOutput!==src.output){
+          logRow(src.name,'ok',`Петля завершена — выбрана лучшая версия (балл ${e._bestScore}/10 против последней ${lastScore}/10)`);
+          src.output=e._bestOutput;
+        }
+      }
+      if(src._loopPrev) delete src._loopPrev;
+    });
     return true;
   });
 }
@@ -999,8 +1115,8 @@ async function runPipeline(resume){
     if(!state.runs) state.runs=[];
     state.runs.unshift({t:Date.now(),nodes:JSON.parse(JSON.stringify(state.nodes)),edges:JSON.parse(JSON.stringify(state.edges))});
     if(state.runs.length>5) state.runs.pop();
-    state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;});
-    state.edges.forEach(e=>{ e._retryCount=0; });
+    state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;delete n._loopPrev;n.failedWithDownstream=false;});
+    state.edges.forEach(e=>{ e._retryCount=0; e._scoreHistory=[]; e._bestScore=null; e._bestOutput=null; });
     hideCompletionBanner();
     save(); renderNodes(); renderEdges();
     // Предоценка стоимости
@@ -1015,8 +1131,8 @@ async function runPipeline(resume){
   while(true){
     if(state.global.costCapUSD>0 && projectCost()>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
     const wave=runnableNodes(); if(!wave.length) break;
-    // Параллельный запуск независимых узлов одной волны
-    const results=await Promise.all(wave.map(async n=>{
+    // Параллельный запуск независимых узлов одной волны (Item 27: семафор ограничивает конкурентность)
+    const runOne=async n=>{
       const wasAborted=abortCtrl.signal.aborted;
       if(wasAborted){ n.status='idle'; return 'abort'; }
       const ok=await runNode(n.id);
@@ -1025,10 +1141,22 @@ async function runPipeline(resume){
       // 3.4: при ошибке не останавливаем весь пайплайн — ставим skip, даём downstream пустой контекст
       if(!ok && n.status==='error' && !abortCtrl.signal.aborted){
         n.status='error'; // downstream получит пустой output — это нормально
+        // Item 28: помечаем узел, у которого есть downstream-потребители
+        if(state.edges.some(e=>e.from===n.id)){
+          n.failedWithDownstream=true;
+          logRow(n.name,'error','⚠ АГЕНТ УПАЛ — у него есть зависимые узлы, контекст для них будет пустым'+
+            (state.global.onErrorPolicy==='pause'?' (политика: ПАУЗА)':''));
+        }
         return 'error';
       }
       return ok?'ok':'abort';
-    }));
+    };
+    const results=await runWithLimit(wave.map(n=>()=>runOne(n)), state.global.maxConcurrent||3);
+    // Item 28: при политике "pause" останавливаем пайплайн, если упал узел с downstream
+    if(state.global.onErrorPolicy==='pause' && state.nodes.some(n=>n.status==='error'&&n.failedWithDownstream)){
+      toast('⏸ Пайплайн на паузе: агент упал (политика «пауза при провале»)','err');
+      break;
+    }
     if(results.includes('abort')) break;
     if(state.nodes.some(n=>n.status==='variants')){
       toast('Выберите вариант — пайплайн ждёт 🔀','warn');
@@ -1047,15 +1175,62 @@ async function runPipeline(resume){
   running=false; $('#run-btn').disabled=false; render();
   // 3.5: итог в журнале с cache hit rate
   const done=state.nodes.filter(n=>n.status==='done').length, total=state.nodes.length;
-  if(totalRan>0) logRow('Пайплайн','ok',`${done}/${total} агентов · кэш: ${cacheHits}/${totalRan}`);
-  if(state.nodes.every(n=>n.status==='done'||n.status==='error')){
-    toast(done===total?'Конвейер завершён ✓':'Завершён с ошибками: '+done+'/'+total,done===total?'ok':'warn');
+  const errCount=state.nodes.filter(n=>n.status==='error').length;
+  if(totalRan>0) logRow('Пайплайн',errCount?'warn':'ok',`${done}/${total} агентов · кэш: ${cacheHits}/${totalRan}`+(errCount?` · упало: ${errCount}`:''));
+  if(errCount) logRow('Пайплайн','warn',`Готово частично: ${done} из ${total} (упавшие: ${state.nodes.filter(n=>n.status==='error').map(n=>n.name).join(', ')})`);
+  if(state.nodes.every(n=>n.status==='done'||n.status==='error'||n.status==='skip')){
+    toast(errCount===0?'Конвейер завершён ✓':'Готово частично: '+done+' из '+total,errCount===0?'ok':'warn');
     if(done>0) showCompletionBanner();
   }
   // Авто-оценка: если флаг включён и есть результаты — фоновый LLM-judge
   if(state.global.autoEval && done>0 && hasKey()) autoEvalPipeline();
   // Авто-бэкап после каждого успешного прогона
   if(state.global.autoBackup && done>0) autoBackupNow(true);
+}
+// Item 30: прогон подграфа «отсюда вниз» — узел + все его потомки (BFS)
+async function runFromNode(id){
+  if(running){ toast('Пайплайн уже выполняется','warn'); return; }
+  if(!hasKey()){ toast('Сначала задайте API-ключ','err'); return openSettings(); }
+  const start=node(id); if(!start) return;
+  // BFS: собрать целевой узел + всех потомков
+  const sub=new Set([id]), q=[id];
+  while(q.length){
+    const cur=q.shift();
+    state.edges.filter(e=>e.from===cur && !e.isLoop).forEach(e=>{ if(!sub.has(e.to)){ sub.add(e.to); q.push(e.to); } });
+  }
+  // Сбросить ТОЛЬКО узлы подграфа (предков не трогаем — они останутся done)
+  state.nodes.forEach(n=>{
+    if(sub.has(n.id)){ n.status='idle'; n.error=''; n.approved=false; n.cacheHash=''; delete n._loopPrev; n.failedWithDownstream=false; }
+  });
+  state.edges.forEach(e=>{ if(sub.has(e.from)){ e._retryCount=0; e._scoreHistory=[]; e._bestScore=null; e._bestOutput=null; } });
+  hideCompletionBanner();
+  save(); renderNodes(); renderEdges();
+  abortCtrl=new AbortController();
+  running=true; $('#run-btn').disabled=true; $('#run-btn').textContent='⏳ Работает…'; render();
+  logRow(start.name,'ok',`▶▶ Прогон отсюда вниз: ${sub.size} узлов`);
+  let totalRan=0;
+  while(true){
+    if(state.global.costCapUSD>0 && projectCost()>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
+    // Волны, ограниченные подмножеством sub (runnableNodes уже ждёт готовых предков)
+    const wave=runnableNodes().filter(n=>sub.has(n.id));
+    if(!wave.length) break;
+    const runOne=async n=>{
+      if(abortCtrl.signal.aborted){ n.status='idle'; return 'abort'; }
+      const ok=await runNode(n.id); totalRan++;
+      if(!ok && n.status==='error' && !abortCtrl.signal.aborted){
+        if(state.edges.some(e=>e.from===n.id)) n.failedWithDownstream=true;
+        return 'error';
+      }
+      return ok?'ok':'abort';
+    };
+    const results=await runWithLimit(wave.map(n=>()=>runOne(n)), state.global.maxConcurrent||3);
+    if(results.includes('abort')) break;
+    if(state.nodes.some(n=>n.status==='variants'||n.status==='review')){ toast('Пайплайн ждёт действия','warn'); break; }
+  }
+  running=false; $('#run-btn').disabled=false; render();
+  const done=state.nodes.filter(n=>sub.has(n.id)&&n.status==='done').length;
+  if(totalRan>0) logRow('Пайплайн','ok',`Прогон отсюда: ${done}/${sub.size} узлов выполнено`);
+  if(done>0) showCompletionBanner();
 }
 async function autoEvalPipeline(){
   const c=state.global; const pr=state.project;
@@ -1201,6 +1376,7 @@ function openNode(id){
     <div class="actions"><button class="btn ok" id="f-save">Сохранить</button>
       <button class="btn ghost" id="f-diff">± Diff промта</button>
       <button class="btn ghost" id="f-run">▶ Прогнать</button>
+      <button class="btn ghost" data-action="run-from" data-id="${n.id}">▶▶ Прогнать отсюда вниз</button>
       <button class="btn ghost" id="f-preview">👁 Промт</button>
       <button class="btn ghost" id="f-clone">⧉ Дублировать</button>
       <button class="btn danger" id="f-del">Удалить</button></div>
@@ -1271,6 +1447,22 @@ function openSettings(){
     <label class="check"><input type="checkbox" id="g-eval" ${g.autoEval?'checked':''}> Авто-оценка после пайплайна (LLM-judge: 4 критерия, запись в журнал)</label>
     <div class="field"><label>Таймаут приёмки, мин (0 = без)</label><input id="g-aptout" type="number" min="0" value="${g.approvalTimeoutMin||0}">
       <div class="hint">Если агент ждёт одобрения дольше — пайплайн прерывается автоматически.</div></div>
+    <div class="row2">
+      <div class="field"><label>Макс. одновременных запросов</label><input id="g-maxconc" type="number" min="1" max="20" value="${g.maxConcurrent||3}">
+        <div class="hint">Семафор: ограничивает параллельные вызовы LLM в одной волне (защита от 429 / rate-limit).</div></div>
+      <div class="field"><label>При провале агента</label>
+        <select id="g-onerr">
+          <option value="continue" ${g.onErrorPolicy!=='pause'?'selected':''}>Продолжить (downstream с пустым контекстом)</option>
+          <option value="pause" ${g.onErrorPolicy==='pause'?'selected':''}>Пауза, если есть зависимые узлы</option>
+        </select></div>
+    </div>
+    <div class="section-label">⚖️ Отдельный судья авто-оценки (необязательно)</div>
+    <div class="field"><label>Модель судьи</label><input id="g-judge-model" value="${esc(g.judgeModel||'')}" placeholder="пусто — модель агента">
+      <div class="hint">Если задана — авто-оценку петель делает эта модель, а не та, что писала текст.</div></div>
+    <div class="row2">
+      <div class="field"><label>Base URL судьи</label><input id="g-judge-base" value="${esc(g.judgeBaseURL||'')}" placeholder="пусто — как у агента"></div>
+      <div class="field"><label>API-ключ судьи</label><input id="g-judge-key" type="password" value="${esc(g.judgeApiKey||'')}" placeholder="пусто — как у агента"></div>
+    </div>
     <div class="section-label">💾 Резервные копии</div>
     <div class="field"><label>Папка резервных копий</label>
       <input id="g-bkdir" value="${esc(g.backupDir||'')}" placeholder="По умолчанию: backups/ рядом с server.js">
@@ -1331,6 +1523,11 @@ function openSettings(){
       g.autoEval=b.querySelector('#g-eval').checked;
       g.fallbackURL=b.querySelector('#g-fallback').value.trim();
       g.approvalTimeoutMin=parseInt(b.querySelector('#g-aptout').value)||0;
+      g.maxConcurrent=Math.max(1,parseInt(b.querySelector('#g-maxconc')?.value)||3);
+      g.onErrorPolicy=b.querySelector('#g-onerr')?.value==='pause'?'pause':'continue';
+      g.judgeModel=b.querySelector('#g-judge-model')?.value.trim()||'';
+      g.judgeBaseURL=b.querySelector('#g-judge-base')?.value.trim()||'';
+      g.judgeApiKey=b.querySelector('#g-judge-key')?.value.trim()||'';
       g.apiKeys=b.querySelector('#g-keys').value; _keyIdx=0;
       g.backupDir=b.querySelector('#g-bkdir').value.trim();
       g.backupIntervalMin=parseInt(b.querySelector('#g-bkint').value)||10;
@@ -1726,6 +1923,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
     if(hitPath) hitPath.dispatchEvent(new MouseEvent('click',{bubbles:true}));
   }
   else if(a==='edit-input') openInput(); else if(a==='open-node') openNode(id); else if(a==='run-node') runNode(id);
+  else if(a==='run-from'){ closeDrawer(); runFromNode(id); }
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
   else if(a==='restore-version'){
     const nodeId = t.dataset.node;
@@ -2163,10 +2361,32 @@ function showCompletionBanner(){
   const done=state.nodes.filter(n=>n.output);
   if(!done.length) return;
   const words=done.reduce((s,n)=>s+(n.output.match(/\S+/g)||[]).length,0);
-  $('#cb-stats').textContent=`${done.length} агентов · ~${words.toLocaleString('ru-RU')} слов · ${money(projectCost())}`;
-  $('#completion-banner').style.display='flex';
+  const errCount=state.nodes.filter(n=>n.status==='error').length;
+  const total=state.nodes.length;
+  const cb=$('#completion-banner');
+  const txt=cb?.querySelector('.cb-text');
+  // Item 28: при частичном провале — "Готово частично" + кнопка повтора упавших
+  if(errCount){
+    if(txt) txt.innerHTML=`⚠ <span id="cb-stats">Готово частично: ${done.length} из ${total} · ${errCount} упало · ${money(projectCost())}</span>`;
+  } else {
+    if(txt) txt.innerHTML=`✅ <span id="cb-stats">${done.length} агентов · ~${words.toLocaleString('ru-RU')} слов · ${money(projectCost())}</span>`;
+  }
+  const retryBtn=$('#cb-retry'); if(retryBtn) retryBtn.style.display=errCount?'':'none';
+  cb.style.display='flex';
 }
 function hideCompletionBanner(){ const b=$('#completion-banner'); if(b) b.style.display='none'; }
+// Item 28: сброс упавших узлов в idle и повторный прогон только их (и зависимых от них волн)
+function retryFailedNodes(){
+  const failed=state.nodes.filter(n=>n.status==='error');
+  if(!failed.length){ toast('Нет упавших агентов'); return; }
+  failed.forEach(n=>{ n.status='idle'; n.error=''; n.output=''; n.cacheHash=''; n.failedWithDownstream=false; });
+  // skip-узлы тоже сбрасываем — они могли быть пропущены из-за пустого контекста
+  state.nodes.filter(n=>n.status==='skip').forEach(n=>{ n.status='idle'; n.cacheHash=''; });
+  hideCompletionBanner();
+  logRow('Пайплайн','retry',`Повтор упавших: ${failed.map(n=>n.name).join(', ')}`);
+  save(); renderNodes(); renderEdges();
+  runPipeline(true);
+}
 
 /* ============ ОНБОРДИНГ ============ */
 function showOnboarding(){
@@ -2241,6 +2461,7 @@ $('#cb-read').onclick=()=>switchView('reader');
 $('#cb-docx').onclick=exportDocx;
 $('#cb-epub').onclick=exportEpub;
 $('#cb-dismiss').onclick=hideCompletionBanner;
+{ const _cbRetry=$('#cb-retry'); if(_cbRetry) _cbRetry.onclick=retryFailedNodes; }
 showOnboardingIfNeeded();
 // Меню «⋯ Ещё»
 const moreBtn=$('#more-btn'), moreDrop=$('#more-dropdown');
