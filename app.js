@@ -96,10 +96,10 @@ function defaultState(){
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
-    userTemplates:[], snippets:[],
+    userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
-      backupDir:'', autoBackup:true, backupIntervalMin:10, gdriveClientId:'', gdriveLastBackup:null, banList:'',
+      backupDir:'', autoBackup:true, backupIntervalMin:10, lastBackupTs:0, gdriveClientId:'', gdriveLastBackup:null, banList:'',
       maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'' },
     nodes, edges };
 }
@@ -123,8 +123,9 @@ function save(){
   if(state.log.length>100) state.log=state.log.slice(0,100);
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
-    // Транзиентные поля не сериализуем: _vec (TF-IDF), а также служебные поля петли (Item 25/29)
-    const data=JSON.stringify(state,(k,v)=>(k==='_vec'||k==='_bestOutput'||k==='_scoreHistory'||k==='_loopPrev')?undefined:v);
+    // Транзиентные поля не сериализуем: _vec (TF-IDF), служебные поля петли (Item 25/29),
+    // а также #48 lastRequest/lastRawOutput (точный снимок последнего вызова — только для UI).
+    const data=JSON.stringify(state,(k,v)=>(k==='_vec'||k==='_bestOutput'||k==='_scoreHistory'||k==='_loopPrev'||k==='lastRequest'||k==='lastRawOutput')?undefined:v);
     if(data.length>4*1024*1024) toast('⚠ Хранилище почти полно ('+Math.round(data.length/1024)+' KB). Очистите журнал или экспортируйте.','warn');
     localStorage.setItem(KEY,data);
   },40);
@@ -132,28 +133,128 @@ function save(){
 
 /* ════ BACKUP ════════════════════════════════════════════════════════ */
 let _backupTimer=null, _lastBackupHash='';
+// #50: устойчивый индикатор надёжности бэкапа
+let _backupErrorNotified=false; // одноразовый тост при первой silent-ошибке
+
+/* ── #50: мини-обёртка IndexedDB (без библиотек) ──
+   localStorage ограничен ~5МБ и может молча падать на больших проектах;
+   дублируем снимок состояния в IndexedDB, который этому лимиту не подвластен. */
+const IDB_NAME='izd_backup', IDB_STORE='kv';
+let _idbPromise=null;
+function _idbOpen(){
+  if(_idbPromise) return _idbPromise;
+  _idbPromise=new Promise((resolve,reject)=>{
+    if(!('indexedDB' in window)) return reject(new Error('IndexedDB недоступен'));
+    const req=indexedDB.open(IDB_NAME,1);
+    req.onupgradeneeded=()=>{ const db=req.result; if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE); };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error||new Error('open failed'));
+  });
+  return _idbPromise;
+}
+function idbSet(key,val){
+  return _idbOpen().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).put(val,key);
+    tx.oncomplete=()=>resolve(true);
+    tx.onerror=()=>reject(tx.error||new Error('put failed'));
+  }));
+}
+function idbGet(key){
+  return _idbOpen().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(IDB_STORE,'readonly');
+    const r=tx.objectStore(IDB_STORE).get(key);
+    r.onsuccess=()=>resolve(r.result);
+    r.onerror=()=>reject(r.error||new Error('get failed'));
+  }));
+}
+
+// #50: дублируем снимок в IndexedDB под ключом 'autosave'
+async function idbBackupNow(){
+  try{
+    const data=JSON.stringify(state,safeReplacer);
+    await idbSet('autosave',{ts:Date.now(),title:state.project.title||'',data});
+    return true;
+  }catch(e){ console.warn('idbBackupNow failed',e); return false; }
+}
 
 async function autoBackupNow(silent=false){
   const data=JSON.stringify(state,safeReplacer);
+  // Дублируем в IndexedDB всегда (быстро, локально, без сети)
+  idbBackupNow();
   // Избегаем дублирующих копий при отсутствии изменений
   const hash=data.length+'_'+data.slice(-64);
   if(hash===_lastBackupHash){ if(!silent) toast('Нет изменений с последней копии'); return; }
   try{
     const res=await fetch('/api/backup',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({backupDir:state.global.backupDir||'', state:data})});
-    if(!res.ok){ const t=await res.text(); if(!silent) toast('Ошибка бэкапа: '+t.slice(0,80),'err'); return; }
+    if(!res.ok){ const t=await res.text(); _onBackupFail(silent,'Ошибка бэкапа: '+t.slice(0,80)); return; }
     const j=await res.json();
     _lastBackupHash=hash;
+    state.global.lastBackupTs=Date.now();
+    _backupErrorNotified=false;
     if(!silent) toast('💾 Копия сохранена: '+j.file,'ok');
     else        logRow('Бэкап','ok',j.file);
-  }catch(e){ if(!silent) toast('Бэкап недоступен: '+e.message,'err'); }
+    updateBackupState();
+  }catch(e){ _onBackupFail(silent,'Бэкап недоступен: '+e.message); }
+}
+// #50: при ошибке (в т.ч. silent) НЕ молчим — журнал + одноразовый тост + индикатор
+function _onBackupFail(silent,msg){
+  logRow('Бэкап','error',msg);
+  if(!silent){ toast(msg,'err'); }
+  else if(!_backupErrorNotified){ _backupErrorNotified=true; toast('⚠ '+msg+' — копии в файл не идут (но дубль в браузере сохранён)','warn'); }
+  updateBackupState();
+}
+
+// #50: устойчивый индикатор статуса бэкапа в шапке (id=backup-state)
+function updateBackupState(){
+  const el=$('#backup-state'); if(!el) return;
+  if(!state.global.autoBackup){ el.style.display='none'; return; }
+  el.style.display='';
+  const ts=state.global.lastBackupTs||0;
+  const ageMin=ts?(Date.now()-ts)/60000:Infinity;
+  if(ageMin>10){
+    el.textContent=ts?'⚠ бэкап не идёт':'⚠ нет копий';
+    el.className='hint-pill backup-warn';
+    el.title=ts?('Последняя успешная копия в файл: '+new Date(ts).toLocaleString('ru-RU')+' (>10 мин назад). Дубль в браузере (IndexedDB) сохраняется.'):'Файловых копий ещё не было. Проверьте папку бэкапа в настройках.';
+  } else {
+    el.textContent='💾';
+    el.className='hint-pill backup-ok';
+    el.title='Бэкап работает. Последняя копия: '+new Date(ts).toLocaleString('ru-RU');
+  }
 }
 
 function scheduleBackup(){
   clearInterval(_backupTimer);
-  if(!state.global.autoBackup) return;
+  if(!state.global.autoBackup){ updateBackupState(); return; }
   const ms=Math.max(1,state.global.backupIntervalMin||10)*60*1000;
   _backupTimer=setInterval(()=>autoBackupNow(true), ms);
+  updateBackupState();
+}
+// #50: проверять «свежесть» индикатора раз в минуту, даже без новых бэкапов
+setInterval(()=>{ try{ updateBackupState(); }catch(e){} }, 60000);
+
+// #50: при загрузке — если localStorage пуст/повреждён, предложить восстановление из IndexedDB
+async function checkIdbRecovery(){
+  try{
+    const raw=localStorage.getItem(KEY);
+    let lsBad=false;
+    if(!raw){ lsBad=true; }
+    else { try{ const p=JSON.parse(raw); if(!p||!p.nodes) lsBad=true; }catch{ lsBad=true; } }
+    if(!lsBad) return;
+    const snap=await idbGet('autosave');
+    if(!snap||!snap.data) return;
+    let parsed; try{ parsed=JSON.parse(snap.data); }catch{ return; }
+    if(!parsed||!parsed.nodes) return;
+    const when=new Date(snap.ts).toLocaleString('ru-RU');
+    if(confirm(`Локальное хранилище пусто или повреждено.\n\nНайдена резервная копия в браузере (IndexedDB) от ${when}`+(snap.title?` — «${snap.title}»`:'')+`.\n\nВосстановить?`)){
+      const def=defaultState();
+      if(parsed.global) parsed.global=Object.assign({},def.global,parsed.global);
+      state=Object.assign(def,parsed);
+      rebuildBibleVecs(); save(); render();
+      toast('✅ Восстановлено из резервной копии браузера','ok');
+    }
+  }catch(e){ console.warn('checkIdbRecovery failed',e); }
 }
 
 async function openBackupRestore(){
@@ -434,7 +535,11 @@ async function callLLM(c, messages){
     })
   });
   if(!r.ok) throw new Error('HTTP '+r.status+': '+(await r.text()).slice(0,160));
-  return await r.text();
+  const resp = await r.text();
+  // #47: callLLM обслуживает скрытые (служебные) вызовы — autoDistill / autoBibleUpdate /
+  // runAutoEval. Они платные, но не привязаны к узлу, поэтому учитываем их отдельно.
+  trackAux((messages||[]).map(m=>m.content).join(' '), resp, (c&&c.model)||state.global.model, 'Служебный вызов');
+  return resp;
 }
 // Item 31: отдельная конфигурация судьи (если judgeModel задан — используем его, иначе cfg узла)
 function judgeCfg(n){
@@ -491,6 +596,19 @@ async function autoBibleUpdate(output, role){
   }
 }
 const tokEst=s=>{ s=s||''; const cyr=(s.match(/[а-яёА-ЯЁ]/g)||[]).length; return Math.max(1,Math.round(s.length/(cyr/s.length>.5?2:4))); };
+// #47: единый учёт скрытых (служебных) LLM-вызовов, которые идут мимо узлов.
+// label — что это за вызов (для журнала), model — модель для расценок.
+function trackAux(inText,outText,model,label){
+  try{
+    const tIn=tokEst(inText||''), tOut=tokEst(outText||'');
+    const p=PRICES[model||state.global.model]||{in:0.14,out:0.28};
+    const cost=tIn/1e6*p.in + tOut/1e6*p.out;
+    state.auxTokens=(state.auxTokens||0)+tIn+tOut;
+    state.auxCost=(state.auxCost||0)+cost;
+    logRow(label||'Служебный вызов','aux',`~${tIn+tOut} ток. · ${money(cost)} (${model||state.global.model})`,{cost});
+    return cost;
+  }catch(e){ return 0; }
+}
 const nodeCost=n=>{ const p=PRICES[cfg(n).model]||{in:0.14,out:0.28}; return (n.tokensIn||0)/1e6*p.in+(n.tokensOut||0)/1e6*p.out; };
 const projectCost=()=>state.nodes.reduce((s,n)=>s+nodeCost(n),0);
 const money=v=>'$'+v.toFixed(v<1?4:2);
@@ -613,7 +731,14 @@ function render(){
   $('#proj-aud').value=state.project.audience; $('#proj-brief').value=state.project.brief;
   const _ecb=$('#proj-edit-mode'); if(_ecb) _ecb.checked=state.project.mode==='edit';
   const ks=$('#api-state'); ks.textContent=hasKey()?'● ключ задан':'● ключ не задан'; ks.classList.toggle('ok',hasKey());
-  $('#cost-state').textContent='Σ '+money(projectCost());
+  // #47: Σ = стоимость узлов + скрытые служебные вызовы (autoDistill/autoEval/…)
+  const _pc=projectCost(), _ac=state.auxCost||0;
+  const _cs=$('#cost-state');
+  if(_cs){
+    _cs.textContent='Σ '+money(_pc+_ac)+(_ac>0?' (+'+money(_ac)+' вспом.)':'');
+    _cs.title=_ac>0?`Узлы: ${money(_pc)} · служебные вызовы: ${money(_ac)} (~${state.auxTokens||0} ток.)`:'Суммарная стоимость токенов';
+  }
+  updateBackupState();
   const paused=isPaused();
   const rb=$('#run-btn'); rb.textContent=paused?'▶ Продолжить':'▶ Запустить';
   const sb=$('#stop-btn'); if(sb){ sb.style.display=running?'':'none'; }
@@ -1219,6 +1344,10 @@ async function runNode(id){
         const b=document.getElementById('body-'+id); if(b){ b.classList.remove('empty'); b.textContent=acc; b.scrollTop=b.scrollHeight; }
         n.output=acc; const now=Date.now(); if(now-lastPartialSave>2000){ save(); lastPartialSave=now; } }
       if(!acc.trim()) throw new Error('пустой ответ от модели');
+      // #48: фиксируем ТО, ЧТО РЕАЛЬНО ушло и вернулось (для секции «📡 Что ушло/вернулось»).
+      // Транзиентные поля — исключены из save() (рядом с _vec/_loopPrev).
+      n.lastRequest={ messages: msgs, model: c.model, temperature: c.temperature, ts: Date.now() };
+      n.lastRawOutput=acc; // сырой ответ ДО postProcess
       n.output=acc; n.summary=acc.length>600?acc.slice(0,600)+'…':acc; n.cacheHash=hash;
       if(state.global.autoSummarize&&acc.length>800){
         try{ const sc=cfg(n);
@@ -1228,7 +1357,8 @@ async function runNode(id){
                 {role:'user',content:acc.slice(0,6000)}]})});
           if(sr.ok){const rd=sr.body.getReader(),dc2=new TextDecoder();let sm='';
             while(true){const{value:v,done:d}=await rd.read();if(d)break;sm+=dc2.decode(v,{stream:true});}
-            if(sm.trim())n.summary=sm.trim();}
+            if(sm.trim())n.summary=sm.trim();
+            trackAux(acc.slice(0,6000), sm, sc.model, 'Авто-саммари');}
         }catch{} // саммари-ошибка не должна рушить пайплайн
       }
       // Постпроцессор вывода
@@ -1273,7 +1403,10 @@ async function runNode(id){
         }catch(err){ console.warn('auto-eval failed',err); }
       }
       // Auto-bible update (non-blocking, fire-and-forget)
-      autoBibleUpdate(n.output, TEMPLATES.find(t=>t.name===n.name)?.role || '').catch(()=>{});
+      const _role=TEMPLATES.find(t=>t.name===n.name)?.role || '';
+      autoBibleUpdate(n.output, _role).catch(()=>{});
+      // #50: после каждого успешного prose-узла дублируем снимок в IndexedDB (надёжность)
+      if(BOOK_ROLES.has(_role) && n.output && n.output.length>200) idbBackupNow();
       return true;
     }catch(err){
       if(err.name==='AbortError'){ n.status='idle'; n.error=''; if(acc) n.output=acc; logRow(n.name,'error','остановлено'); save(); renderNodes(); renderEdges(); return false; }
@@ -1406,6 +1539,8 @@ async function runPipeline(resume){
     if(state.runs.length>5) state.runs.pop();
     state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;delete n._loopPrev;n.failedWithDownstream=false;});
     state.edges.forEach(e=>{ e._retryCount=0; e._scoreHistory=[]; e._bestScore=null; e._bestOutput=null; });
+    // #47: сбрасываем счётчик скрытых служебных вызовов на новый прогон
+    state.auxTokens=0; state.auxCost=0;
     hideCompletionBanner();
     save(); renderNodes(); renderEdges();
     // Предоценка стоимости
@@ -1418,7 +1553,7 @@ async function runPipeline(resume){
   running=true; $('#run-btn').disabled=true; $('#run-btn').textContent='⏳ Работает…'; render();
   let cacheHits=0, totalRan=0;
   while(true){
-    if(state.global.costCapUSD>0 && projectCost()>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
+    if(state.global.costCapUSD>0 && (projectCost()+(state.auxCost||0))>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
     const wave=runnableNodes(); if(!wave.length) break;
     // Параллельный запуск независимых узлов одной волны (Item 27: семафор ограничивает конкурентность)
     const runOne=async n=>{
@@ -1499,7 +1634,7 @@ async function runFromNode(id){
   logRow(start.name,'ok',`▶▶ Прогон отсюда вниз: ${sub.size} узлов`);
   let totalRan=0;
   while(true){
-    if(state.global.costCapUSD>0 && projectCost()>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
+    if(state.global.costCapUSD>0 && (projectCost()+(state.auxCost||0))>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
     // Волны, ограниченные подмножеством sub (runnableNodes уже ждёт готовых предков)
     const wave=runnableNodes().filter(n=>sub.has(n.id));
     if(!wave.length) break;
@@ -1533,6 +1668,7 @@ async function autoEvalPipeline(){
     if(!res.ok) return;
     const rd=res.body.getReader(),dc=new TextDecoder();let acc='';
     while(true){const{value,done}=await rd.read();if(done)break;acc+=dc.decode(value,{stream:true});}
+    trackAux(`Проект: «${pr.title}»\nБриф: ${pr.brief}\n\n${outputs}`, acc, c.model, 'Авто-оценка пайплайна');
     if(acc.trim()){
       const scoreMatch=acc.match(/итого[:\s]+(\d+)\s*\/\s*40/i)||acc.match(/(\d+)\s*\/\s*40/i);
       const score=scoreMatch?parseInt(scoreMatch[1]):null;
@@ -1693,6 +1829,35 @@ function openNode(id){
     });
     versSection += '</div>';
   }
+  // #48: «Что реально ушло/вернулось» — точный снимок последнего РЕАЛЬНОГО вызова.
+  let wireSection='';
+  if(n.lastRequest && Array.isArray(n.lastRequest.messages)){
+    const lr=n.lastRequest;
+    const msgsHtml=lr.messages.map(m=>{
+      const lbl=m.role==='system'?'⚙ System':m.role==='user'?'👤 User':m.role==='assistant'?'🤖 Assistant':esc(m.role);
+      return `<div class="wire-msg"><div class="wire-role">${lbl}</div><pre class="wire-pre">${esc(m.content)}</pre></div>`;
+    }).join('');
+    const raw=n.lastRawOutput||'';
+    const processed=n.output||'';
+    const wasPostProcessed=(n.postProcess&&n.postProcess.trim())&&raw!==processed;
+    let outHtml;
+    if(wasPostProcessed){
+      outHtml=`<div class="wire-diff">
+        <div class="wire-diff-col"><div class="wire-role">Сырой ответ (до постпроцесса)</div><pre class="wire-pre">${esc(raw)}</pre></div>
+        <div class="wire-diff-col"><div class="wire-role">После постпроцесса</div><pre class="wire-pre">${esc(processed)}</pre></div>
+      </div>`;
+    } else {
+      outHtml=`<div class="wire-msg"><div class="wire-role">🤖 Ответ модели</div><pre class="wire-pre">${esc(raw||processed)}</pre></div>`;
+    }
+    const meta=`${esc(lr.model||'?')} · t°${lr.temperature ?? '?'} · ${new Date(lr.ts).toLocaleString('ru-RU')}`;
+    wireSection=`<div class="section-label">📡 Что ушло/вернулось</div>
+      <div class="hint" style="margin-bottom:6px">Точный снимок последнего реального вызова (не прогноз). ${meta}</div>
+      <details class="wire-details"><summary>📤 Отправленные сообщения (${lr.messages.length})</summary>${msgsHtml}</details>
+      <details class="wire-details" open><summary>📥 Ответ${wasPostProcessed?' (с постпроцессом — было/стало)':''}</summary>${outHtml}</details>`;
+  } else {
+    wireSection=`<div class="section-label">📡 Что ушло/вернулось</div>
+      <div class="hint" style="color:var(--faint)">Ещё не было реального вызова. Прогоните агента — здесь появятся точные отправленные сообщения и сырой ответ.</div>`;
+  }
   openDrawer(`${n.emoji} ${esc(n.name)}`,`
     <div class="row2"><div class="field"><label>Имя</label><input id="f-name" value="${esc(n.name)}"></div>
       <div class="field"><label>Должность</label><input id="f-role" value="${esc(n.role)}"></div></div>
@@ -1750,6 +1915,7 @@ function openNode(id){
     <div class="section-label">Текущий результат</div>
     ${outBlock||'<div class="hint" style="color:var(--faint)">Пока пусто.</div>'}
     ${versSection}
+    ${wireSection}
   `,b=>{
     b.querySelector('#f-global').onchange=ev=>{ b.querySelector('#own-cfg').style.display=ev.target.checked?'none':''; };
     const collect=()=>{ const np=b.querySelector('#f-prompt').value; if(np!==n.prompt){ n.promptHistory.unshift({t:Date.now(),prompt:n.prompt}); if(n.promptHistory.length>20) n.promptHistory.pop(); }
@@ -2089,12 +2255,110 @@ function openLog(){
     b.querySelector('#log-clear').onclick=()=>{ state.log=[]; save(); openLog(); };
   });
 }
+// #39: извлечь текст из .docx (ZIP) без библиотек.
+// ZIP central directory → найти word/document.xml → inflate через DecompressionStream('deflate-raw') → текст из <w:t>.
+async function docxToText(file){
+  const buf=new Uint8Array(await file.arrayBuffer());
+  const dv=new DataView(buf.buffer);
+  // Найти End Of Central Directory (сигнатура 0x06054b50), идём с конца
+  let eocd=-1;
+  for(let i=buf.length-22;i>=0;i--){ if(dv.getUint32(i,true)===0x06054b50){ eocd=i; break; } }
+  if(eocd<0) throw new Error('не похоже на docx (нет ZIP-каталога)');
+  const cdCount=dv.getUint16(eocd+10,true);
+  let p=dv.getUint32(eocd+16,true); // смещение central directory
+  let target=null;
+  for(let i=0;i<cdCount;i++){
+    if(dv.getUint32(p,true)!==0x02014b50) break;
+    const method=dv.getUint16(p+10,true);
+    const compSize=dv.getUint32(p+20,true);
+    const nameLen=dv.getUint16(p+28,true);
+    const extraLen=dv.getUint16(p+30,true);
+    const commLen=dv.getUint16(p+32,true);
+    const lho=dv.getUint32(p+42,true); // смещение локального заголовка
+    const name=new TextDecoder().decode(buf.subarray(p+46,p+46+nameLen));
+    if(name==='word/document.xml'){ target={method,compSize,lho}; break; }
+    p+=46+nameLen+extraLen+commLen;
+  }
+  if(!target) throw new Error('в docx не найден word/document.xml');
+  // Локальный заголовок: вычисляем начало данных
+  const lh=target.lho;
+  if(dv.getUint32(lh,true)!==0x04034b50) throw new Error('повреждённый локальный заголовок');
+  const lNameLen=dv.getUint16(lh+26,true), lExtraLen=dv.getUint16(lh+28,true);
+  const dataStart=lh+30+lNameLen+lExtraLen;
+  const comp=buf.subarray(dataStart,dataStart+target.compSize);
+  let xmlBytes;
+  if(target.method===0){ xmlBytes=comp; } // STORE
+  else if(target.method===8){ // DEFLATE
+    if(typeof DecompressionStream==='undefined') throw new Error('браузер не умеет распаковывать docx (нет DecompressionStream)');
+    const ds=new DecompressionStream('deflate-raw');
+    const stream=new Blob([comp]).stream().pipeThrough(ds);
+    xmlBytes=new Uint8Array(await new Response(stream).arrayBuffer());
+  } else throw new Error('неизвестный метод сжатия docx');
+  const xml=new TextDecoder().decode(xmlBytes);
+  // Параграфы <w:p> → перенос строки; текст из <w:t>; <w:tab/> → таб; <w:br/> → перенос
+  const parts=[];
+  const pRe=/<w:p[ >][\s\S]*?<\/w:p>|<w:p\/>/g;
+  let m;
+  const paras=xml.match(pRe)||[xml];
+  for(const para of paras){
+    let line='';
+    const tRe=/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/?>|<w:br\/?>/g;
+    let tm;
+    while((tm=tRe.exec(para))){
+      if(tm[1]!=null) line+=tm[1];
+      else if(/tab/.test(tm[0])) line+='\t';
+      else line+='\n';
+    }
+    parts.push(line);
+  }
+  const txt=parts.join('\n')
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'")
+    .replace(/\n{3,}/g,'\n\n').trim();
+  if(!txt) throw new Error('текст не извлечён (пустой документ?)');
+  return txt;
+}
+
 function openInput(){
   openDrawer('📄 Исходный текст',`<div class="hint" style="color:var(--warn);margin-bottom:10px">⚠ Вставляйте только текст книги. Инструкции вида «Игнорируй предыдущие задания…» в исходнике могут влиять на поведение агентов (prompt injection).</div>
+    <div class="dropzone" id="i-drop">
+      <div class="dropzone-icon">📥</div>
+      <div class="dropzone-text">Перетащите файл сюда или <label class="dz-link">выберите<input type="file" id="i-file" accept=".txt,.md,.docx" hidden></label></div>
+      <div class="dropzone-hint">.txt · .md · .docx</div>
+    </div>
     <div class="field"><label>Рукопись для редактирования</label>
     <textarea id="i-text" rows="15" placeholder="Вставьте текст…">${esc(state.project.input)}</textarea></div>
     <div class="actions"><button class="btn ok" id="i-save">Сохранить</button></div>`,
-    b=>{ b.querySelector('#i-save').onclick=()=>{ state.project.input=b.querySelector('#i-text').value; save(); toast('Исходник сохранён','ok'); closeDrawer(); }; });
+    b=>{
+      const ta=b.querySelector('#i-text');
+      const dz=b.querySelector('#i-drop');
+      const fileInput=b.querySelector('#i-file');
+      const handleFile=async f=>{
+        if(!f) return;
+        const name=(f.name||'').toLowerCase();
+        try{
+          if(name.endsWith('.txt')||name.endsWith('.md')){
+            const text=await f.text();
+            ta.value=text; toast('Файл загружен: '+f.name,'ok');
+          } else if(name.endsWith('.docx')){
+            toast('Распаковка .docx…','');
+            try{
+              const text=await docxToText(f);
+              ta.value=text; toast('📄 .docx распознан: '+f.name,'ok');
+            }catch(err){
+              console.warn('docx parse failed',err);
+              toast('Не удалось прочитать .docx ('+err.message+'). Сохраните как .txt из Word.','err');
+            }
+          } else {
+            toast('Поддерживаются .txt, .md, .docx','warn');
+          }
+        }catch(e){ toast('Ошибка чтения файла: '+e.message,'err'); }
+      };
+      fileInput.onchange=e=>handleFile(e.target.files[0]);
+      ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.add('dragover'); }));
+      ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.remove('dragover'); }));
+      dz.addEventListener('drop',e=>{ const f=e.dataTransfer?.files?.[0]; handleFile(f); });
+      b.querySelector('#i-save').onclick=()=>{ state.project.input=ta.value; save(); toast('Исходник сохранён','ok'); closeDrawer(); };
+    });
 }
 function openExport(){
   openDrawer('⬇ Экспорт / импорт',`
@@ -3888,5 +4152,7 @@ switchView(_currentView);
   });
 })();
 
-// Запуск таймера авто-бэкапа
+// Запуск таймера авто-бэкапа + индикатора
 scheduleBackup();
+// #50: предложить восстановление из IndexedDB, если localStorage пуст/повреждён
+checkIdbRecovery();
