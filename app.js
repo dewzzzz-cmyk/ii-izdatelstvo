@@ -1711,10 +1711,10 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='delete-node'){
-    if(!confirm('Удалить агента «'+esc(node(id)?.name||id)+'»?')) return;
+    const del=node(id); if(!del) return;
     state.nodes=state.nodes.filter(x=>x.id!==id);
     state.edges=state.edges.filter(e=>e.from!==id&&e.to!==id);
-    save(); render(); closeDrawer();
+    save(); render(); closeDrawer(); toast('Агент «'+del.name+'» удалён');
   }
   else if(a==='toggle-collapse'){
     const n=node(id); if(n){ n.collapsed=!n.collapsed; save(); renderNodes(); }
