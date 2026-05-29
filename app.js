@@ -58,16 +58,23 @@ const KDP_CHECKLIST =
 /* ============ СОСТОЯНИЕ ============ */
 const KEY='izd_studio_v3';
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+// Replacer для безопасной сериализации: вырезает векторы и секреты (ключи, токены).
+const SECRET_KEYS=new Set(['apiKey','apiKeys','proxyToken','gdriveClientId']);
+function safeReplacer(k,v){ if(k==='_vec') return undefined; if(SECRET_KEYS.has(k)) return ''; return v; }
 // Оценка условия ребра: JS-выражение с переменной output. Пустая строка = всегда true
 function evalCondition(cond,output){
   if(!cond||!cond.trim()) return true;
   try{ return !!new Function('output','return ('+cond+')')(output||''); }
   catch(e){ return false; }
 }
+// Включать ли вывод этого агента в собранную книгу (по роли).
+// true для пишущих/редактирующих прозу ролей; false для служебных (скаут, арт, метаданные и т.п.)
+const BOOK_ROLES=new Set(['writer','line','logedit','proof','merge','beatsheet','fanout']);
+function defaultIncludeInBook(role){ return BOOK_ROLES.has(role); }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
   output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'', outputVersions:[],
-  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false }; }
+  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'' }; }
 function checkSchema(n){
   if(!n.outputSchema||!n.outputSchema.trim()) return null; // нет схемы → всё ок
   try{
@@ -83,7 +90,7 @@ function checkSchema(n){
 function defaultState(){
   const nodes=TEMPLATES.filter(t=>!['continuity','factcheck'].includes(t.role)).map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
-  return { project:{title:'',genre:'',audience:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:''},
+  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
@@ -122,7 +129,7 @@ function save(){
 let _backupTimer=null, _lastBackupHash='';
 
 async function autoBackupNow(silent=false){
-  const data=JSON.stringify(state,(k,v)=>k==='_vec'?undefined:v);
+  const data=JSON.stringify(state,safeReplacer);
   // Избегаем дублирующих копий при отсутствии изменений
   const hash=data.length+'_'+data.slice(-64);
   if(hash===_lastBackupHash){ if(!silent) toast('Нет изменений с последней копии'); return; }
@@ -1365,6 +1372,10 @@ function openNode(id){
       <span style="font-size:11px;color:var(--dim)">0 = авто из списка (до 20)</span>
     </div>
     <label class="check"><input type="checkbox" id="f-appr" ${n.requireApproval?'checked':''}> Требовать мою приёмку (пауза конвейера)</label>
+    <label class="check"><input type="checkbox" id="f-inbook" ${(typeof n.includeInBook==='boolean'?n.includeInBook:defaultIncludeInBook(roleKeyOf(n)))?'checked':''}> 📖 Включать в книгу</label>
+    <div class="field"><label>Заголовок главы (для книги)</label>
+      <input id="f-chtitle" value="${esc(n.chapterTitle||'')}" placeholder="авто — из первого заголовка вывода или «Глава N»">
+      <div class="hint">Используется в EPUB/Word/.md/Reader вместо имени агента.</div></div>
     <div class="section-label">Подключение (API)</div>
     <label class="check"><input type="checkbox" id="f-global" ${n.useGlobal?'checked':''}> Использовать глобальные настройки</label>
     <div id="own-cfg" style="${n.useGlobal?'display:none':''}">
@@ -1391,6 +1402,7 @@ function openNode(id){
       n.outputSchema=b.querySelector('#f-schema').value.trim();
       n.postProcess=b.querySelector('#f-post').value.trim();
       n.requireApproval=b.querySelector('#f-appr').checked; n.useGlobal=b.querySelector('#f-global').checked;
+      n.includeInBook=b.querySelector('#f-inbook').checked; n.chapterTitle=b.querySelector('#f-chtitle').value.trim();
       n.baseURL=b.querySelector('#f-base').value.trim(); n.model=b.querySelector('#f-model').value.trim();
       n.apiKey=b.querySelector('#f-key').value.trim(); const tv=parseFloat(b.querySelector('#f-temp').value); n.temperature=isNaN(tv)?1:tv;
       n.variants = parseInt(b.querySelector('#f-variants')?.value) || 1;
@@ -1650,7 +1662,7 @@ function openExport(){
     b.querySelector('#x-epub').onclick=exportEpub;
     b.querySelector('#x-pdf').onclick=exportPDF;
     b.querySelector('#x-fb2').onclick=exportFb2;
-    b.querySelector('#x-exp').onclick=()=>download((state.project.title||'pipeline')+'.json', JSON.stringify(state,(k,v)=>k==='_vec'?undefined:v,2));
+    b.querySelector('#x-exp').onclick=()=>download((state.project.title||'pipeline')+'.json', JSON.stringify(state,safeReplacer,2));
     b.querySelector('#x-pipe').onclick=()=>{
       const clean={nodes:state.nodes.map(n=>({...n,output:'',summary:'',error:'',cacheHash:'',tokensIn:0,tokensOut:0,ms:0,apiKey:'',approved:false,status:'idle'})),edges:state.edges,bible:state.bible,groups:state.groups||[],global:{...state.global,apiKey:'',proxyToken:''}};
       download((state.project.title||'pipeline')+'-pipeline.json',JSON.stringify(clean,null,2)); toast('Пайплайн экспортирован (без ключей и данных)','ok');};
@@ -1663,11 +1675,11 @@ function openExport(){
   });
 }
 function exportPDF(){
-  if(!state.project.disclosure.trim()){toast('Заполните поле «Раскрытие ИИ»','err');return;}
+  remindDisclosure();
   const pr=state.project;
-  const chapters=state.nodes.filter(n=>n.output);
-  if(!chapters.length){toast('Нет результатов для PDF — запустите конвейер','err');return;}
-  const body=chapters.map(n=>`<h2>${esc(n.emoji+' '+n.name)}</h2>${md2html(typo(n.output))}`).join('<hr style="margin:20pt 0">');
+  const chapters=bookNodes();
+  if(!chapters.length){toast('Нет прозы для PDF — запустите конвейер','err');return;}
+  const body=chapters.map((n,i)=>`<h2>${esc(chapterTitleOf(n,i))}</h2>${md2html(typo(cleanProse(n)))}`).join('<hr style="margin:20pt 0">');
   const win=window.open('','_blank');
   if(!win){toast('Заблокирован всплывающий окно — разрешите для этой страницы','err');return;}
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(typo(pr.title||'Книга'))}</title>
@@ -1689,7 +1701,6 @@ hr{border:none;border-top:1px solid #bbb;margin:20pt 0}
 <h1>${esc(typo(pr.title||'Без названия'))}</h1>
 <div class="meta">
   <div>Жанр: ${esc(pr.genre||'—')} · Аудитория: ${esc(pr.audience||'—')}</div>
-  <div style="margin-top:4pt;font-style:italic">Раскрытие: ${esc(pr.disclosure)}</div>
 </div>
 <hr>
 ${body}
@@ -1699,10 +1710,10 @@ ${body}
   toast('Открыта страница печати / сохранения в PDF','ok');
 }
 function exportFb2(){
-  if(!state.project.disclosure.trim()){toast('Заполните поле «Раскрытие ИИ»','err');return;}
+  remindDisclosure();
   const pr=state.project;
-  const chapters=state.nodes.filter(n=>n.output);
-  if(!chapters.length){toast('Нет результатов для FB2 — запустите конвейер','err');return;}
+  const chapters=bookNodes();
+  if(!chapters.length){toast('Нет прозы для FB2 — запустите конвейер','err');return;}
   const X=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const md2fb2=s=>{
     s=typo(s||'');
@@ -1715,9 +1726,9 @@ function exportFb2(){
       return `<p>${p.replace(/\n/g,' ')}</p>`;
     }).filter(Boolean).join('\n    ');
   };
-  const sects=chapters.map(n=>`  <section>\n    <title><p>${X((n.emoji||'')+' '+(n.name||''))}</p></title>\n    ${md2fb2(n.output)}\n  </section>`).join('\n');
+  const sects=chapters.map((n,i)=>`  <section>\n    <title><p>${X(chapterTitleOf(n,i))}</p></title>\n    ${md2fb2(cleanProse(n))}\n  </section>`).join('\n');
   const date=new Date().toISOString().slice(0,10);
-  const xml=`<?xml version="1.0" encoding="UTF-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n      <genre>${X(pr.genre||'prose_contemporary')}</genre>\n      <author><first-name>${X(pr.title?pr.title.split(' ')[0]:'')} </first-name><last-name></last-name></author>\n      <book-title>${X(typo(pr.title||'Без названия'))}</book-title>\n      <annotation><p>${X(pr.brief||'')}</p></annotation>\n      <lang>ru</lang>\n    </title-info>\n    <document-info>\n      <author><nickname>ии-издательство</nickname></author>\n      <program-used>ИИ-Издательство</program-used>\n      <date value="${date}">${date}</date>\n      <id>${uid()}</id>\n      <version>1.0</version>\n    </document-info>\n  </description>\n  <body>\n${sects}\n  </body>\n</FictionBook>`;
+  const xml=`<?xml version="1.0" encoding="UTF-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n      <genre>${X(pr.genre||'prose_contemporary')}</genre>\n      <author><first-name>${X((pr.author||'').trim()||(pr.title?pr.title.split(' ')[0]:''))} </first-name><last-name></last-name></author>\n      <book-title>${X(typo(pr.title||'Без названия'))}</book-title>\n      <annotation><p>${X(pr.brief||'')}</p></annotation>\n      <lang>ru</lang>\n    </title-info>\n    <document-info>\n      <author><nickname>ии-издательство</nickname></author>\n      <program-used>ИИ-Издательство</program-used>\n      <date value="${date}">${date}</date>\n      <id>${uid()}</id>\n      <version>1.0</version>\n    </document-info>\n  </description>\n  <body>\n${sects}\n  </body>\n</FictionBook>`;
   download((pr.title||'book').replace(/[\\/:*?"<>|]/g,'-')+'.fb2', xml, 'application/xml');
   toast('FB2 готов','ok');
 }
@@ -1741,7 +1752,7 @@ async function backupToDrive(){
   if(!token){ toast('Сначала подключите Google Drive в настройках','err'); return; }
   const title=state.project.title||'проект';
   const filename=`ии-издательство-${title.replace(/[^\wЀ-ӿ]/g,'-')}-${new Date().toISOString().slice(0,10)}.json`;
-  const content=JSON.stringify(state,(k,v)=>k==='_vec'?undefined:v,2);
+  const content=JSON.stringify(state,safeReplacer,2);
   toast('Загружаю в Drive…');
   try{
     const searchRes=await fetch(`https://www.googleapis.com/drive/v3/files?q=name%3D%27${encodeURIComponent(filename)}%27%20and%20trashed%3Dfalse&fields=files(id,name)`,
@@ -1766,36 +1777,117 @@ async function backupToDrive(){
   }catch(err){toast('Ошибка: '+err.message,'err');}
 }
 function download(name,text,mime='text/plain'){ const u=URL.createObjectURL(new Blob([text],{type:mime})); const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
-// Типографический постпроцессинг: ASCII-символы → типографические
-function typo(s){
-  return (s||'')
+// Типографический постпроцессинг: ASCII-символы → типографические.
+// Код (```...``` и `...`) не трогаем. Кавычки в чисто-латинских вставках не «ёлочим».
+function _typoSeg(seg){
+  return seg
     .replace(/---/g,'—').replace(/--/g,'–')
-    .replace(/"([^"]+)"/g,'«$1»')          // "текст" → «текст»
+    .replace(/"([^"]+)"/g,(m,inner)=>{
+      // Не превращать в «ёлочки» английские кавычки (нет кириллицы внутри)
+      return /[а-яёА-ЯЁ]/.test(inner)?'«'+inner+'»':m;
+    })
     .replace(/[^\S\r\n]{2,}/g,' ')           // двойные пробелы (только пробелы, не переносы строк)
     .replace(/\.{3}/g,'…')                  // три точки → многоточие
     .replace(/(\d)\s*x\s*(\d)/gi,'$1×$2'); // 2 x 3 → 2×3
 }
-function exportBook(){
-  if(!state.project.disclosure.trim()){ toast('Заполните поле «Раскрытие ИИ» перед экспортом — требование KDP','err'); return; }
+function typo(s){
+  if(!s) return '';
+  // Разбиваем на сегменты: код-fence ```...```, inline-code `...`, остальное.
+  // Типографируем только не-код.
+  const parts=s.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
+  return parts.map(p=>(p.startsWith('```')||(p.startsWith('`')&&p.endsWith('`')))?p:_typoSeg(p)).join('');
+}
+/* ============ СБОРКА КНИГИ (общие хелперы) ============ */
+// Определяет ключ роли узла (n.role хранит ДОЛЖНОСТЬ — title, поэтому ищем шаблон).
+function roleKeyOf(n){
+  if(n.nodeType && SPEC_NODES[n.nodeType]) return n.nodeType;
+  const byName=TEMPLATES.find(t=>t.name===n.name);
+  if(byName) return byName.role;
+  const byTitle=TEMPLATES.find(t=>t.title===n.role);
+  if(byTitle) return byTitle.role;
+  return n.role||'';
+}
+// Должен ли узел попасть в книгу. Учитывает явный флаг; иначе считает по роли.
+function nodeInBook(n){
+  if(!n||!n.output) return false;
+  if(typeof n.includeInBook==='boolean') return n.includeInBook;
+  return defaultIncludeInBook(roleKeyOf(n));
+}
+// Узлы для книги в правильном порядке (топологическом).
+function bookNodes(){ return topoOrder().map(id=>node(id)).filter(nodeInBook); }
+// Заголовок главы: явный chapterTitle → первый H1/H2 из вывода → «Глава N».
+function chapterTitleOf(n,index){
+  if(n.chapterTitle&&n.chapterTitle.trim()) return n.chapterTitle.trim();
+  const m=(n.output||'').split('\n').map(l=>l.match(/^#{1,2}\s+(.+?)\s*$/)).find(Boolean);
+  if(m) return m[1].trim();
+  return 'Глава '+(index+1);
+}
+// Чистая проза: если в выводе есть блок текста — вернуть только его (без списка правок).
+function cleanProse(n){
+  const out=n.output||'';
+  let m=out.match(/===\s*ТЕКСТ\s*===\s*([\s\S]*?)\s*===\s*КОНЕЦ\s*===/i);
+  if(m) return m[1].trim();
+  m=out.match(/^##+\s*(?:Исправленный|Итоговый)\s+текст\s*$([\s\S]*)$/im);
+  if(m) return m[1].trim();
+  return out;
+}
+// Front matter (титульный лист) книги.
+function frontMatter(){
   const pr=state.project;
-  const term=state.nodes.filter(n=>!state.edges.some(e=>e.from===n.id)); // конечные узлы
-  const body=state.nodes.filter(n=>n.output).map(n=>`### ${n.emoji} ${n.name} — ${n.role}\n\n${typo(n.output)}`).join('\n\n---\n\n');
-  download((pr.title||'book')+'.md',
-    `# ${typo(pr.title||'Без названия')}\n\n> Раскрытие: ${pr.disclosure}\n\nЖанр: ${pr.genre} · Аудитория: ${pr.audience}\n\n${KDP_CHECKLIST}\n\n---\n\n${body||'(нет результатов — запустите конвейер)'}\n`);
-  toast('Книга собрана','ok');
+  const author=(pr.author||'').trim();
+  const year=new Date().getFullYear();
+  return { title:typo(pr.title||'Без названия'), author, year };
+}
+// Одноразовое напоминание про раскрытие ИИ (не блокирует экспорт).
+let _discReminded=false;
+function remindDisclosure(){
+  if(_discReminded) return;
+  if(!state.project.disclosure || !state.project.disclosure.trim()){
+    toast('💡 Не забудьте указать использование ИИ при загрузке на площадку','warn');
+    _discReminded=true;
+  }
+}
+function exportBook(){
+  remindDisclosure();
+  const pr=state.project;
+  const fm=frontMatter();
+  const chapters=bookNodes();
+  if(!chapters.length){ toast('Нет прозы для книги — запустите конвейер или включите агентов в книгу','err'); return; }
+  // Front matter
+  const fmBlock=`# ${fm.title}\n\n${fm.author?`*${fm.author}*\n\n`:''}${fm.year}\n\nВсе права защищены\n`;
+  // Оглавление
+  const toc='## Содержание\n\n'+chapters.map((n,i)=>{
+    const t=chapterTitleOf(n,i);
+    const anchor='ch'+(i+1);
+    return `${i+1}. [${t}](#${anchor})`;
+  }).join('\n');
+  // Тело
+  const body=chapters.map((n,i)=>{
+    const t=chapterTitleOf(n,i);
+    return `<a id="ch${i+1}"></a>\n\n## ${t}\n\n${typo(cleanProse(n))}`;
+  }).join('\n\n---\n\n');
+  // KDP-чеклист — служебный блок в самом конце под разделителем
+  const md=`${fmBlock}\n---\n\n${toc}\n\n---\n\n${body}\n\n---\n\n<!-- Служебный блок (не часть книги) -->\n\n${KDP_CHECKLIST}\n`;
+  download((pr.title||'book')+'.md', md);
+  toast('Книга собрана — '+chapters.length+' глав','ok');
 }
 function exportDocx(){
-  if(!state.project.disclosure.trim()){ toast('Заполните поле «Раскрытие ИИ»','err'); return; }
+  remindDisclosure();
   const pr=state.project;
-  const body=state.nodes.filter(n=>n.output).map(n=>`<h2>${esc(n.emoji+' '+n.name)} <span style="font-weight:normal;font-size:11pt">— ${esc(n.role)}</span></h2>${md2html(typo(n.output))}<hr>`).join('');
+  const fm=frontMatter();
+  const chapters=bookNodes();
+  if(!chapters.length){ toast('Нет прозы для книги — запустите конвейер','err'); return; }
+  const body=chapters.map((n,i)=>`<h2>${esc(chapterTitleOf(n,i))}</h2>${md2html(typo(cleanProse(n)))}<hr>`).join('');
+  const front=`<h1>${esc(fm.title)}</h1>
+    ${fm.author?`<p style="text-align:center;font-style:italic">${esc(fm.author)}</p>`:''}
+    <p style="text-align:center;color:#666">${fm.year}</p>
+    <p style="text-align:center;color:#666">Все права защищены</p><hr>`;
   const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8">
     <style>body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.6;margin:2cm}
     h1{font-size:18pt;text-align:center}h2{font-size:14pt;margin-top:18pt}
     p{margin:0 0 6pt}ul{margin:0 0 6pt 18pt}li{margin:2pt 0}
     hr{border:none;border-top:1px solid #999;margin:12pt 0}</style></head><body>
-    <h1>${esc(typo(pr.title||'Без названия'))}</h1>
-    <p style="text-align:center;color:#666"><em>Раскрытие: ${esc(pr.disclosure)}</em></p>
-    <p style="text-align:center">Жанр: ${esc(pr.genre)} · Аудитория: ${esc(pr.audience)}</p><hr>
+    ${front}
     ${body||'<p>(нет результатов)</p>'}
     </body></html>`;
   download((pr.title||'book')+'.doc', '﻿'+html, 'application/msword');
@@ -1803,25 +1895,29 @@ function exportDocx(){
 }
 
 function exportEpub(){
-  if(!state.project.disclosure.trim()){toast('Заполните поле «Раскрытие ИИ»','err');return;}
+  remindDisclosure();
   const pr=state.project;
-  const chapters=state.nodes.filter(n=>n.output);
-  if(!chapters.length){toast('Нет результатов для EPUB — запустите конвейер','err');return;}
+  const chapters=bookNodes();
+  if(!chapters.length){toast('Нет прозы для EPUB — запустите конвейер','err');return;}
   const title=typo(pr.title||'Без названия');
+  const fm=frontMatter();
   const E=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const bookId='urn:uuid:'+uid()+'-'+uid();
   const now=new Date().toISOString().replace(/\.\d+Z$/,'Z');
 
-  // Главы
+  // Титульная страница (front matter) — первая в spine
+  const titleXhtml=`<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><meta charset="utf-8"/><title>${E(fm.title)}</title><link rel="stylesheet" href="../style.css"/></head><body><div class="titlepage"><h1>${E(fm.title)}</h1>${fm.author?`<p class="author">${E(fm.author)}</p>`:''}<p class="year">${fm.year}</p><p class="rights">Все права защищены</p></div></body></html>`;
+
+  // Главы (с человеческими заголовками)
   const chs=chapters.map((n,i)=>{
     const fn='ch'+String(i+1).padStart(3,'0')+'.xhtml';
-    const cht=E(n.emoji+' '+n.name+' — '+n.role);
-    const body=md2xhtml(typo(n.output));
+    const cht=E(chapterTitleOf(n,i));
+    const body=md2xhtml(typo(cleanProse(n)));
     return {fn,cht,xhtml:`<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><meta charset="utf-8"/><title>${cht}</title><link rel="stylesheet" href="../style.css"/></head><body><h2>${cht}</h2>\n${body}\n</body></html>`};
   });
 
-  const manifestItems=chs.map((c,i)=>`<item id="ch${i+1}" href="chapters/${c.fn}" media-type="application/xhtml+xml"/>`).join('\n    ');
-  const spineItems=chs.map((_,i)=>`<itemref idref="ch${i+1}"/>`).join('\n    ');
+  const manifestItems=`<item id="titlepage" href="chapters/title.xhtml" media-type="application/xhtml+xml"/>\n    `+chs.map((c,i)=>`<item id="ch${i+1}" href="chapters/${c.fn}" media-type="application/xhtml+xml"/>`).join('\n    ');
+  const spineItems=`<itemref idref="titlepage"/>\n    `+chs.map((_,i)=>`<itemref idref="ch${i+1}"/>`).join('\n    ');
   const navItems=chs.map(c=>`<li><a href="chapters/${c.fn}">${c.cht}</a></li>`).join('\n      ');
   const ncxPoints=chs.map((c,i)=>`<navPoint id="np${i+1}" playOrder="${i+1}"><navLabel><text>${c.cht}</text></navLabel><content src="chapters/${c.fn}"/></navPoint>`).join('\n  ');
 
@@ -1829,7 +1925,8 @@ function exportEpub(){
 h1{font-size:1.8em;text-align:center;margin:1em 0}h2{font-size:1.3em;margin:1.2em 0 .5em}
 h3{font-size:1.15em;margin:1em 0 .4em}h4{font-size:1em;font-weight:bold;margin:.8em 0 .3em}
 p{margin:.3em 0 .6em;text-indent:1.4em}p:first-child,h2+p,h3+p{text-indent:0}
-ul{margin:.3em 0 .6em 1.8em}li{margin:.2em 0}hr{border:none;border-top:1px solid #aaa;margin:1em 0}`;
+ul{margin:.3em 0 .6em 1.8em}li{margin:.2em 0}hr{border:none;border-top:1px solid #aaa;margin:1em 0}
+.titlepage{text-align:center;margin-top:30%}.titlepage h1{font-size:2em;margin:0 0 1em}.titlepage .author{font-style:italic;font-size:1.2em;margin:.5em 0}.titlepage .year{margin:2em 0 .3em;color:#555}.titlepage .rights{color:#777;font-size:.9em}`;
 
   const container=`<?xml version="1.0" encoding="utf-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
 
@@ -1863,6 +1960,7 @@ ul{margin:.3em 0 .6em 1.8em}li{margin:.2em 0}hr{border:none;border-top:1px solid
   zip.add('OEBPS/nav.xhtml',nav);
   zip.add('OEBPS/toc.ncx',ncx);
   zip.add('OEBPS/style.css',css);
+  zip.add('OEBPS/chapters/title.xhtml',titleXhtml);
   chs.forEach(c=>zip.add('OEBPS/chapters/'+c.fn,c.xhtml));
 
   const blob=zip.blob();
@@ -2318,18 +2416,23 @@ function switchView(view){
 
 function renderReader(){
   const pr=state.project;
-  const order=topoOrder().map(id=>node(id)).filter(n=>n&&n.output);
-  const wordCount=order.reduce((s,n)=>s+(n.output.match(/\S+/g)||[]).length,0);
+  const showAll=!!state.readerShowAll;
+  // «Только проза» — узлы для книги; «Все агенты» — все с выводом
+  const order=showAll
+    ? topoOrder().map(id=>node(id)).filter(n=>n&&n.output)
+    : bookNodes();
+  const wordCount=order.reduce((s,n)=>s+((showAll?n.output:cleanProse(n)).match(/\S+/g)||[]).length,0);
   let html=`<div style="margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--line)">
     <h1 style="font-size:24px;font-weight:800;margin:0 0 6px;color:var(--txt)">${esc(pr.title||'Без названия')}</h1>
     ${pr.genre?`<div style="color:var(--dim);font-size:13px">${esc(pr.genre)}${pr.audience?' · '+esc(pr.audience):''}</div>`:''}
     <div style="color:var(--faint);font-size:12px;margin-top:6px">
-      ~${wordCount.toLocaleString('ru-RU')} слов · ${order.length} разделов · ${money(projectCost())}
+      ~${wordCount.toLocaleString('ru-RU')} слов · ${order.length} ${showAll?'разделов':'глав'} · ${money(projectCost())}
     </div>
-    <div class="actions" style="margin-top:14px">
+    <div class="actions" style="margin-top:14px;align-items:center">
       <button class="btn ok sm" onclick="exportDocx()">📄 Скачать Word</button>
       <button class="btn ok sm" onclick="exportEpub()">📗 Скачать EPUB</button>
       <button class="btn ghost sm" onclick="exportBook()">📕 Скачать .md</button>
+      <label class="check" style="margin-left:auto;font-size:12px"><input type="checkbox" id="reader-showall" ${showAll?'checked':''}> ${showAll?'Все агенты':'Только проза'}</label>
     </div>
   </div>`;
   if(!order.length){
@@ -2339,21 +2442,35 @@ function renderReader(){
       <div style="font-size:13px">Нажмите <strong style="color:var(--txt)">▶ Запустить</strong> — агенты создадут текст, и он появится здесь</div>
     </div>`;
   } else {
-    order.forEach(n=>{
-      const words=(n.output.match(/\S+/g)||[]).length;
-      html+=`<div style="margin-bottom:40px">
-        <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid var(--line)">
-          <span style="font-size:20px">${n.emoji}</span>
+    // Оглавление со скроллом
+    html+=`<div style="margin-bottom:30px"><div style="font-weight:700;font-size:13px;color:var(--dim);margin-bottom:8px">Содержание</div>
+      <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.9">`+
+      order.map((n,i)=>`<li><a href="#reader-ch${i}" style="color:var(--accent,#6c63ff);text-decoration:none">${esc(showAll?(n.emoji+' '+n.name):chapterTitleOf(n,i))}</a></li>`).join('')+
+      `</ol></div>`;
+    order.forEach((n,i)=>{
+      const text=showAll?n.output:cleanProse(n);
+      const words=(text.match(/\S+/g)||[]).length;
+      const head=showAll
+        ? `<span style="font-size:20px">${n.emoji}</span>
           <div>
             <div style="font-weight:700;font-size:14px;color:var(--txt)">${esc(n.name)}</div>
             <div style="font-size:11px;color:var(--faint)">${esc(n.role)} · ~${words.toLocaleString('ru-RU')} слов</div>
-          </div>
+          </div>`
+        : `<div>
+            <div style="font-weight:700;font-size:15px;color:var(--txt)">${esc(chapterTitleOf(n,i))}</div>
+            <div style="font-size:11px;color:var(--faint)">~${words.toLocaleString('ru-RU')} слов</div>
+          </div>`;
+      html+=`<div id="reader-ch${i}" style="margin-bottom:40px;scroll-margin-top:20px">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid var(--line)">
+          ${head}
         </div>
-        <div class="reader-text">${md2html(n.output)}</div>
+        <div class="reader-text">${md2html(typo(text))}</div>
       </div>`;
     });
   }
   $('#reader-inner').innerHTML=html;
+  const tog=$('#reader-showall');
+  if(tog) tog.onchange=ev=>{ state.readerShowAll=ev.target.checked; save(); renderReader(); };
 }
 
 /* ============ БАННЕР ЗАВЕРШЕНИЯ ============ */
