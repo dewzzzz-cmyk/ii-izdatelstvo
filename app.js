@@ -787,6 +787,57 @@ function render(){
   if(_currentView==='reader') renderReader();
   if(_currentView==='simple') renderSimpleProgress();
   updateStyleRefBadge();
+  renderLeftRail();
+}
+/* ============ ЛЕВАЯ КОЛОНКА «КАБИНЕТ АВТОРА» ============
+   Структура книги (главы/агенты) + навигация. Чисто аддитивно:
+   зовёт существующие функции open... и switchView. Не падает на пустом проекте. */
+function renderLeftRail(){
+  const rail=$('#left-rail'); if(!rail) return;
+  const pr=state.project||{};
+  const chapters=(typeof bookNodes==='function')?bookNodes():[];
+  const STAT={done:'✓',error:'❌',running:'⏳',review:'⏳',variants:'⏳',skip:'•',idle:'•'};
+  const SCLS={done:'s-done',error:'s-error',running:'s-running',review:'s-running',variants:'s-running'};
+  let chapHtml;
+  if(!chapters.length){
+    chapHtml=`<div class="lr-empty">Глав пока нет.<br>Запустите конвейер — главы появятся здесь.</div>`;
+  } else {
+    chapHtml=chapters.map((n,i)=>{
+      const st=n.status||'idle';
+      const ic=STAT[st]||'•';
+      const scls=SCLS[st]||'s-idle';
+      const words=((typeof cleanProse==='function'?cleanProse(n):(n.output||'')).match(/\S+/g)||[]).length;
+      const title=(typeof chapterTitleOf==='function')?chapterTitleOf(n,i):(n.name||('Глава '+(i+1)));
+      const active=(_panelNodeId===n.id)?' active':'';
+      return `<div class="lr-chapter${active}" data-action="rail-chapter" data-id="${n.id}" title="${esc(title)}">
+        <span class="lr-ch-ic ${scls}">${ic}</span>
+        <span class="lr-ch-name">${esc(title)}</span>
+        <span class="lr-ch-words">${words?words.toLocaleString('ru-RU'):''}</span>
+      </div>`;
+    }).join('');
+  }
+  rail.innerHTML=`
+    <div class="lr-head">
+      <div class="lr-title">📖 ${esc(pr.title||'Без названия')}</div>
+      ${chapters.length?`<div class="lr-sub">${chapters.length} ${chapters.length===1?'глава':'глав'}</div>`:''}
+    </div>
+    <div class="lr-chapters">
+      <div class="lr-sec-label">Структура книги</div>
+      ${chapHtml}
+    </div>
+    <div class="lr-nav">
+      <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
+      <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
+      <button class="lr-nav-btn" data-action="style-school"><span class="lr-nav-ic">🎓</span> Школа стиля</button>
+      <button class="lr-nav-btn" data-action="chapters"><span class="lr-nav-ic">📚</span> Главы</button>
+      <button class="lr-nav-btn" data-action="entities"><span class="lr-nav-ic">🗃</span> Сущности</button>
+      <button class="lr-nav-btn" data-action="text-analysis"><span class="lr-nav-ic">📊</span> Анализ текста</button>
+      <button class="lr-nav-btn" data-action="add-node"><span class="lr-nav-ic">＋</span> Агент</button>
+    </div>
+    <div class="lr-foot">
+      <button class="lr-nav-btn" data-action="settings"><span class="lr-nav-ic">⚙</span> Настройки</button>
+      <button class="lr-nav-btn" data-action="export"><span class="lr-nav-ic">⬇</span> Экспорт</button>
+    </div>`;
 }
 function updateStyleRefBadge(){
   const badge = document.querySelector('#style-ref-badge');
@@ -2932,6 +2983,14 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='style-school') openStyleSchool();
   else if(a==='publish-guide') openPublishGuide();
   else if(a==='switch-view') switchView(t.dataset.view);
+  else if(a==='toggle-rail'){ $('#studio')?.classList.toggle('rail-collapsed'); }
+  else if(a==='rail-chapter'){
+    switchView('reader');
+    if(id && typeof openNodePanel==='function') openNodePanel(id);
+    const ch=node(id);
+    const anchor=document.querySelector(`.lr-chapter[data-id="${id}"]`);
+    if(anchor){ document.querySelectorAll('.lr-chapter.active').forEach(e=>e.classList.remove('active')); anchor.classList.add('active'); }
+  }
   else if(a==='delete-node'){
     const del=node(id); if(!del) return;
     const relinked=deleteNodesWithRelink([id]);
