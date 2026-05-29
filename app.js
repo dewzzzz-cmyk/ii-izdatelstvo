@@ -94,7 +94,7 @@ function defaultState(){
   const startTpls=startRoles.map(r=>TEMPLATES.find(t=>t.role===r)).filter(Boolean);
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
-  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
+  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
@@ -111,6 +111,8 @@ function load(){
       const def=defaultState();
       // Deep-merge global: новые поля из defaultState не затираются старым state
       if(s.global) s.global=Object.assign({},def.global,s.global);
+      // Deep-merge project: новые поля (stylePassport/engagementPatterns/…) подхватываются старыми проектами
+      if(s.project) s.project=Object.assign({},def.project,s.project);
       return Object.assign(def,s);
     }
     return defaultState();
@@ -457,6 +459,11 @@ async function buildMessages(n){
   const styleBlock = pr.styleRef
     ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${styleSample}\n"""`
     : '';
+  // 🎓 Школа стиля: паспорт стиля + паттерны вовлечения инжектятся только в пишущие роли
+  const wr=['writer','line','logedit','fanout','beatsheet'].includes(roleKeyOf(n));
+  const passportBlock = (wr && pr.stylePassport)
+    ? '\n\nПАСПОРТ СТИЛЯ (пиши строго в этой манере, но СВОИМ сюжетом и словами — не копируй источник):\n'+pr.stylePassport + (pr.engagementPatterns?'\n\nПРИЁМЫ ВОВЛЕЧЕНИЯ (применяй):\n'+pr.engagementPatterns:'')
+    : '';
   const preds=state.edges.filter(e=>e.to===n.id).map(e=>node(e.from)).filter(Boolean);
   const budget=state.global.maxContextChars||8000;
   const predsWithOutput=preds.filter(p=>p.output);
@@ -502,7 +509,7 @@ async function buildMessages(n){
     : '';
   // #44: прогоняем промт через interpolate ПЕРЕД отправкой
   const sysPrompt=interpolate(n.prompt||'', ctx);
-  return [ {role:'system',content:sysPrompt + styleBlock + banBlock}, {role:'user',content:user} ];
+  return [ {role:'system',content:sysPrompt + styleBlock + passportBlock + banBlock}, {role:'user',content:user} ];
 }
 // #35: человеческие тексты ошибок. Сырой код прячем (в лог можно положить полный).
 function humanError(status, rawText){
@@ -2913,6 +2920,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='stop'){ if(abortCtrl) abortCtrl.abort(); }
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
   else if(a==='text-analysis') openTextAnalysis();
+  else if(a==='style-school') openStyleSchool();
   else if(a==='publish-guide') openPublishGuide();
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='delete-node'){
@@ -3490,6 +3498,176 @@ function openTextAnalysis(){
     </div>
   `;
   openDrawer('📊 Анализ текста',html);
+}
+
+/* ============ 🎓 ШКОЛА СТИЛЯ ============ */
+// Разбивает текст на куски ~maxLen по границам абзацев.
+function chunkByParagraphs(text, maxLen){
+  const paras=String(text||'').split(/\n{2,}/);
+  const chunks=[]; let cur='';
+  for(const p of paras){
+    if(cur && (cur.length+p.length+2)>maxLen){ chunks.push(cur); cur=''; }
+    // абзац-гигант сам по себе больше лимита — режем по предложениям
+    if(p.length>maxLen){
+      if(cur){ chunks.push(cur); cur=''; }
+      let rest=p;
+      while(rest.length>maxLen){
+        let cut=rest.lastIndexOf('. ',maxLen); if(cut<maxLen*0.5) cut=maxLen;
+        chunks.push(rest.slice(0,cut)); rest=rest.slice(cut);
+      }
+      if(rest.trim()) cur=rest;
+    } else {
+      cur=cur?cur+'\n\n'+p:p;
+    }
+  }
+  if(cur.trim()) chunks.push(cur);
+  return chunks.filter(c=>c.trim());
+}
+// Равномерная выборка <=max элементов из начала/середины/конца (сохраняет порядок).
+function evenSample(arr, max){
+  if(arr.length<=max) return arr.slice();
+  const out=[]; const step=(arr.length-1)/(max-1);
+  for(let i=0;i<max;i++) out.push(arr[Math.round(i*step)]);
+  return out;
+}
+let _styleBuilding=false;
+async function buildStylePassport(rawText, sourceName){
+  if(_styleBuilding) return;
+  const text=String(rawText||'').trim();
+  if(!text){ toast('Сначала загрузите или вставьте образец текста','warn'); return; }
+  if(!hasKey()){ toast('Нужен API-ключ','err'); openSettings(); return; }
+  _styleBuilding=true;
+  const c={ baseURL:state.global.baseURL, apiKey:pickKey(), model:state.global.model, temperature:0.2 };
+  const setProg=msg=>{ const el=document.querySelector('#ss-progress'); if(el){ el.style.display=''; el.textContent=msg; } };
+  const btn=document.querySelector('#ss-build'); if(btn){ btn.disabled=true; btn.textContent='⏳ Строю…'; }
+  try{
+    let chunks=chunkByParagraphs(text, 6000);
+    const total=chunks.length;
+    let truncated=false;
+    if(chunks.length>8){ chunks=evenSample(chunks, 8); truncated=true; }
+    const used=chunks.length;
+    logRow('Школа стиля','run', truncated
+      ? `Текст большой: анализирую ${used} из ${total} фрагментов (выборка начало/середина/конец)`
+      : `Анализирую ${used} фрагмент(ов)`);
+    if(truncated) toast(`Текст крупный — анализирую ${used} из ${total} фрагментов (равномерная выборка)`,'warn');
+
+    const MAP_SYS='Ты литературовед. Из фрагмента извлеки ТОЛЬКО абстрактные приёмы стиля, НЕ пересказывай сюжет и НЕ цитируй дословно. Отметь: лицо и время повествования, среднюю длину и ритм предложений, характер лексики, долю и манеру диалогов, тон, образность/тропы, как удерживается внимание.';
+    const observations=[];
+    for(let i=0;i<chunks.length;i++){
+      setProg(`Анализирую фрагмент ${i+1} из ${chunks.length}…`);
+      try{
+        const obs=await callLLM(c,[
+          {role:'system',content:MAP_SYS},
+          {role:'user',content:chunks[i]}
+        ]);
+        if(obs && obs.trim()) observations.push(obs.trim());
+      }catch(e){
+        logRow('Школа стиля','error','Фрагмент '+(i+1)+': '+e.message);
+      }
+    }
+    if(!observations.length){ toast('Не удалось извлечь наблюдения (проверьте ключ и модель)','err'); return; }
+
+    setProg('Свожу наблюдения в паспорт стиля…');
+    const REDUCE_SYS='Сведи наблюдения в инструкцию для писателя. Без цитат и имён персонажей источника. Только переносимые приёмы. Выдай РОВНО два блока, каждый максимум ~250 слов, начинающиеся со строк-заголовков:\n\nПАСПОРТ СТИЛЯ\n<инструкция: голос, ритм, лексика, POV, диалоги, тон, табу — как писать в этом стиле>\n\nПАТТЕРНЫ ВОВЛЕЧЕНИЯ\n<какие крючки, повороты, эмоциональная динамика держат читателя — что применять>';
+    const reduced=await callLLM({ ...c, temperature:0.2 },[
+      {role:'system',content:REDUCE_SYS},
+      {role:'user',content:observations.map((o,i)=>`Фрагмент ${i+1}:\n${o}`).join('\n\n')}
+    ]);
+
+    // Разбор двух блоков. Если разделитель не найден — кладём всё в паспорт.
+    let passport=reduced.trim(), patterns='';
+    const m=reduced.match(/ПАТТЕРНЫ\s+ВОВЛЕЧЕНИЯ/i);
+    if(m){
+      passport=reduced.slice(0,m.index).replace(/^\s*ПАСПОРТ\s+СТИЛЯ\s*/i,'').trim();
+      patterns=reduced.slice(m.index+m[0].length).trim();
+    } else {
+      passport=reduced.replace(/^\s*ПАСПОРТ\s+СТИЛЯ\s*/i,'').trim();
+    }
+
+    state.project.stylePassport=passport;
+    state.project.engagementPatterns=patterns;
+    state.project.styleSourceName=sourceName||'вставленный текст';
+    save();
+    logRow('Школа стиля','done',`Паспорт стиля построен (${used} фрагм., источник: ${state.project.styleSourceName})`);
+    toast('🎓 Паспорт стиля готов — будет подмешиваться в пишущих агентов','ok');
+    openStyleSchool(); // перерисовать drawer с результатом
+  }catch(e){
+    logRow('Школа стиля','error',e.message);
+    toast('Ошибка построения паспорта: '+e.message,'err');
+  }finally{
+    _styleBuilding=false;
+  }
+}
+function openStyleSchool(){
+  const pr=state.project;
+  const has=!!(pr.stylePassport && pr.stylePassport.trim());
+  const intro=`<div class="ss-intro">Загрузите образец успешного текста (ваш, классику или лицензированный). ИИ извлечёт приёмы — голос, ритм, структуру, крючки — <b>НЕ копируя текст</b>. Профиль будет подмешиваться во всех пишущих агентов.</div>`;
+
+  const existing = has ? `
+    <div class="ss-result">
+      <div class="ss-src">📚 Источник: <b>${esc(pr.styleSourceName||'не указан')}</b></div>
+      <div class="field"><label>ПАСПОРТ СТИЛЯ</label>
+        <textarea id="ss-passport" rows="8" class="ss-area">${esc(pr.stylePassport)}</textarea></div>
+      <div class="field"><label>ПРИЁМЫ ВОВЛЕЧЕНИЯ</label>
+        <textarea id="ss-patterns" rows="6" class="ss-area">${esc(pr.engagementPatterns||'')}</textarea></div>
+      <div class="actions">
+        <button class="btn ok" id="ss-save-edit">Сохранить правки</button>
+        <button class="btn ghost" id="ss-clear">🗑 Очистить</button>
+      </div>
+    </div>
+    <div class="section-label">Переобучить на новом образце</div>` : '';
+
+  openDrawer('🎓 Школа стиля', intro + existing + `
+    <div class="dropzone" id="ss-drop">
+      <div class="dropzone-icon">📥</div>
+      <div class="dropzone-text">Перетащите файл сюда или <label class="dz-link">выберите<input type="file" id="ss-file" accept=".txt,.md,.docx" hidden></label></div>
+      <div class="dropzone-hint">.txt · .md · .docx</div>
+    </div>
+    <div class="field"><label>…или вставьте образец текста вручную</label>
+      <textarea id="ss-text" rows="10" placeholder="Вставьте фрагмент(ы) успешного текста…"></textarea></div>
+    <div id="ss-progress" class="ss-progress" style="display:none"></div>
+    <div class="actions"><button class="btn ok" id="ss-build">🔬 Построить паспорт стиля</button></div>
+  `, b=>{
+    const ta=b.querySelector('#ss-text');
+    const dz=b.querySelector('#ss-drop');
+    const fileInput=b.querySelector('#ss-file');
+    let loadedName='';
+    const handleFile=async f=>{
+      if(!f) return;
+      const name=(f.name||'').toLowerCase();
+      try{
+        if(name.endsWith('.txt')||name.endsWith('.md')){
+          ta.value=await f.text(); loadedName=f.name; toast('Файл загружен: '+f.name,'ok');
+        } else if(name.endsWith('.docx')){
+          toast('Распаковка .docx…','');
+          try{ ta.value=await docxToText(f); loadedName=f.name; toast('📄 .docx распознан: '+f.name,'ok'); }
+          catch(err){ console.warn('docx parse failed',err); toast('Не удалось прочитать .docx ('+err.message+'). Сохраните как .txt.','err'); }
+        } else { toast('Поддерживаются .txt, .md, .docx','warn'); }
+      }catch(e){ toast('Ошибка чтения файла: '+e.message,'err'); }
+    };
+    fileInput.onchange=e=>handleFile(e.target.files[0]);
+    ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.add('dragover'); }));
+    ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.remove('dragover'); }));
+    dz.addEventListener('drop',e=>{ const f=e.dataTransfer?.files?.[0]; handleFile(f); });
+
+    b.querySelector('#ss-build').onclick=()=>{
+      const txt=ta.value.trim();
+      if(!txt){ toast('Сначала загрузите или вставьте образец текста','warn'); return; }
+      buildStylePassport(txt, loadedName||'вставленный текст');
+    };
+    if(has){
+      b.querySelector('#ss-save-edit').onclick=()=>{
+        state.project.stylePassport=b.querySelector('#ss-passport').value.trim();
+        state.project.engagementPatterns=b.querySelector('#ss-patterns').value.trim();
+        save(); toast('Правки паспорта сохранены','ok');
+      };
+      b.querySelector('#ss-clear').onclick=()=>{
+        state.project.stylePassport=''; state.project.engagementPatterns=''; state.project.styleSourceName='';
+        save(); logRow('Школа стиля','done','Паспорт стиля очищен'); toast('Паспорт стиля очищен','ok');
+        openStyleSchool();
+      };
+    }
+  });
 }
 
 /* ============ ГАЙД ============ */
