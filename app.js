@@ -790,6 +790,7 @@ function render(){
   if(_currentView==='simple') renderSimpleProgress();
   updateStyleRefBadge();
   renderLeftRail();
+  renderBookInspector();
 }
 /* ============ ЛЕВАЯ КОЛОНКА «КАБИНЕТ АВТОРА» ============
    Структура книги (главы/агенты) + навигация. Чисто аддитивно:
@@ -841,6 +842,79 @@ function renderLeftRail(){
     <div class="lr-foot">
       <button class="lr-nav-btn" data-action="settings"><span class="lr-nav-ic">⚙</span> Настройки</button>
       <button class="lr-nav-btn" data-action="export"><span class="lr-nav-ic">⬇</span> Экспорт</button>
+    </div>`;
+}
+/* ============ КОНТЕКСТНЫЙ ИНСПЕКТОР (правая колонка, только режим «Книга») ============
+   Ничего не выбрано → обзор книги. Выбрана глава (_panelNodeId) → инспектор главы.
+   Не трогает выезжающую панель холста (#node-panel). Колонка скрыта css вне reader. */
+function renderBookInspector(){
+  const el=$('#book-inspector'); if(!el) return;
+  if(_currentView!=='reader'){ el.innerHTML=''; return; }
+  const pr=state.project||{};
+  const chapters=(typeof bookNodes==='function')?bookNodes():[];
+  const sel=_panelNodeId?node(_panelNodeId):null;
+
+  if(sel){
+    // ── ИНСПЕКТОР ГЛАВЫ ──
+    const idx=chapters.findIndex(n=>n.id===sel.id);
+    const title=(typeof chapterTitleOf==='function')?chapterTitleOf(sel,idx<0?0:idx):(sel.name||'Глава');
+    const prose=(typeof cleanProse==='function')?cleanProse(sel):(sel.output||'');
+    const words=(prose.match(/\S+/g)||[]).length;
+    const toks=(sel.tokensIn||0)+(sel.tokensOut||0);
+    const nVer=(sel.outputVersions||[]).length;
+    const preview=sel.error
+      ? `<div class="bi-empty-out">⚠ ${esc(sel.error)}</div>`
+      : (sel.output
+          ? `<div class="bi-preview">${esc(prose.slice(0,400))}${prose.length>400?'…':''}</div>`
+          : `<div class="bi-empty-out">✍️ Глава ещё не написана.<br>Нажмите «▶ Прогнать».</div>`);
+    el.innerHTML=`
+      <div class="bi-head">
+        <div class="bi-emoji">${sel.emoji||'📄'}</div>
+        <div class="bi-titles">
+          <div class="bi-name">${esc(title)}</div>
+          <div class="bi-role">${esc(sel.name||'')}${sel.role?' · '+esc(sel.role):''}</div>
+        </div>
+        <button class="icon-btn" data-action="bi-overview" title="К обзору книги">✕</button>
+      </div>
+      ${(toks||words)?`
+      <div class="bi-stat"><span>~ Слов</span><span class="bi-v">${words.toLocaleString('ru-RU')}</span></div>
+      ${toks?`<div class="bi-stat"><span>Токены</span><span class="bi-v">${toks.toLocaleString('ru-RU')}</span></div>
+      <div class="bi-stat"><span>Стоимость</span><span class="bi-v">${money(nodeCost(sel))}</span></div>`:''}`:''}
+      ${preview}
+      <div class="bi-sec-label">Действия</div>
+      <div class="bi-actions">
+        <button class="btn ok sm" data-action="bi-run" data-id="${sel.id}">▶ Прогнать</button>
+        <button class="btn ghost sm" data-action="bi-rerun" data-id="${sel.id}" title="Игнорировать кэш — другой вариант">🎲 Заново</button>
+        ${sel.output?`<button class="btn ghost sm" data-action="bi-edit" data-id="${sel.id}">✎ Править</button>`:''}
+        ${nVer>1?`<button class="btn ghost sm" data-action="bi-ver" data-id="${sel.id}">± Версии (${nVer})</button>`:''}
+        <button class="btn ghost sm" data-action="bi-cfg" data-id="${sel.id}">⚙ Настроить</button>
+        <button class="btn ghost sm" data-action="bi-runfrom" data-id="${sel.id}">▶▶ Прогнать отсюда</button>
+      </div>`;
+    return;
+  }
+
+  // ── ОБЗОР КНИГИ ──
+  const totalWords=chapters.reduce((s,n)=>{
+    const p=(typeof cleanProse==='function')?cleanProse(n):(n.output||'');
+    return s+((p.match(/\S+/g)||[]).length);
+  },0);
+  const doneCh=chapters.filter(n=>n.status==='done').length;
+  const cost=projectCost()+(state.auxCost||0);
+  el.innerHTML=`
+    <div class="bi-overview">
+      <div class="bi-title">📖 ${esc(pr.title||'Без названия')}</div>
+      ${(pr.genre||pr.audience)?`<div class="bi-genre">${esc([pr.genre,pr.audience].filter(Boolean).join(' · '))}</div>`:''}
+      <div class="bi-sec-label">Обзор книги</div>
+      <div class="bi-stat"><span>~ Всего слов</span><span class="bi-v">${totalWords.toLocaleString('ru-RU')}</span></div>
+      <div class="bi-stat"><span>Готовность</span><span class="bi-v">${doneCh} из ${chapters.length} глав</span></div>
+      <div class="bi-stat"><span>Стоимость</span><span class="bi-v">${money(cost)}</span></div>
+      <div class="bi-sec-label">Инструменты</div>
+      <div class="bi-actions">
+        <button class="btn ghost sm" data-action="text-analysis">📊 Анализ текста</button>
+        <button class="btn ghost sm" data-action="style-school">🎓 Школа стиля</button>
+        <button class="btn ghost sm" data-action="export">📋 Метаданные / Экспорт</button>
+        <button class="btn ok sm" data-action="export">⬇ Экспорт</button>
+      </div>
     </div>`;
 }
 function updateStyleRefBadge(){
@@ -2989,12 +3063,21 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='toggle-rail'){ $('#studio')?.classList.toggle('rail-collapsed'); }
   else if(a==='rail-chapter'){
+    // Режим «Книга»: выбор главы наполняет закреплённый инспектор (#book-inspector),
+    // НЕ открывая выезжающий оверлей холста (#node-panel).
+    _panelNodeId=id;
     switchView('reader');
-    if(id && typeof openNodePanel==='function') openNodePanel(id);
-    const ch=node(id);
+    renderBookInspector();
     const anchor=document.querySelector(`.lr-chapter[data-id="${id}"]`);
     if(anchor){ document.querySelectorAll('.lr-chapter.active').forEach(e=>e.classList.remove('active')); anchor.classList.add('active'); }
   }
+  else if(a==='bi-overview'){ _panelNodeId=null; renderBookInspector(); renderLeftRail(); }
+  else if(a==='bi-run'){ runNode(id); }
+  else if(a==='bi-rerun'){ const n=node(id); if(n){ n.cacheHash=''; n._loopPrev=''; runNode(id); } }
+  else if(a==='bi-edit'){ openManualEdit(id); }
+  else if(a==='bi-cfg'){ openNode(id); }
+  else if(a==='bi-runfrom'){ runFromNode(id); }
+  else if(a==='bi-ver'){ const n=node(id); const vs=n&&n.outputVersions; if(vs&&vs.length>1) openWordDiff('Версии: '+esc(n.name), vs[1].output, n.output, ()=>{ switchView('reader'); }); }
   else if(a==='delete-node'){
     const del=node(id); if(!del) return;
     const relinked=deleteNodesWithRelink([id]);
@@ -4068,7 +4151,7 @@ function switchView(view){
   else if(view==='simple') $('#tab-simple')?.classList.add('active');
   else $('#tab-canvas')?.classList.add('active');
   // Сайд-эффекты экранов
-  if(view==='reader') renderReader();
+  if(view==='reader'){ renderReader(); renderBookInspector(); }
   if(view==='simple') initSimplifiedMode();
   // CTB-тулбар холста
   $('#ctb')?.classList.toggle('ctb-visible', view==='canvas');

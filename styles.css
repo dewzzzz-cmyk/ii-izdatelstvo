@@ -1021,3 +1021,44 @@ ins.wd{background:#16361f;color:#86efac;text-decoration:none;border-radius:3px}
 .lrp-toggle input{accent-color:var(--accent);cursor:pointer}
 /* #lr-body — растягиваемая часть: структура книги + навигация */
 #lr-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+
+/* ═══════════════════════════════════════════════════
+   КОНТЕКСТНЫЙ ИНСПЕКТОР (3-я колонка, только режим «Книга»)
+   #book-inspector — закреплённая правая колонка #studio.
+   Скрыта по умолчанию; видна только при body[data-view=reader].
+═══════════════════════════════════════════════════ */
+.book-inspector{display:none}
+body[data-view="reader"] .studio{grid-template-columns:240px 1fr 320px}
+body[data-view="reader"] .studio.rail-collapsed{grid-template-columns:0 1fr 320px}
+body[data-view="reader"] .book-inspector{
+  display:block;background:var(--panel);border-left:1px solid var(--line2);
+  overflow-y:auto;min-height:0;padding:16px 15px}
+@media(max-width:980px){
+  body[data-view="reader"] .studio,
+  body[data-view="reader"] .studio.rail-collapsed{grid-template-columns:240px 1fr}
+  body[data-view="reader"] .book-inspector{display:none}
+}
+
+.bi-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:13px}
+.bi-head .bi-emoji{font-size:22px;flex:0 0 auto;line-height:1.1}
+.bi-head .bi-titles{flex:1 1 auto;min-width:0}
+.bi-head .bi-name{font-weight:800;font-size:14.5px;color:var(--txt);line-height:1.25;
+  word-break:break-word}
+.bi-head .bi-role{font-size:11px;color:var(--faint);margin-top:2px}
+.bi-head .icon-btn{flex:0 0 auto}
+.bi-sec-label{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--faint);margin:14px 0 7px}
+.bi-overview .bi-title{font-weight:800;font-size:16px;color:var(--txt);line-height:1.3;
+  margin-bottom:3px;word-break:break-word}
+.bi-overview .bi-genre{font-size:11.5px;color:var(--faint);margin-bottom:12px}
+.bi-stat{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.bi-stat:last-of-type{border-bottom:none}
+.bi-stat .bi-v{font-weight:700;color:var(--txt);font-variant-numeric:tabular-nums;text-align:right}
+.bi-preview{font-size:12px;color:var(--dim);line-height:1.55;margin:10px 0 4px;
+  max-height:160px;overflow:hidden;position:relative;padding:9px 10px;
+  background:var(--panel2);border-radius:8px;border:1px solid var(--line)}
+.bi-empty-out{font-size:12px;color:var(--faint);line-height:1.5;margin:10px 0;
+  padding:12px;text-align:center;background:var(--panel2);border-radius:8px}
+.bi-actions{display:flex;flex-direction:column;gap:7px;margin-top:14px}
+.bi-actions .btn{justify-content:flex-start;width:100%}
