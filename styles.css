@@ -748,3 +748,19 @@ button{font-family:inherit}
 /* ── Loop back-arc edge ─────────────────────── */
 .edge.loop-back{stroke:#4f46e5;stroke-width:2;fill:none;stroke-dasharray:8 4}
 .node.variants { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2); }
+
+/* ── Анализ текста (drawer panel) ───────────── */
+.ta-section{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.ta-section h3{font-size:14px;font-weight:700;color:var(--accent2);margin:0 0 4px}
+.ta-section .ta-h4{font-size:12.5px;font-weight:700;color:var(--txt);margin:12px 0 5px}
+.ta-note{font-size:11.5px;color:var(--faint);margin:0 0 8px;line-height:1.45}
+.ta-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ta-chip{display:inline-flex;align-items:center;gap:4px;background:var(--panel3);border:1px solid var(--line2);color:var(--dim);border-radius:7px;padding:3px 8px;font-size:11.5px}
+.ta-chip b{color:var(--txt);font-variant-numeric:tabular-nums}
+.ta-bar{background:var(--panel3);border:1px solid var(--line2);border-radius:7px;padding:7px 10px;font-size:12px;color:var(--txt);margin-bottom:6px;line-height:1.5}
+.ta-bar b{font-variant-numeric:tabular-nums}
+.ta-warn{border-color:var(--err);color:var(--err)}
+.ta-warn b{color:var(--err)}
+.ta-warn-text{color:var(--err)}
+.ta-badge{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;padding:5px 11px;font-size:12.5px;font-weight:700;margin-bottom:8px}
+.ta-spark{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:16px;line-height:1.1;letter-spacing:1px;color:var(--accent2);background:var(--panel3);border:1px solid var(--line2);border-radius:7px;padding:8px 10px;margin-bottom:8px;word-break:break-all}
