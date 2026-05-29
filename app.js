@@ -1510,91 +1510,72 @@ function topoOrder(){
 const isPaused=()=>state.nodes.some(n=>n.status==='review'||n.status==='variants');
 let running=false; let abortCtrl=null;
 // Находит узлы, готовые к запуску: idle + все зависимости done (или ошибочные — пропустить)
+// Узлы из цепочки target→…→checker (по прямым, НЕ петлевым рёбрам), включая концы.
+function chainBetween(fromId,toId){
+  const fwd=new Set(); let st=[fromId];
+  while(st.length){ const c=st.pop(); if(fwd.has(c)) continue; fwd.add(c); state.edges.filter(e=>!e.isLoop&&e.from===c).forEach(e=>st.push(e.to)); }
+  const bwd=new Set(); st=[toId];
+  while(st.length){ const c=st.pop(); if(bwd.has(c)) continue; bwd.add(c); state.edges.filter(e=>!e.isLoop&&e.to===c).forEach(e=>st.push(e.from)); }
+  const res=new Set([...fwd].filter(x=>bwd.has(x))); res.add(fromId); res.add(toId);
+  return [...res];
+}
+// Фаза перепроверки: для каждого петлевого/повторного ребра, когда проверяющий завершился,
+// решаем — выходим (порог пройден / попытки исчерпаны) или возвращаем цепочку на доработку.
+// ВАЖНО: вызывается ДО runnableNodes в цикле прогона.
+function resolveLoops(){
+  const reEdges=state.edges.filter(e=>e.isLoop || ((e.condition&&e.condition.trim())&&(e.maxRetries||0)>0));
+  for(const e of reEdges){
+    const checker=node(e.from), target=node(e.to);
+    if(!checker||!target) continue;
+    if(checker.status!=='done') continue;          // ждём завершения проверяющего
+    const out=checker.output||'';
+    const jsPass = (e.condition&&e.condition.trim()) ? evalCondition(e.condition,out) : (e.isLoop?false:true);
+    // авто-оценка: историю пополняем один раз на каждое завершение проверяющего
+    if(e.isLoop && e.autoEval && e._autoScore!=null){
+      e._scoreHistory=e._scoreHistory||[];
+      if(e._lastScored!==e._autoScore){ e._scoreHistory.push(e._autoScore); e._lastScored=e._autoScore;
+        if(e._bestScore==null||e._autoScore>e._bestScore){ e._bestScore=e._autoScore; e._bestOutput=target.output; } }
+    }
+    const evalPass = e.isLoop && e.autoEval && e._autoScore!=null && e._autoScore>=(e.evalThreshold||7);
+    const pass = jsPass || evalPass;
+    // регресс / плато для авто-оценочных петель
+    let stop=false;
+    if(e.isLoop && e.autoEval){ const h=e._scoreHistory||[];
+      if(h.length>=2){ const a=h[h.length-1],b=h[h.length-2]; if(a<b) stop=true; if(h.length>=3&&a<=b&&b<=h[h.length-3]) stop=true; } }
+    if(pass || (e._retryCount||0)>=(e.maxRetries||0) || stop){
+      // Петля завершена. Если копили лучшую версию target — вернём её.
+      if(e.isLoop && e.autoEval && e._bestOutput!=null && target.output!==e._bestOutput){
+        logRow(target.name,'ok',`Петля завершена — лучшая версия (балл ${e._bestScore}/10)`);
+        target.output=e._bestOutput;
+      }
+      if(target._loopPrev!=null) delete target._loopPrev;
+      continue;
+    }
+    // Возврат на доработку: сбрасываем цепочку target..checker
+    e._retryCount=(e._retryCount||0)+1;
+    e._lastScored=null;
+    const chain=chainBetween(target.id,checker.id);
+    chain.forEach(id=>{ const x=node(id); if(!x) return;
+      if(x.id===target.id) x._loopPrev=x.output||'';   // #29: прошлый текст → в контекст доработки
+      x.status='idle'; x.output=''; x.cacheHash=''; });
+    logRow(checker.name,'retry',`Повтор ${e._retryCount}/${e.maxRetries} — на доработку к «${target.name}»`);
+    save();
+  }
+}
 function runnableNodes(){
   return state.nodes.filter(n=>{
     if(n.status!=='idle') return false;
-    const inEdges=state.edges.filter(e=>e.to===n.id);
-    if(!inEdges.length) return true; // нет зависимостей — сразу готов
-    // Все predecessors должны завершиться (done/error/skip)
-    const allDone=inEdges.map(e=>node(e.from)).filter(Boolean).every(d=>d.status==='done'||d.status==='error'||d.status==='skip');
+    // ПЕТЛЕВЫЕ рёбра НЕ являются зависимостью — иначе цель петли «ждёт» проверяющего, который идёт после неё (дедлок)
+    const fwd=state.edges.filter(e=>e.to===n.id && !e.isLoop);
+    if(!fwd.length) return true;                       // нет прямых зависимостей — готов
+    const allDone=fwd.map(e=>node(e.from)).filter(Boolean).every(d=>['done','error','skip'].includes(d.status));
     if(!allDone) return false;
-    // Если есть условные рёбра или петли — проверяем выход/повтор
-    const hasConditions=inEdges.some(e=>(e.condition&&e.condition.trim())||e.isLoop);
-    if(!hasConditions) return true;
-    // Для каждого ребра вычисляем, является ли оно «активным» (разрешает выполнение downstream)
-    const edgeActive=(e)=>{
-      const output=node(e.from)?.output;
-      if(e.isLoop){
-        // Loop edge: active (exit loop) when js-condition passes, OR auto-eval score passes.
-        // Если ни условия, ни авто-оценки нет — НЕ выходим сразу: крутим до исчерпания maxRetries.
-        const jsPass=e.condition&&e.condition.trim() ? evalCondition(e.condition,output) : false;
-        const evalPass=e.autoEval && e._autoScore!=null && e._autoScore>=(e.evalThreshold||7);
-        return jsPass||evalPass;
-      }
-      return evalCondition(e.condition,output);
-    };
-    const anyActive=inEdges.some(e=>edgeActive(e));
-    if(!anyActive){
-      // Cyclic/loop retry: рёбра, условие которых не прошло, у которых есть оставшиеся попытки
-      const candidates=inEdges.filter(e=>{
-        if(edgeActive(e)) return false;
-        if(!e.isLoop && (!e.condition||!e.condition.trim())) return false;
-        const src=node(e.from);
-        return src && (e.maxRetries||0)>0;
-      });
-      // Item 25: regression-guard для авто-оценочных петель — стоп при регрессе/плато
-      const retryEdges=candidates.filter(e=>{
-        if((e._retryCount||0)>=e.maxRetries) return false; // достигнут предел итераций
-        if(e.isLoop && e.autoEval){
-          const h=e._scoreHistory||[];
-          if(h.length>=2){
-            const last=h[h.length-1], prev=h[h.length-2];
-            if(last<prev) return false; // регресс — стоп, вернём лучшую версию
-            if(h.length>=3 && last<=prev && prev<=h[h.length-3]) return false; // плато 2 итерации — стоп
-          }
-        }
-        return true;
-      });
-      if(retryEdges.length>0){
-        retryEdges.forEach(e=>{
-          e._retryCount=(e._retryCount||0)+1;
-          const src=node(e.from);
-          if(src){
-            // Item 29: накапливаем правки — прошлый вывод идёт в следующую итерацию как контекст
-            src._loopPrev=src.output||'';
-            src.status='idle'; src.output=''; src.cacheHash='';
-            logRow(src.name,'retry',`Повтор ${e._retryCount}/${e.maxRetries}${e.isLoop?' (петля)':' — условие не прошло'}`); }
-        });
-        save(); return false;
-      }
-      // Выход из петли: подставляем лучшую версию вывода (Item 25), а не последнюю
-      candidates.forEach(e=>{
-        const src=node(e.from);
-        if(src && e.isLoop && e.autoEval && e._bestOutput!=null && e._bestOutput!==src.output){
-          const lastScore=(e._scoreHistory||[]).slice(-1)[0];
-          logRow(src.name,'ok',`Петля завершена — выбрана лучшая версия (балл ${e._bestScore}/10 против последней ${lastScore!=null?lastScore+'/10':'?'})`);
-          src.output=e._bestOutput;
-        }
-        if(src) delete src._loopPrev;
-      });
-      n.status='skip'; logRow(n.name,'skip','все условия рёбер → false, узел пропущен'); save(); return false;
-    }
-    // Узел становится runnable: петля вышла по условию/порогу.
-    // Item 25: если лучшая версия была раньше последней — подставляем её. Чистим контекст накопления.
-    inEdges.forEach(e=>{
-      if(!edgeActive(e)) return;
-      const src=node(e.from);
-      if(!src) return;
-      if(e.isLoop && e.autoEval && e._bestOutput!=null && e._bestScore!=null){
-        const lastScore=(e._scoreHistory||[]).slice(-1)[0];
-        if(lastScore!=null && e._bestScore>lastScore && e._bestOutput!==src.output){
-          logRow(src.name,'ok',`Петля завершена — выбрана лучшая версия (балл ${e._bestScore}/10 против последней ${lastScore}/10)`);
-          src.output=e._bestOutput;
-        }
-      }
-      if(src._loopPrev) delete src._loopPrev;
-    });
-    return true;
+    // Условные прямые рёбра: хотя бы одно активно → запускаем; все false → skip
+    const conds=fwd.filter(e=>e.condition&&e.condition.trim());
+    if(!conds.length) return true;
+    const anyActive=fwd.some(e=>!e.condition||!e.condition.trim()||evalCondition(e.condition,node(e.from)?.output));
+    if(anyActive) return true;
+    n.status='skip'; logRow(n.name,'skip','условия всех путей → false'); save(); return false;
   });
 }
 async function runPipeline(resume){
@@ -1619,7 +1600,7 @@ async function runPipeline(resume){
     state.runs.unshift({t:Date.now(),nodes:JSON.parse(JSON.stringify(state.nodes)),edges:JSON.parse(JSON.stringify(state.edges))});
     if(state.runs.length>5) state.runs.pop();
     state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;delete n._loopPrev;n.failedWithDownstream=false;});
-    state.edges.forEach(e=>{ e._retryCount=0; e._scoreHistory=[]; e._bestScore=null; e._bestOutput=null; });
+    state.edges.forEach(e=>{ e._retryCount=0; e._scoreHistory=[]; e._bestScore=null; e._bestOutput=null; e._lastScored=null; });
     // #47: сбрасываем счётчик скрытых служебных вызовов на новый прогон
     state.auxTokens=0; state.auxCost=0;
     hideCompletionBanner();
@@ -1635,6 +1616,7 @@ async function runPipeline(resume){
   let cacheHits=0, totalRan=0;
   while(true){
     if(state.global.costCapUSD>0 && (projectCost()+(state.auxCost||0))>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
+    resolveLoops();                                   // фаза перепроверки: возвраты на доработку до подбора волны
     const wave=runnableNodes(); if(!wave.length) break;
     // Параллельный запуск независимых узлов одной волны (Item 27: семафор ограничивает конкурентность)
     const runOne=async n=>{
@@ -1717,6 +1699,7 @@ async function runFromNode(id){
   while(true){
     if(state.global.costCapUSD>0 && (projectCost()+(state.auxCost||0))>=state.global.costCapUSD){ toast('Достигнут лимит бюджета '+money(state.global.costCapUSD),'err'); break; }
     // Волны, ограниченные подмножеством sub (runnableNodes уже ждёт готовых предков)
+    resolveLoops();
     const wave=runnableNodes().filter(n=>sub.has(n.id));
     if(!wave.length) break;
     const runOne=async n=>{
