@@ -647,6 +647,7 @@ function updateGroupMembership(movedId){
 nodesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('.port.out'); if(p){ wire={from:p.dataset.id}; e.stopPropagation(); e.preventDefault(); return; }
   const h=e.target.closest('[data-drag]'); if(!h) return;
+  if(e.target.closest('button,input,textarea,select')) return; // не перехватывать клики по кнопкам внутри шапки
   const n=node(h.dataset.drag); const pt=canvasPoint(e); pushUndo(); drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y}; e.preventDefault();
 });
 edgesEl.addEventListener('mousedown',e=>{
