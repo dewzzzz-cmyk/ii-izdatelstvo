@@ -90,7 +90,7 @@ function checkSchema(n){
 function defaultState(){
   const nodes=TEMPLATES.filter(t=>!['continuity','factcheck'].includes(t.role)).map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
-  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:''},
+  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
@@ -1891,6 +1891,28 @@ function openExport(){
       <button class="btn ok" id="x-epub">📗 Скачать EPUB</button>
       <button class="btn ok" id="x-pdf">🖨 PDF</button>
       <button class="btn ok" id="x-fb2">📱 FB2</button></div>
+    <div class="section-label">Обложка</div>
+    <div class="cover-row">
+      <div class="cover-preview" id="x-cover-prev">${state.project.cover?`<img src="${esc(state.project.cover)}">`:'<span class="cover-empty">нет обложки</span>'}</div>
+      <div class="cover-ctrls">
+        <label class="btn ghost" style="cursor:pointer">📁 Загрузить<input type="file" id="x-cover-file" accept="image/*" hidden></label>
+        <button class="btn ghost" id="x-cover-gen">🎨 Сгенерировать обложку</button>
+        <button class="btn ghost" id="x-cover-clear">🗑 Очистить обложку</button>
+      </div>
+    </div>
+    <div class="hint">Обложка кладётся первой страницей в EPUB (cover-image). Генератор рисует 1600×2560 на основе жанра, названия и автора.</div>
+    <div class="section-label">Метаданные книги</div>
+    <div class="meta-form">
+      <div class="field"><label>Автор</label><input id="x-meta-author" value="${esc(state.project.author)}" placeholder="Имя Фамилия"></div>
+      <div class="field"><label>ISBN</label><input id="x-meta-isbn" value="${esc(state.project.isbn)}" placeholder="978-…"></div>
+      <div class="field"><label>Серия</label><input id="x-meta-series" value="${esc(state.project.series)}" placeholder="Название серии"></div>
+      <div class="field"><label>Категории / BISAC</label><input id="x-meta-bisac" value="${esc(state.project.bisac)}" placeholder="FIC000000, Художественная проза"></div>
+      <div class="field"><label>Жанр FB2</label><select id="x-meta-fb2genre">
+        ${[['','— по строке жанра —'],['sf','Научная фантастика'],['fantasy','Фэнтези'],['detective','Детектив'],['thriller','Триллер'],['prose_contemporary','Современная проза'],['prose_classic','Классическая проза'],['love','Любовный роман'],['adventure','Приключения'],['child_prose','Детская проза'],['nonfiction','Нон-фикшн'],['sci_history','История'],['poetry','Поэзия'],['humor','Юмор'],['horror','Ужасы']].map(([v,l])=>`<option value="${v}"${state.project.fb2genre===v?' selected':''}>${l}</option>`).join('')}
+      </select></div>
+      <div class="field"><label>Аннотация</label><textarea id="x-meta-annot" rows="4" placeholder="Краткое описание книги для магазинов">${esc(state.project.annotation)}</textarea></div>
+      <div class="actions"><button class="btn ghost" id="x-meta-fill">📋 Заполнить из агента «Метаданные»</button></div>
+    </div>
     <div class="section-label">Схема пайплайна</div>
     <div class="actions"><button class="btn ghost" id="x-exp">⬇ Экспорт проекта (.json)</button>
       <button class="btn ghost" id="x-pipe">⬇ Только пайплайн (без данных)</button>
@@ -1922,7 +1944,95 @@ function openExport(){
     b.querySelector('#x-imp').onchange=ev=>{ const f=ev.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ state=Object.assign(defaultState(),JSON.parse(r.result)); save(); render(); closeDrawer(); toast('Проект импортирован','ok'); }catch{ toast('Не удалось прочитать файл','err'); } }; r.readAsText(f); };
     b.querySelector('#x-bl-save').onclick=()=>{ saveBaseline(); openExport(); };
     if(state.baseline) b.querySelector('#x-bl-cmp').onclick=openBaselineCompare;
+    // ── Обложка ──
+    b.querySelector('#x-cover-file').onchange=ev=>{
+      const f=ev.target.files[0]; if(!f) return;
+      const r=new FileReader();
+      r.onload=()=>{ state.project.cover=r.result; save(); openExport(); toast('Обложка загружена','ok'); };
+      r.readAsDataURL(f);
+    };
+    b.querySelector('#x-cover-clear').onclick=()=>{ state.project.cover=''; save(); openExport(); toast('Обложка удалена'); };
+    b.querySelector('#x-cover-gen').onclick=()=>{ generateCover(); openExport(); };
+    // ── Метаданные ──
+    const syncMeta=()=>{
+      state.project.author=b.querySelector('#x-meta-author').value;
+      state.project.isbn=b.querySelector('#x-meta-isbn').value;
+      state.project.series=b.querySelector('#x-meta-series').value;
+      state.project.bisac=b.querySelector('#x-meta-bisac').value;
+      state.project.fb2genre=b.querySelector('#x-meta-fb2genre').value;
+      state.project.annotation=b.querySelector('#x-meta-annot').value;
+      save();
+    };
+    ['x-meta-author','x-meta-isbn','x-meta-series','x-meta-bisac','x-meta-fb2genre','x-meta-annot']
+      .forEach(id=>{ const el=b.querySelector('#'+id); if(el) el.onchange=syncMeta; });
+    b.querySelector('#x-meta-fill').onclick=()=>{ fillMetaFromAgent(); openExport(); };
   });
+}
+/* Канвас-генератор обложки 1600×2560 + парсер метаданных из агента */
+const GENRE_PALETTE={
+  'детектив':['#1a1a2e','#16213e'],'триллер':['#1a1a2e','#16213e'],'ужас':['#0d0d0d','#2b0000'],
+  'фэнтези':['#2d1b4e','#5b2c8a'],'фантастик':['#0a1a2f','#1b3a5f'],'sf':['#0a1a2f','#1b3a5f'],
+  'любов':['#5b1a3a','#a83255'],'роман':['#3a2a4a','#6b4a7a'],'детск':['#2a5a8a','#4ab0e0'],
+  'нон-фикшн':['#1e3a2e','#2e6b4e'],'нонфикшн':['#1e3a2e','#2e6b4e'],'истори':['#3a2e1a','#6b5a2e']
+};
+function genrePalette(genre){
+  const g=(genre||'').toLowerCase();
+  for(const k in GENRE_PALETTE) if(g.includes(k)) return GENRE_PALETTE[k];
+  return ['#2c2c44','#454566'];
+}
+function generateCover(){
+  const pr=state.project;
+  const W=1600,H=2560;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d');
+  const [c1,c2]=genrePalette(pr.genre);
+  const grad=ctx.createLinearGradient(0,0,W,H);
+  grad.addColorStop(0,c1); grad.addColorStop(1,c2);
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+  // декоративная рамка
+  ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=8;
+  ctx.strokeRect(60,60,W-120,H-120);
+  ctx.textAlign='center';
+  // Название — по центру, перенос по словам
+  const title=(pr.title||'Без названия').toUpperCase();
+  ctx.fillStyle='#fff';
+  let fs=140; ctx.font='bold '+fs+'px Georgia, serif';
+  const words=title.split(/\s+/), lines=[]; let line='';
+  for(const w of words){ const test=line?line+' '+w:w; if(ctx.measureText(test).width>W-280&&line){lines.push(line);line=w;}else line=test; }
+  if(line) lines.push(line);
+  ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=20;
+  let y=H*0.40-(lines.length-1)*fs*0.6;
+  for(const l of lines){ ctx.fillText(l,W/2,y); y+=fs*1.2; }
+  ctx.shadowBlur=0;
+  // разделительная линия
+  ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.moveTo(W/2-200,y+40); ctx.lineTo(W/2+200,y+40); ctx.stroke();
+  // Автор — внизу
+  const author=(pr.author||'').trim();
+  if(author){ ctx.font='italic 70px Georgia, serif'; ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.fillText(author,W/2,H-220); }
+  // Жанр — мелким снизу
+  if(pr.genre){ ctx.font='40px Georgia, serif'; ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.fillText(pr.genre.toUpperCase(),W/2,H-130); }
+  state.project.cover=cv.toDataURL('image/jpeg',0.9);
+  save();
+  toast('Обложка сгенерирована','ok');
+}
+function fillMetaFromAgent(){
+  const n=state.nodes.find(x=>roleKeyOf(x)==='meta'&&x.output);
+  if(!n){ toast('Нет узла роли «Метаданные» с результатом','err'); return; }
+  const out=n.output;
+  const grab=re=>{ const m=out.match(re); return m?m[1].trim():''; };
+  const author=grab(/Автор[:\s]+(.+)/i);
+  const isbn=grab(/ISBN[:\s]+([\d\-Xx]+)/i);
+  const annot=grab(/Аннотаци[яи][:\s]+([\s\S]+?)(?:\n\s*\n|\n[А-ЯЁ][а-яё]+:|$)/i);
+  const bisac=grab(/(?:Категори[ия]|BISAC|Жанр)[:\s]+(.+)/i);
+  const series=grab(/Сери[яи][:\s]+(.+)/i);
+  if(author) state.project.author=author;
+  if(isbn) state.project.isbn=isbn;
+  if(annot) state.project.annotation=annot;
+  if(bisac) state.project.bisac=bisac;
+  if(series) state.project.series=series;
+  save();
+  toast((author||isbn||annot||bisac||series)?'Метаданные заполнены из агента':'Ничего не распознано в выводе агента',(author||isbn||annot||bisac||series)?'ok':'warn');
 }
 function exportPDF(){
   remindDisclosure();
@@ -1978,7 +2088,15 @@ function exportFb2(){
   };
   const sects=chapters.map((n,i)=>`  <section>\n    <title><p>${X(chapterTitleOf(n,i))}</p></title>\n    ${md2fb2(cleanProse(n))}\n  </section>`).join('\n');
   const date=new Date().toISOString().slice(0,10);
-  const xml=`<?xml version="1.0" encoding="UTF-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n      <genre>${X(pr.genre||'prose_contemporary')}</genre>\n      <author><first-name>${X((pr.author||'').trim()||(pr.title?pr.title.split(' ')[0]:''))} </first-name><last-name></last-name></author>\n      <book-title>${X(typo(pr.title||'Без названия'))}</book-title>\n      <annotation><p>${X(pr.brief||'')}</p></annotation>\n      <lang>ru</lang>\n    </title-info>\n    <document-info>\n      <author><nickname>ии-издательство</nickname></author>\n      <program-used>ИИ-Издательство</program-used>\n      <date value="${date}">${date}</date>\n      <id>${uid()}</id>\n      <version>1.0</version>\n    </document-info>\n  </description>\n  <body>\n${sects}\n  </body>\n</FictionBook>`;
+  // Жанр FB2: код из формы (project.fb2genre) → иначе fallback по сырой строке.
+  const fb2genre=(pr.fb2genre&&pr.fb2genre.trim())||(pr.genre?pr.genre.trim():'')||'prose_contemporary';
+  // Автор: «Имя [Отчество] Фамилия» → first-name = всё кроме последнего слова, last-name = последнее.
+  const authorParts=(pr.author||'').trim().split(/\s+/).filter(Boolean);
+  const firstName=authorParts.length>1?authorParts.slice(0,-1).join(' '):(authorParts[0]||'');
+  const lastName=authorParts.length>1?authorParts[authorParts.length-1]:'';
+  const annot=(pr.annotation||'').trim();
+  const annotXml=annot?annot.split(/\n\n+/).map(p=>`<p>${X(p.replace(/\n/g,' '))}</p>`).join(''):'<p></p>';
+  const xml=`<?xml version="1.0" encoding="UTF-8"?>\n<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n  <description>\n    <title-info>\n      <genre>${X(fb2genre)}</genre>\n      <author><first-name>${X(firstName)}</first-name><last-name>${X(lastName)}</last-name></author>\n      <book-title>${X(typo(pr.title||'Без названия'))}</book-title>\n      <annotation>${annotXml}</annotation>${pr.series?`\n      <sequence name="${X(pr.series)}"/>`:''}\n      <lang>ru</lang>\n    </title-info>\n    <document-info>\n      <author><nickname>ии-издательство</nickname></author>\n      <program-used>ИИ-Издательство</program-used>\n      <date value="${date}">${date}</date>\n      <id>${uid()}</id>\n      <version>1.0</version>\n    </document-info>\n  </description>\n  <body>\n${sects}\n  </body>\n</FictionBook>`;
   download((pr.title||'book').replace(/[\\/:*?"<>|]/g,'-')+'.fb2', xml, 'application/xml');
   toast('FB2 готов','ok');
 }
@@ -2152,8 +2270,19 @@ function exportEpub(){
   const title=typo(pr.title||'Без названия');
   const fm=frontMatter();
   const E=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const bookId='urn:uuid:'+uid()+'-'+uid();
+  const bookId=(pr.isbn&&pr.isbn.trim())?('urn:isbn:'+pr.isbn.trim().replace(/[^\dXx]/g,'')):('urn:uuid:'+uid()+'-'+uid());
   const now=new Date().toISOString().replace(/\.\d+Z$/,'Z');
+
+  // Обложка (cover-image) — декодируем dataURL в бинарь для STORE+CRC32
+  let coverBin=null;
+  if(pr.cover&&/^data:image\//.test(pr.cover)){
+    try{
+      const b64=pr.cover.split(',')[1]; const bin=atob(b64);
+      coverBin=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) coverBin[i]=bin.charCodeAt(i);
+    }catch{ coverBin=null; }
+  }
+  const coverXhtml=`<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><meta charset="utf-8"/><title>Обложка</title><style>body{margin:0;padding:0}img{max-width:100%;height:auto;display:block;margin:0 auto}</style></head><body epub:type="cover"><img src="../images/cover.jpg" alt="${E(title)}"/></body></html>`;
 
   // Титульная страница (front matter) — первая в spine
   const titleXhtml=`<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><meta charset="utf-8"/><title>${E(fm.title)}</title><link rel="stylesheet" href="../style.css"/></head><body><div class="titlepage"><h1>${E(fm.title)}</h1>${fm.author?`<p class="author">${E(fm.author)}</p>`:''}<p class="year">${fm.year}</p><p class="rights">Все права защищены</p></div></body></html>`;
@@ -2166,8 +2295,9 @@ function exportEpub(){
     return {fn,cht,xhtml:`<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><meta charset="utf-8"/><title>${cht}</title><link rel="stylesheet" href="../style.css"/></head><body><h2>${cht}</h2>\n${body}\n</body></html>`};
   });
 
-  const manifestItems=`<item id="titlepage" href="chapters/title.xhtml" media-type="application/xhtml+xml"/>\n    `+chs.map((c,i)=>`<item id="ch${i+1}" href="chapters/${c.fn}" media-type="application/xhtml+xml"/>`).join('\n    ');
-  const spineItems=`<itemref idref="titlepage"/>\n    `+chs.map((_,i)=>`<itemref idref="ch${i+1}"/>`).join('\n    ');
+  const coverManifest=coverBin?`<item id="cover-image" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>\n    <item id="cover" href="chapters/cover.xhtml" media-type="application/xhtml+xml"/>\n    `:'';
+  const manifestItems=coverManifest+`<item id="titlepage" href="chapters/title.xhtml" media-type="application/xhtml+xml"/>\n    `+chs.map((c,i)=>`<item id="ch${i+1}" href="chapters/${c.fn}" media-type="application/xhtml+xml"/>`).join('\n    ');
+  const spineItems=(coverBin?`<itemref idref="cover"/>\n    `:'')+`<itemref idref="titlepage"/>\n    `+chs.map((_,i)=>`<itemref idref="ch${i+1}"/>`).join('\n    ');
   const navItems=chs.map(c=>`<li><a href="chapters/${c.fn}">${c.cht}</a></li>`).join('\n      ');
   const ncxPoints=chs.map((c,i)=>`<navPoint id="np${i+1}" playOrder="${i+1}"><navLabel><text>${c.cht}</text></navLabel><content src="chapters/${c.fn}"/></navPoint>`).join('\n  ');
 
@@ -2184,10 +2314,11 @@ ul{margin:.3em 0 .6em 1.8em}li{margin:.2em 0}hr{border:none;border-top:1px solid
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>${E(title)}</dc:title>
-    <dc:creator>ИИ-Издательство</dc:creator>
+    <dc:creator>${E((pr.author||'').trim()||'Автор не указан')}</dc:creator>
     <dc:language>ru</dc:language>
     <dc:identifier id="bookid">${bookId}</dc:identifier>
-    <dc:description>${E(pr.brief||'')}</dc:description>
+    <dc:description>${E(pr.annotation||'')}</dc:description>${pr.bisac?`\n    <dc:subject>${E(pr.bisac)}</dc:subject>`:''}${pr.series?`\n    <meta property="belongs-to-collection" id="series">${E(pr.series)}</meta>`:''}
+    <dc:publisher>ИИ-Издательство</dc:publisher>${coverBin?'\n    <meta name="cover" content="cover-image"/>':''}
     <meta property="dcterms:modified">${now}</meta>
   </metadata>
   <manifest>
@@ -2210,6 +2341,7 @@ ul{margin:.3em 0 .6em 1.8em}li{margin:.2em 0}hr{border:none;border-top:1px solid
   zip.add('OEBPS/nav.xhtml',nav);
   zip.add('OEBPS/toc.ncx',ncx);
   zip.add('OEBPS/style.css',css);
+  if(coverBin){ zip.add('OEBPS/images/cover.jpg',coverBin); zip.add('OEBPS/chapters/cover.xhtml',coverXhtml); }
   zip.add('OEBPS/chapters/title.xhtml',titleXhtml);
   chs.forEach(c=>zip.add('OEBPS/chapters/'+c.fn,c.xhtml));
 
