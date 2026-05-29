@@ -92,6 +92,7 @@ function defaultState(){
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
+    userTemplates:[], snippets:[],
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
       backupDir:'', autoBackup:true, backupIntervalMin:10, gdriveClientId:'', gdriveLastBackup:null, banList:'',
@@ -324,15 +325,40 @@ function bibleFor(text){
 }
 function parseBibleLines(text){ return (text||'').split('\n').map(l=>l.trim()).filter(l=>l.includes('|'))
   .map(l=>{ const i=l.indexOf('|'); return { keys:l.slice(0,i).replace(/^[-•*\d.)\s]+/,'').trim(), text:l.slice(i+1).trim() }; }).filter(e=>e.text); }
+// #44: Подстановка переменных {{...}} в промте. ctx — словарь значений.
+// Поддерживает {{prev.ИмяАгента}} (точка) и кириллицу в именах.
+function interpolate(tpl, ctx){
+  if(!tpl) return tpl||'';
+  return tpl.replace(/\{\{([\w.:а-яА-ЯёЁ]+)\}\}/g, (m, key)=>{
+    if(Object.prototype.hasOwnProperty.call(ctx, key) && ctx[key]!=null) return String(ctx[key]);
+    // prev.ИмяАгента — берём из словаря предков по имени
+    if(key.startsWith('prev.')){
+      const name=key.slice(5);
+      const byName=ctx._prevByName||{};
+      if(byName[name]!=null) return String(byName[name]);
+      return ''; // нет такого предка → пусто
+    }
+    return m; // неизвестная переменная — оставляем как есть
+  });
+}
 async function buildMessages(n){
   const pr=state.project;
+  // #21: образец стиля — берём начало целиком до 3000 симв (без вырезания середины), прогоняем через typo()
+  let styleSample='';
+  if(pr.styleRef){
+    styleSample=pr.styleRef.slice(0,3000);
+    if(typeof typo==='function'){ try{ styleSample=typo(styleSample); }catch(e){} }
+  }
   const styleBlock = pr.styleRef
-    ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${smartTrunc(pr.styleRef, 600)}\n"""`
+    ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${styleSample}\n"""`
     : '';
   const preds=state.edges.filter(e=>e.to===n.id).map(e=>node(e.from)).filter(Boolean);
   const budget=state.global.maxContextChars||8000;
   const predsWithOutput=preds.filter(p=>p.output);
   const perNode=Math.floor(budget/Math.max(1,predsWithOutput.length));
+  // #44: словарь вывода предков по имени для {{prev.Имя}}
+  const _prevByName={};
+  predsWithOutput.forEach(p=>{ _prevByName[p.name]=smartTrunc(p.summary||p.output,perNode); });
   let prior=predsWithOutput.map(p=>`— ${p.name}:\n${smartTrunc(p.summary||p.output,perNode)}`).join('\n\n');
   // Авто-сжатие контекста если prior слишком длинный
   if(prior && prior.length > budget * 0.7 && state.global.autoDistill && hasKey()){
@@ -346,12 +372,21 @@ async function buildMessages(n){
   }
   const scan=[pr.title,pr.genre,pr.brief,pr.input,prior].join(' ');
   const bible=bibleFor(scan);
+  // #44: контекст для подстановки переменных {{...}} в промте
+  const ctx={
+    title:pr.title||'', genre:pr.genre||'', audience:pr.audience||'', brief:pr.brief||'',
+    input:pr.input||'', prev:prior||'', bible:bible||'',
+    'chapter.title':state.chapterCtx?(state.chapterCtx.title||''):'',
+    _prevByName
+  };
+  // Если автор использует {{prev}} — он сам управляет вставкой материалов предков, авто-блок не дублируем
+  const usesPrevVar=/\{\{\s*prev(\.[\w.а-яА-ЯёЁ]+)?\s*\}\}/.test(n.prompt||'');
   let user='';
   if(bible) user+=`Библия книги (канон, соблюдать строго):\n${bible}\n\n`;
   user+=`Книга: «${pr.title||'без названия'}»\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}\n`+
     `Режим: ${pr.mode==='write'?'пишем с нуля':'редактируем готовый текст'}\n`+(pr.brief?`Бриф: ${pr.brief}\n`:'');
   if(pr.mode==='edit'&&pr.input&&preds.length===0) user+=`\nИсходный текст:\n${pr.input}\n`;
-  if(prior) user+=`\nМатериалы от предыдущих агентов:\n${prior}\n`;
+  if(prior && !usesPrevVar) user+=`\nМатериалы от предыдущих агентов:\n${prior}\n`;
   // Контекст главы (режим глава-за-главой)
   if(state.chapterCtx){ const ch=state.chapterCtx;
     user+=`\nТекущая глава: ${ch.num}. «${ch.title}»`+(ch.brief?`\nЗадача главы: ${ch.brief}`:'')+'\n';
@@ -360,7 +395,9 @@ async function buildMessages(n){
   const banBlock = state.global.banList
     ? `\n\nСТОП-СЛОВА — НЕЛЬЗЯ использовать в тексте (ни в каком виде): ${state.global.banList.replace(/\n/g,', ')}`
     : '';
-  return [ {role:'system',content:n.prompt + styleBlock + banBlock}, {role:'user',content:user} ];
+  // #44: прогоняем промт через interpolate ПЕРЕД отправкой
+  const sysPrompt=interpolate(n.prompt||'', ctx);
+  return [ {role:'system',content:sysPrompt + styleBlock + banBlock}, {role:'user',content:user} ];
 }
 async function callLLM(c, messages){
   const r = await fetch('/api/generate', {
@@ -897,10 +934,34 @@ edgesEl.addEventListener('click',e=>{
   const ed=state.edges.find(x=>x.id===p.dataset.edge); if(!ed) return;
   const src=node(ed.from); const dst=node(ed.to);
   openDrawer('⚡ Связь: '+esc((src?.name||'?')+' → '+(dst?.name||'?')),
-`<div class="field"><label>Условие выхода (JS)</label>
-  <textarea id="ec-cond" rows="3" placeholder="output.includes('PASS')&#10;Оставьте пустым — выходить только по авто-оценке">${esc(ed.condition||'')}</textarea>
-  <div class="hint">Переменная <code>output</code> — текст вывода. <code>true</code> = выйти из петли, <code>false</code> = повторить.</div>
+`<div class="cond-builder">
+  <div class="section-label" style="margin-top:0">🧩 Конструктор условия</div>
+  <div class="hint" style="margin:0 0 8px">Соберите условие выхода без кода. JS-выражение сгенерируется автоматически.</div>
+  <div class="row2">
+    <div class="field"><label>Тип условия</label>
+      <select id="cb-type">
+        <option value="">— не задавать (только авто-оценка) —</option>
+        <option value="contains">Вывод содержит текст</option>
+        <option value="notcontains">Вывод НЕ содержит текст</option>
+        <option value="longer">Длиннее N слов</option>
+        <option value="score">Оценка ≥ N (нужна авто-оценка)</option>
+        <option value="exactly">Повторять ровно N раз</option>
+        <option value="approved">Пока редактор не напишет ОДОБРЕНО</option>
+      </select>
+    </div>
+    <div class="field" id="cb-val-wrap" style="display:none"><label id="cb-val-label">Значение</label>
+      <input id="cb-val" placeholder="">
+    </div>
+  </div>
+  <button class="btn ghost sm" id="cb-apply" style="margin-top:2px">↧ Применить в условие</button>
 </div>
+<details class="cond-advanced"${(ed.condition&&ed.condition.trim())?' open':''}>
+<summary>⚙ Продвинутый режим — сырой JS</summary>
+<div class="field" style="margin-top:8px"><label>Условие выхода (JS)</label>
+  <textarea id="ec-cond" rows="3" placeholder="output.includes('PASS')&#10;Оставьте пустым — выходить только по авто-оценке">${esc(ed.condition||'')}</textarea>
+  <div class="hint">⚠ Выполняется как JS. Переменная <code>output</code> — текст вывода. <code>true</code> = выйти из петли, <code>false</code> = повторить.</div>
+</div>
+</details>
 ${ed.isLoop?`
 <div class="section-label" style="margin-top:12px">⚙ Настройки петли</div>
 <div class="row2">
@@ -938,6 +999,44 @@ ${ed._autoScore!=null?`<div style="font-size:11px;color:var(--accent);margin-top
     const autoCb=b.querySelector('#ec-autoeval');
     const threshWrap=b.querySelector('#ec-thresh-wrap');
     if(autoCb) autoCb.onchange=()=>{ if(threshWrap) threshWrap.style.display=autoCb.checked?'':'none'; };
+    // #24: конструктор условий без кода
+    const cbType=b.querySelector('#cb-type');
+    const cbValWrap=b.querySelector('#cb-val-wrap');
+    const cbVal=b.querySelector('#cb-val');
+    const cbValLabel=b.querySelector('#cb-val-label');
+    if(cbType){
+      const meta={
+        contains:{label:'Текст',ph:'PASS',type:'text'},
+        notcontains:{label:'Текст',ph:'СТОП',type:'text'},
+        longer:{label:'N слов',ph:'500',type:'num'},
+        score:{label:'Порог (1–10)',ph:'7',type:'num'},
+        exactly:{label:'N раз',ph:'3',type:'num'},
+        approved:{label:'',ph:'',type:'none'},
+      };
+      cbType.onchange=()=>{
+        const m=meta[cbType.value];
+        if(!m||m.type==='none'){ cbValWrap.style.display='none'; }
+        else { cbValWrap.style.display=''; cbValLabel.textContent=m.label; cbVal.placeholder=m.ph; cbVal.value=''; }
+      };
+      b.querySelector('#cb-apply').onclick=()=>{
+        const t=cbType.value; const v=(cbVal?.value||'').trim();
+        const esq=s=>String(s).replace(/'/g,"\\'");
+        if(!t){ b.querySelector('#ec-cond').value=''; toast('Условие очищено — выход только по авто-оценке'); return; }
+        if(t==='contains'){ if(!v){ toast('Введите текст','err'); return; } b.querySelector('#ec-cond').value=`output.includes('${esq(v)}')`; }
+        else if(t==='notcontains'){ if(!v){ toast('Введите текст','err'); return; } b.querySelector('#ec-cond').value=`!output.includes('${esq(v)}')`; }
+        else if(t==='longer'){ const n2=parseInt(v)||0; b.querySelector('#ec-cond').value=`output.split(/\\s+/).length > ${n2}`; }
+        else if(t==='approved'){ b.querySelector('#ec-cond').value=`output.includes('ОДОБРЕНО')`; }
+        else if(t==='exactly'){ const n2=Math.max(1,parseInt(v)||1); b.querySelector('#ec-cond').value=''; const ri=b.querySelector('#ec-retries'); if(ri) ri.value=n2; toast('Условие пустое + макс. итераций = '+n2,'ok'); return; }
+        else if(t==='score'){ const n2=Math.min(10,Math.max(1,parseInt(v)||7));
+          // спец-маркер: включаем авто-оценку и ставим порог (петля); JS-условие не нужно
+          b.querySelector('#ec-cond').value='';
+          if(autoCb){ autoCb.checked=true; if(threshWrap) threshWrap.style.display=''; }
+          const th=b.querySelector('#ec-thresh'); if(th) th.value=n2;
+          toast(autoCb?'Авто-оценка вкл., порог '+n2:'Порог '+n2+' — включите авто-оценку (петля)','ok'); return;
+        }
+        toast('JS-условие сгенерировано','ok');
+      };
+    }
     b.querySelector('#ec-save').onclick=()=>{
       ed.condition=b.querySelector('#ec-cond').value.trim();
       ed.maxRetries=parseInt(b.querySelector('#ec-retries')?.value)||0;
@@ -1550,7 +1649,17 @@ function openNode(id){
     <div class="row2"><div class="field"><label>Имя</label><input id="f-name" value="${esc(n.name)}"></div>
       <div class="field"><label>Должность</label><input id="f-role" value="${esc(n.role)}"></div></div>
     <div class="field"><label>Системный промт</label><textarea id="f-prompt" rows="6">${esc(n.prompt)}</textarea>
-      <div class="hint">Кто этот агент и как работает. Получает контекст книги, библию и результаты предыдущих агентов.</div></div>
+      <div class="hint">Кто этот агент и как работает. Получает контекст книги, библию и результаты предыдущих агентов.</div>
+      <div class="var-legend">
+        <span class="var-legend-title">Переменные (клик — вставить):</span>
+        ${['{{title}}','{{genre}}','{{audience}}','{{brief}}','{{input}}','{{prev}}','{{bible}}','{{chapter.title}}'].map(v=>`<span class="var-chip" data-var="${esc(v)}">${esc(v)}</span>`).join('')}
+      </div>
+      <div class="snip-block">
+        <div class="snip-head"><span class="var-legend-title">Сниппеты</span>
+          <button type="button" class="btn ghost xs" id="snip-add" title="Добавить выделение/строку как сниппет">＋ из выделения</button></div>
+        <div id="snip-list" class="snip-list"></div>
+      </div>
+    </div>
     <div class="field"><label>JSON-схема выхода (необязательно)</label>
       <textarea id="f-schema" rows="2" placeholder='{"hero": "string", "rating": "number"}'>${esc(n.outputSchema||'')}</textarea>
       <div class="hint">Если задана — после прогона проверяется, что вывод содержит JSON с этими ключами. Предупреждение в журнале.</div></div>
@@ -1587,6 +1696,7 @@ function openNode(id){
       <button class="btn ghost" id="f-preview">👁 Промт</button>
       ${n.output?`<button class="btn ghost" id="f-edit">✎ Править вручную</button>`:''}
       <button class="btn ghost" id="f-clone">⧉ Дублировать</button>
+      <button class="btn ghost" id="f-tpl">⭐ Сохранить как шаблон</button>
       <button class="btn danger" id="f-del">Удалить</button></div>
     ${hist}
     <div class="section-label">Текущий результат</div>
@@ -1625,6 +1735,46 @@ function openNode(id){
     b.querySelector('#f-clone').onclick=()=>{ collect(); const copy=JSON.parse(JSON.stringify(n)); copy.id=uid(); copy.x=n.x+30; copy.y=n.y+30; copy.output=''; copy.summary=''; copy.cacheHash=''; copy.tokensIn=0; copy.tokensOut=0; copy.ms=0; copy.status='idle'; copy.error=''; copy.approved=false; copy.promptHistory=[]; state.nodes.push(copy); save(); render(); closeDrawer(); toast('Агент скопирован','ok'); };
     b.querySelector('#f-edit')?.addEventListener('click',()=>openManualEdit(n.id));
     b.querySelectorAll('[data-revert]').forEach(btn=>btn.onclick=()=>{ const h=n.promptHistory[+btn.dataset.revert]; if(h){ b.querySelector('#f-prompt').value=h.prompt; toast('Версия подставлена — нажмите Сохранить'); } });
+    // #44: вставка переменной в позицию курсора по клику на чип
+    const ta=b.querySelector('#f-prompt');
+    const insertAtCursor=text=>{
+      const s=ta.selectionStart??ta.value.length, e=ta.selectionEnd??ta.value.length;
+      ta.value=ta.value.slice(0,s)+text+ta.value.slice(e);
+      ta.focus(); const pos=s+text.length; ta.setSelectionRange(pos,pos);
+    };
+    b.querySelectorAll('.var-chip').forEach(ch=>ch.onclick=()=>insertAtCursor(ch.dataset.var));
+    // #45: сниппеты
+    const renderSnips=()=>{
+      const list=b.querySelector('#snip-list');
+      const snips=state.snippets||[];
+      if(!snips.length){ list.innerHTML='<span class="snip-empty">Нет сниппетов. Выделите текст в промте и нажмите «＋ из выделения».</span>'; return; }
+      list.innerHTML=snips.map((s,i)=>`<span class="snip-chip" data-snip="${i}" title="Клик — вставить в промт">${esc(s.length>40?s.slice(0,40)+'…':s)}<button type="button" class="snip-del" data-snip-del="${i}" title="Удалить">×</button></span>`).join('');
+      list.querySelectorAll('[data-snip]').forEach(el=>el.onclick=ev=>{ if(ev.target.closest('[data-snip-del]')) return; insertAtCursor(state.snippets[+el.dataset.snip]); });
+      list.querySelectorAll('[data-snip-del]').forEach(el=>el.onclick=ev=>{ ev.stopPropagation(); state.snippets.splice(+el.dataset.snipDel,1); save(); renderSnips(); });
+    };
+    renderSnips();
+    b.querySelector('#snip-add').onclick=()=>{
+      const s=ta.selectionStart, e=ta.selectionEnd;
+      let frag=(s!=null&&e!=null&&e>s)?ta.value.slice(s,e):'';
+      if(!frag.trim()){ // нет выделения — берём строку под курсором
+        const before=ta.value.lastIndexOf('\n',(ta.selectionStart||1)-1)+1;
+        let after=ta.value.indexOf('\n',ta.selectionStart||0); if(after<0) after=ta.value.length;
+        frag=ta.value.slice(before,after);
+      }
+      frag=frag.trim();
+      if(!frag){ toast('Нечего сохранять — выделите текст','err'); return; }
+      if(!state.snippets) state.snippets=[];
+      state.snippets.unshift(frag); if(state.snippets.length>50) state.snippets.length=50;
+      save(); renderSnips(); toast('Сниппет добавлен','ok');
+    };
+    // #45: сохранить узел как пользовательский шаблон
+    b.querySelector('#f-tpl').onclick=()=>{
+      collect();
+      if(!state.userTemplates) state.userTemplates=[];
+      state.userTemplates.unshift({ name:n.name, emoji:n.emoji, prompt:n.prompt, temperature:n.temperature, role:n.role });
+      if(state.userTemplates.length>50) state.userTemplates.length=50;
+      save(); toast('⭐ Сохранено в «Мои агенты»','ok');
+    };
   });
 }
 /* ============ РУЧНАЯ ПРАВКА ВЫВОДА (Item 18/19) ============ */
@@ -2590,14 +2740,37 @@ function openGroupEditor(id){
   });
 }
 function addNodePicker(){
+  const userTpls=state.userTemplates||[];
+  const myAgents=userTpls.length?`
+    <div class="section-label">⭐ Мои агенты</div>
+    <div id="my-agents" class="my-agents">
+      ${userTpls.map((t,i)=>`<div class="my-agent-row">
+        <button class="btn ghost sm my-agent-add" data-utpl="${i}" style="flex:1;text-align:left">${esc(t.emoji||'🤖')} ${esc(t.name||'агент')}</button>
+        <button class="btn ghost xs my-agent-del" data-utpl-del="${i}" title="Удалить шаблон">×</button>
+      </div>`).join('')}
+    </div>`:'';
   openDrawer('＋ Добавить агента',`<div class="field"><label>Готовая роль</label><select id="add-tpl">
     ${TEMPLATES.map((t,i)=>`<option value="${i}">${t.emoji} ${t.name} — ${t.title}</option>`).join('')}
     <option value="custom">⚙️ Произвольный агент</option></select></div>
     <div class="hint">Появится на холсте. Свяжите вручную или «Авто-схема».</div>
-    <div class="actions" style="margin-top:16px"><button class="btn ok" id="add-go">Добавить</button></div>`,
+    <div class="actions" style="margin-top:16px"><button class="btn ok" id="add-go">Добавить</button></div>
+    ${myAgents}`,
     b=>{ b.querySelector('#add-go').onclick=()=>{ const v=b.querySelector('#add-tpl').value;
       const t=v==='custom'?{name:'Новый агент',title:'роль',emoji:'🤖',prompt:'Ты — агент издательства. Опиши свою роль.'}:TEMPLATES[+v];
-      state.nodes.push(freshNode(t,canvas.scrollLeft+80,canvas.scrollTop+80)); save(); render(); closeDrawer(); toast('Агент добавлен'); }; });
+      state.nodes.push(freshNode(t,canvas.scrollLeft+80,canvas.scrollTop+80)); save(); render(); closeDrawer(); toast('Агент добавлен'); };
+      // ⭐ Мои агенты: добавление и удаление
+      b.querySelectorAll('.my-agent-add').forEach(btn=>btn.onclick=()=>{
+        const ut=(state.userTemplates||[])[+btn.dataset.utpl]; if(!ut) return;
+        // freshNode ждёт {name,title,emoji,prompt,role(ключ)}; у шаблона role — должность (title)
+        const tpl={ name:ut.name, title:ut.role||'агент', emoji:ut.emoji||'🤖', prompt:ut.prompt||'', role:'' };
+        const fn=freshNode(tpl,canvas.scrollLeft+80,canvas.scrollTop+80);
+        if(typeof ut.temperature==='number') fn.temperature=ut.temperature;
+        state.nodes.push(fn); save(); render(); closeDrawer(); toast('Агент добавлен из шаблона','ok');
+      });
+      b.querySelectorAll('.my-agent-del').forEach(btn=>btn.onclick=()=>{
+        state.userTemplates.splice(+btn.dataset.utplDel,1); save(); addNodePicker();
+      });
+    });
 }
 
 /* ============ ТРЕКЕР СУЩНОСТЕЙ (Item 15) ============ */

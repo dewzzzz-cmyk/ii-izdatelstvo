@@ -807,3 +807,28 @@ ins.wd{background:#16361f;color:#86efac;text-decoration:none;border-radius:3px}
 .meta-form .field{margin-bottom:8px}
 .meta-form textarea{width:100%;resize:vertical;font:inherit;background:var(--panel3);color:var(--txt);border:1px solid var(--line2);border-radius:6px;padding:6px 8px}
 .meta-form select{width:100%;background:var(--panel3);color:var(--txt);border:1px solid var(--line2);border-radius:6px;padding:6px 8px}
+
+/* ============ #44 Переменные в промте ============ */
+.var-legend{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}
+.var-legend-title{font-size:11px;color:var(--faint);margin-right:2px}
+.var-chip{font:11px/1.2 ui-monospace,monospace;background:var(--panel3);color:var(--accent2);border:1px solid var(--line2);border-radius:5px;padding:3px 6px;cursor:pointer;user-select:none}
+.var-chip:hover{border-color:var(--accent2);background:var(--panel2)}
+/* ============ #45 Сниппеты ============ */
+.snip-block{margin-top:8px}
+.snip-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:5px}
+.snip-list{display:flex;flex-wrap:wrap;gap:5px}
+.snip-empty{font-size:11px;color:var(--faint)}
+.snip-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;background:var(--panel3);color:var(--txt);border:1px solid var(--line2);border-radius:5px;padding:3px 6px;cursor:pointer;user-select:none}
+.snip-chip:hover{border-color:var(--accent)}
+.snip-del{background:none;border:none;color:var(--faint);cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 2px}
+.snip-del:hover{color:var(--err)}
+/* ============ #45 Мои агенты ============ */
+.my-agents{display:flex;flex-direction:column;gap:5px}
+.my-agent-row{display:flex;align-items:center;gap:6px}
+.my-agent-del{color:var(--faint)}
+.my-agent-del:hover{color:var(--err)}
+/* ============ #24 Конструктор условий ============ */
+.cond-builder{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.cond-advanced{margin-bottom:10px}
+.cond-advanced>summary{cursor:pointer;font-size:12px;color:var(--dim);user-select:none;padding:4px 0}
+.cond-advanced>summary:hover{color:var(--txt)}
