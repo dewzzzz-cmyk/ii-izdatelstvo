@@ -88,7 +88,11 @@ function checkSchema(n){
   }catch(e){ return 'Ошибка схемы: '+String(e.message).slice(0,60); }
 }
 function defaultState(){
-  const nodes=TEMPLATES.filter(t=>!['continuity','factcheck'].includes(t.role)).map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
+  // #32: минимальный осмысленный старт — Битовая схема → Райтер → Литред.
+  // Полный пайплайн новичок получает через выбор шаблона (PROJECT_TPLS).
+  const startRoles=['beatsheet','writer','line'];
+  const startTpls=startRoles.map(r=>TEMPLATES.find(t=>t.role===r)).filter(Boolean);
+  const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
@@ -399,6 +403,23 @@ async function buildMessages(n){
   const sysPrompt=interpolate(n.prompt||'', ctx);
   return [ {role:'system',content:sysPrompt + styleBlock + banBlock}, {role:'user',content:user} ];
 }
+// #35: человеческие тексты ошибок. Сырой код прячем (в лог можно положить полный).
+function humanError(status, rawText){
+  const s=parseInt(status)||0;
+  let msg;
+  if(s===401||s===403) msg='Ключ не подходит — проверьте, что скопировали его целиком';
+  else if(s===402) msg='Кончились средства на балансе провайдера — пополните счёт';
+  else if(s===429) msg='Слишком часто — подождём и повторим';
+  else if(s>=500) msg='Провайдер временно недоступен — попробуйте через минуту';
+  else if(s===400) msg='Запрос не принят провайдером — проверьте модель и настройки';
+  else {
+    const detail=(rawText||'').replace(/\s+/g,' ').trim().slice(0,80);
+    msg='Что-то пошло не так'+(detail?` (подробности: ${detail})`:'');
+  }
+  return msg;
+}
+// Извлекает HTTP-статус из строки ошибки вида «HTTP 401: …» / «Fallback HTTP 502: …»
+function statusFromError(errText){ const m=String(errText||'').match(/(?:HTTP)\s+(\d{3})/i); return m?parseInt(m[1]):0; }
 async function callLLM(c, messages){
   const r = await fetch('/api/generate', {
     method: 'POST',
@@ -412,7 +433,7 @@ async function callLLM(c, messages){
       stream: false
     })
   });
-  if(!r.ok) throw new Error(await r.text());
+  if(!r.ok) throw new Error('HTTP '+r.status+': '+(await r.text()).slice(0,160));
   return await r.text();
 }
 // Item 31: отдельная конфигурация судьи (если judgeModel задан — используем его, иначе cfg узла)
@@ -596,9 +617,16 @@ function render(){
   const paused=isPaused();
   const rb=$('#run-btn'); rb.textContent=paused?'▶ Продолжить':'▶ Запустить';
   const sb=$('#stop-btn'); if(sb){ sb.style.display=running?'':'none'; }
-  $('#canvas-hint').textContent='Тяни блок за шапку • соединяй кружки (выход→вход) • клик по связи — удалить';
+  // #38: скрываем технический хинт, пока холст пуст
+  const hintEl=$('#canvas-hint');
+  if(hintEl){
+    const empty=state.nodes.length===0;
+    hintEl.style.display=empty?'none':'';
+    hintEl.textContent='Тяни блок за шапку • соединяй кружки (выход→вход) • клик по связи — удалить';
+  }
   renderNodes(); renderEdges(); renderLoopCards();
   if(_currentView==='reader') renderReader();
+  if(_currentView==='simple') renderSimpleProgress();
   updateStyleRefBadge();
 }
 function updateStyleRefBadge(){
@@ -611,6 +639,21 @@ function loopBadge(n){
   return `<span class="loop-iter-badge">🔁 ${loopEdge._retryCount}/${loopEdge.maxRetries}</span>`;
 }
 function renderNodes(){
+  // #38: пустой холст — крупная заглушка с быстрыми действиями
+  if(state.nodes.length===0){
+    nodesEl.innerHTML=`<div class="canvas-empty">
+      <div class="ce-emoji">📚</div>
+      <div class="ce-title">Холст пуст — с чего начнём?</div>
+      <div class="ce-sub">Загрузите готовую команду агентов или добавьте первого вручную</div>
+      <div class="ce-btns">
+        <button class="btn ok" data-action="templates">🗂 Загрузить шаблон</button>
+        <button class="btn ghost" data-action="switch-view" data-view="simple">✨ Простой режим</button>
+        <button class="btn ghost" data-action="add-node">＋ Первый агент</button>
+      </div>
+    </div>`;
+    if(_currentView==='simple') renderSimpleProgress();
+    return;
+  }
   const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
   nodesEl.innerHTML=state.nodes.filter(n=>!collapsedIds.has(n.id)).map(n=>{
     // Special node type support
@@ -654,6 +697,8 @@ function renderNodes(){
     </div>`;
   }).join('');
   if(_showMinimap) renderMinimap();
+  // #33: держим прогресс «Просто» в актуальном состоянии при смене статусов узлов
+  if(_currentView==='simple') renderSimpleProgress();
 }
 function portPos(id,side){ const n=node(id); return {x:n.x+(side==='out'?NW:0), y:n.y+PORT_Y+7}; }
 function edgePath(a,b){ const dx=Math.max(40,Math.abs(b.x-a.x)*0.5); return `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`; }
@@ -1061,7 +1106,7 @@ ${ed._autoScore!=null?`<div style="font-size:11px;color:var(--accent);margin-top
 /* ============ ГЕНЕРАЦИЯ ============ */
 async function runNode(id){
   const n=node(id); const c=cfg(n);
-  if(!c.apiKey){ n.status='error'; n.error='не задан API-ключ'; logRow(n.name,'error','нет ключа'); save(); renderNodes(); openSettings(); return false; }
+  if(!c.apiKey){ n.status='error'; n.error='Нужен API-ключ'; logRow(n.name,'error','нет ключа'); toast('Добавьте API-ключ в настройках','err'); save(); renderNodes(); openSettings(); return false; }
   const msgs=await buildMessages(n);
   // Item 29: накопление правок в цикле — передаём предыдущий вывод как контекст для улучшения
   if(n._loopPrev){
@@ -1233,8 +1278,11 @@ async function runNode(id){
     }catch(err){
       if(err.name==='AbortError'){ n.status='idle'; n.error=''; if(acc) n.output=acc; logRow(n.name,'error','остановлено'); save(); renderNodes(); renderEdges(); return false; }
       if(attempt<maxR && /network|fetch|Failed/i.test(String(err.message))){ logRow(n.name,'retry','сеть, повтор #'+(attempt+1)); await wait(1000*2**attempt); continue; }
-      n.status='error'; n.error=String(err.message||err); n.output=acc; logRow(n.name,'error',n.error);
-      save(); renderNodes(); renderEdges(); toast('Ошибка «'+n.name+'»: '+n.error,'err'); return false;
+      const raw=String(err.message||err); n.status='error'; n.output=acc;
+      const httpStatus=statusFromError(raw);
+      const human=httpStatus?humanError(httpStatus,raw):(/network|fetch|Failed/i.test(raw)?'Нет связи — проверьте интернет и адрес провайдера':humanError(0,raw));
+      n.error=human; logRow(n.name,'error',human+' · '+raw.slice(0,160)); // полный текст — в лог
+      save(); renderNodes(); renderEdges(); toast('Ошибка «'+n.name+'»: '+human,'err'); return false;
     }
   }
   return false;
@@ -1337,7 +1385,7 @@ function runnableNodes(){
 }
 async function runPipeline(resume){
   if(running) return;
-  if(!hasKey()){ toast('Сначала задайте API-ключ','err'); return openSettings(); }
+  if(!hasKey()){ toast('Сначала добавьте API-ключ — без него агенты не смогут писать','err'); return openSettings(); }
   if(!resume){
     // Напоминание о незаполненных полях (не блокирует, но предупреждает)
     const missing=[];
@@ -1420,7 +1468,7 @@ async function runPipeline(resume){
   if(totalRan>0) logRow('Пайплайн',errCount?'warn':'ok',`${done}/${total} агентов · кэш: ${cacheHits}/${totalRan}`+(errCount?` · упало: ${errCount}`:''));
   if(errCount) logRow('Пайплайн','warn',`Готово частично: ${done} из ${total} (упавшие: ${state.nodes.filter(n=>n.status==='error').map(n=>n.name).join(', ')})`);
   if(state.nodes.every(n=>n.status==='done'||n.status==='error'||n.status==='skip')){
-    toast(errCount===0?'Конвейер завершён ✓':'Готово частично: '+done+' из '+total,errCount===0?'ok':'warn');
+    toast(errCount===0?'Книга готова ✓':'Готово частично: '+done+' из '+total,errCount===0?'ok':'warn');
     if(done>0) showCompletionBanner();
   }
   // Авто-оценка: если флаг включён и есть результаты — фоновый LLM-judge
@@ -1831,28 +1879,57 @@ function openManualEdit(id){
 }
 function openSettings(){
   const g=state.global;
-  openDrawer('⚙ Глобальные настройки',`
-    <div class="field"><label>API base URL</label><input id="g-base" value="${esc(g.baseURL)}"></div>
-    <div class="row2"><div class="field"><label>Модель</label><input id="g-model" value="${esc(g.model)}"></div>
-      <div class="field"><label>Температура</label><input id="g-temp" type="number" step="0.1" min="0" max="2" value="${g.temperature}"></div></div>
-    <div class="field"><label>API-ключ (общий / резервный)</label><input id="g-key" type="password" value="${esc(g.apiKey)}" placeholder="sk-...">
-      <div class="hint">Хранится только в этом браузере и уходит на локальный прокси, не в сторонние сервисы.</div></div>
-    <div class="field"><label>Пул API-ключей (ротация, один на строку)</label>
-      <textarea id="g-keys" rows="3" placeholder="sk-key-1&#10;sk-key-2&#10;sk-key-3">${esc(g.apiKeys||'')}</textarea>
-      <div class="hint">Если заполнено — ключи чередуются по кругу между агентами. «API-ключ» выше используется как резервный.</div></div>
+  openDrawer('⚙ Настройки',`
+    <div class="set-tabs">
+      <button class="set-tab active" data-settab="basic" type="button">Основное</button>
+      <button class="set-tab" data-settab="adv" type="button">Продвинутое</button>
+    </div>
+    <div class="set-pane" data-pane="basic">
     <div class="field"><label>Пресет провайдера</label><select id="g-preset"><option value="">— выбрать —</option>
       <option value="https://api.deepseek.com|deepseek-chat">DeepSeek (deepseek-chat)</option>
       <option value="https://api.deepseek.com|deepseek-reasoner">DeepSeek R1 (deepseek-reasoner)</option>
       <option value="https://api.openai.com/v1|gpt-4o-mini">OpenAI (gpt-4o-mini)</option>
       <option value="https://openrouter.ai/api/v1|deepseek/deepseek-chat">OpenRouter → DeepSeek</option>
       <option value="https://openrouter.ai/api/v1|anthropic/claude-3-5-haiku">OpenRouter → Claude Haiku</option></select></div>
+    <div class="field"><label>API base URL</label><input id="g-base" value="${esc(g.baseURL)}"></div>
+    <div class="row2"><div class="field"><label>Модель</label><input id="g-model" value="${esc(g.model)}"></div>
+      <div class="field"><label>Температура</label><input id="g-temp" type="number" step="0.1" min="0" max="2" value="${g.temperature}"></div></div>
+    <div class="field"><label>API-ключ (общий / резервный)</label><input id="g-key" type="password" value="${esc(g.apiKey)}" placeholder="sk-...">
+      <div class="hint">Хранится только в этом браузере и уходит на локальный прокси, не в сторонние сервисы.</div></div>
+    <div class="field"><label>Лимит бюджета, $ (0 = без)</label><input id="g-cap" type="number" step="0.1" value="${g.costCapUSD}"></div>
+    <div class="set-section" style="margin-top:16px;border-top:1px solid var(--line2);padding-top:16px">
+      <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">✍️ Стиль автора</div>
+      <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Вставьте 300–500 слов своего текста — агенты будут писать в этом стиле</p>
+      <textarea id="set-style-ref" rows="6" placeholder="Вставьте фрагмент своего текста…"
+        style="width:100%;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px;color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"
+      >${esc(state.project.styleRef||'')}</textarea>
+      <div style="font-size:12px;color:var(--txt2);margin-top:4px">
+        ${state.project.styleRef ? '✅ Стиль-ориентир задан (' + state.project.styleRef.split(/\s+/).length + ' слов)' : ''}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button class="btn ghost sm" id="set-style-save">💾 Сохранить стиль</button>
+        <button class="btn ghost sm" id="set-style-clear">🗑 Очистить</button>
+      </div>
+    </div>
+    <div class="set-section" style="margin-top:16px;border-top:1px solid var(--line2);padding-top:16px">
+      <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">🚫 Стоп-слова</div>
+      <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Слова и фразы через запятую или с новой строки. Агентам запрещено их использовать в тексте.</p>
+      <textarea id="set-banlist" rows="4" placeholder="клише, штамп, например, по сути…"
+        style="width:100%;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px;color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"
+      >${esc(state.global.banList||'')}</textarea>
+      <div style="margin-top:6px"><button class="btn ghost sm" id="set-banlist-save">💾 Сохранить стоп-слова</button></div>
+    </div>
+    </div><!-- /basic -->
+    <div class="set-pane" data-pane="adv" style="display:none">
     <div class="field"><label>Fallback API URL (при 502)</label><input id="g-fallback" value="${esc(g.fallbackURL||'')}" placeholder="https://openrouter.ai/api/v1">
       <div class="hint">Если основной провайдер недоступен — автоматически используется этот. Ключ — тот же глобальный.</div></div>
+    <div class="field"><label>Пул API-ключей (ротация, один на строку)</label>
+      <textarea id="g-keys" rows="3" placeholder="sk-key-1&#10;sk-key-2&#10;sk-key-3">${esc(g.apiKeys||'')}</textarea>
+      <div class="hint">Если заполнено — ключи чередуются по кругу между агентами. «API-ключ» из «Основное» используется как резервный.</div></div>
     <div class="section-label">Лимиты и надёжность</div>
     <div class="row2"><div class="field"><label>Бюджет контекста (символов)</label><input id="g-ctx" type="number" value="${g.maxContextChars}"></div>
       <div class="field"><label>Ретраи при сбое</label><input id="g-retry" type="number" min="0" max="5" value="${g.maxRetries}"></div></div>
-    <div class="row2"><div class="field"><label>Лимит бюджета, $ (0 = без)</label><input id="g-cap" type="number" step="0.1" value="${g.costCapUSD}"></div>
-      <div class="field"><label>Токен прокси (если выложен в сеть)</label><input id="g-ptok" value="${esc(g.proxyToken)}" placeholder="не обязательно"></div></div>
+    <div class="field"><label>Токен прокси (если выложен в сеть)</label><input id="g-ptok" value="${esc(g.proxyToken)}" placeholder="не обязательно"></div>
     <label class="check"><input type="checkbox" id="g-summ" ${g.autoSummarize?'checked':''}> Авто-саммари узлов (доп. вызов LLM после каждого агента)</label>
     <label class="check"><input type="checkbox" id="g-bible-extract" ${g.autoBibleExtract?'checked':''}> Авто-Библия: извлекать персонажей и факты после каждой главы</label>
     <label class="check"><input type="checkbox" id="g-auto-distill" ${g.autoDistill?'checked':''}> Авто-сжатие: сжимать длинный контекст перед передачей агентам</label>
@@ -1886,22 +1963,7 @@ function openSettings(){
       </div>
     </div>
     <button class="btn ghost" id="g-bkopen" style="margin-bottom:12px">📂 Открыть список копий</button>
-    <div class="actions"><button class="btn ok" id="g-save">Сохранить</button></div>
-    <div class="set-section" style="margin-top:20px;border-top:1px solid var(--line2);padding-top:16px">
-      <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">✍️ Стиль автора</div>
-      <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Вставьте 300–500 слов своего текста — агенты будут писать в этом стиле</p>
-      <textarea id="set-style-ref" rows="6" placeholder="Вставьте фрагмент своего текста…"
-        style="width:100%;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px;color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"
-      >${esc(state.project.styleRef||'')}</textarea>
-      <div style="font-size:12px;color:var(--txt2);margin-top:4px">
-        ${state.project.styleRef ? '✅ Стиль-ориентир задан (' + state.project.styleRef.split(/\s+/).length + ' слов)' : ''}
-      </div>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        <button class="btn ghost sm" id="set-style-save">💾 Сохранить стиль</button>
-        <button class="btn ghost sm" id="set-style-clear">🗑 Очистить</button>
-      </div>
-    </div>
-    <div class="set-section" style="margin-top:20px;border-top:1px solid var(--line2);padding-top:16px">
+    <div class="set-section" style="margin-top:8px;border-top:1px solid var(--line2);padding-top:16px">
       <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">☁️ Google Drive</div>
       <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Бэкап проекта в облако. Нужен Client ID OAuth 2.0 (тип «Веб-приложение», разрешённый origin: http://localhost:8787, redirect URI: http://localhost:8787/oauth-callback.html).</p>
       <div class="field"><label>Client ID</label>
@@ -1914,15 +1976,14 @@ function openSettings(){
         <button class="btn ghost sm" id="set-gdrive-revoke">🔓 Выйти</button>
       </div>
     </div>
-    <div class="set-section" style="margin-top:20px;border-top:1px solid var(--line2);padding-top:16px">
-      <div class="set-section-title" style="font-size:13px;font-weight:700;color:var(--txt);margin-bottom:6px">🚫 Стоп-слова</div>
-      <p class="set-hint" style="font-size:12px;color:var(--txt2);margin:0 0 8px">Слова и фразы через запятую или с новой строки. Агентам запрещено их использовать в тексте.</p>
-      <textarea id="set-banlist" rows="4" placeholder="клише, штамп, например, по сути…"
-        style="width:100%;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:10px;color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"
-      >${esc(state.global.banList||'')}</textarea>
-      <div style="margin-top:6px"><button class="btn ghost sm" id="set-banlist-save">💾 Сохранить стоп-слова</button></div>
-    </div>
+    </div><!-- /adv -->
+    <div class="actions" style="margin-top:16px;border-top:1px solid var(--line2);padding-top:14px"><button class="btn ok" id="g-save">Сохранить</button></div>
   `,b=>{
+    // #36: переключение вкладок настроек
+    b.querySelectorAll('.set-tab').forEach(tab=>tab.onclick=()=>{
+      b.querySelectorAll('.set-tab').forEach(x=>x.classList.toggle('active',x===tab));
+      b.querySelectorAll('.set-pane').forEach(p=>p.style.display=p.dataset.pane===tab.dataset.settab?'':'none');
+    });
     b.querySelector('#g-preset').onchange=ev=>{ if(!ev.target.value) return; const [u,m]=ev.target.value.split('|'); b.querySelector('#g-base').value=u; b.querySelector('#g-model').value=m; };
     b.querySelector('#g-bkopen').onclick=()=>{ closeDrawer(); setTimeout(openBackupRestore,120); };
     b.querySelector('#g-save').onclick=()=>{ g.baseURL=b.querySelector('#g-base').value.trim()||g.baseURL; g.model=b.querySelector('#g-model').value.trim()||g.model;
@@ -1945,8 +2006,11 @@ function openSettings(){
       g.backupIntervalMin=parseInt(b.querySelector('#g-bkint').value)||10;
       g.autoBackup=b.querySelector('#g-bkauto').checked;
       g.gdriveClientId=b.querySelector('#set-gdrive-cid')?.value.trim()||g.gdriveClientId||'';
+      // стиль и стоп-слова сохраняем заодно с общим «Сохранить»
+      state.project.styleRef=b.querySelector('#set-style-ref')?.value.trim()||'';
+      g.banList=b.querySelector('#set-banlist')?.value||'';
       scheduleBackup();
-      save(); render(); toast('Настройки сохранены','ok'); };
+      save(); render(); updateStyleRefBadge(); toast('Настройки сохранены','ok'); };
     b.querySelector('#set-style-save')?.addEventListener('click', () => {
       state.project.styleRef = b.querySelector('#set-style-ref')?.value.trim() || '';
       save(); toast('Стиль-ориентир сохранён', 'ok'); updateStyleRefBadge(); });
@@ -2537,6 +2601,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='stop'){ if(abortCtrl) abortCtrl.abort(); }
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
   else if(a==='text-analysis') openTextAnalysis();
+  else if(a==='publish-guide') openPublishGuide();
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='delete-node'){
     const del=node(id); if(!del) return;
@@ -2669,11 +2734,60 @@ function initSimplifiedMode(){
     state.project.audience = document.querySelector('#simp-aud')?.value.trim()   || '';
     save();
     applyTemplate(_simpTpl);
-    switchView('canvas');
+    // #33: остаёмся в «Просто» — прогресс показываем здесь, а не кидаем на холст
     runPipeline();
   };
   const expertBtn = document.querySelector('#simp-to-expert');
   if(expertBtn) expertBtn.onclick = () => switchView('canvas');
+  renderSimpleProgress();
+}
+// #33: прогресс создания книги внутри режима «Просто»
+function renderSimpleProgress(){
+  if(_currentView!=='simple') return;
+  const box=document.querySelector('#simp-progress');
+  if(!box) return;
+  const nodes=state.nodes.filter(n=>n.nodeType!=='note');
+  // Показываем блок если идёт создание или уже есть результаты
+  const anyDone=nodes.some(n=>n.status==='done'||n.status==='error');
+  if(!running && !anyDone){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='';
+  const ICON={done:'✅',error:'❌',running:'⏳',review:'⏳',variants:'⏳',skip:'⏭',idle:'•'};
+  const doneCount=nodes.filter(n=>n.status==='done').length;
+  const pct=nodes.length?Math.round(doneCount/nodes.length*100):0;
+  const finished=!running && nodes.every(n=>['done','error','skip'].includes(n.status));
+  const rows=nodes.map(n=>{
+    const ic=ICON[n.status]||'•';
+    const cls=n.status==='done'?'sp-done':n.status==='error'?'sp-err':n.status==='running'?'sp-run':'';
+    return `<div class="sp-row ${cls}"><span class="sp-ic">${ic}</span><span class="sp-name">${esc(n.name)}</span></div>`;
+  }).join('');
+  const head=finished
+    ? `<div class="sp-head">📖 Книга готова — ${doneCount} из ${nodes.length} этапов</div>`
+    : running
+      ? `<div class="sp-head">✨ Команда агентов создаёт книгу… ${pct}%</div>`
+      : `<div class="sp-head">Готово ${doneCount} из ${nodes.length} этапов</div>`;
+  let foot;
+  if(running){
+    foot=`<button class="btn danger sm" id="sp-stop" type="button">■ Стоп</button>
+      <a href="#" class="sp-link" id="sp-show-canvas">Показать на схеме →</a>`;
+  } else if(finished){
+    foot=`<button class="btn ok sm" id="sp-read" type="button">📖 Читать</button>
+      <button class="btn ghost sm" id="sp-docx" type="button">📄 Скачать Word</button>
+      <button class="btn ghost sm" id="sp-epub" type="button">📗 Скачать EPUB</button>
+      <a href="#" class="sp-link" id="sp-show-canvas">Показать на схеме →</a>`;
+  } else {
+    foot=`<a href="#" class="sp-link" id="sp-show-canvas">Показать на схеме →</a>`;
+  }
+  box.innerHTML=`${head}
+    <div class="sp-bar"><div class="sp-bar-fill" style="width:${pct}%"></div></div>
+    <div class="sp-list">${rows}</div>
+    <div class="sp-cost">Стоимость: ${money(projectCost())}</div>
+    ${finished?`<div class="sp-hint">Для KDP → EPUB, для Литрес → .docx</div>`:''}
+    <div class="sp-foot">${foot}</div>`;
+  box.querySelector('#sp-stop')?.addEventListener('click',()=>{ if(abortCtrl) abortCtrl.abort(); });
+  box.querySelector('#sp-show-canvas')?.addEventListener('click',ev=>{ ev.preventDefault(); switchView('canvas'); });
+  box.querySelector('#sp-read')?.addEventListener('click',()=>switchView('reader'));
+  box.querySelector('#sp-docx')?.addEventListener('click',()=>exportDocx());
+  box.querySelector('#sp-epub')?.addEventListener('click',()=>exportEpub());
 }
 
 function openTemplates(){
@@ -2689,7 +2803,7 @@ function openTemplates(){
     state.nodes=tpls.map((tp,i)=>freshNode(tp,60+(i%3)*260,40+Math.floor(i/3)*190));
     state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
     state.project.genre=t.genre; state.project.brief=t.brief;
-    save(); render(); closeDrawer(); toast(t.label+' — пайплайн создан','ok');
+    save(); render(); closeDrawer(); toast(t.label+' — команда агентов готова','ok');
   }); });
 }
 function autoLayout(){ state.nodes.forEach((n,i)=>{ n.x=60+(i%3)*250; n.y=40+Math.floor(i/3)*180; });
@@ -3175,7 +3289,9 @@ function renderReader(){
     html+=`<div style="text-align:center;padding:60px 0;color:var(--faint)">
       <div style="font-size:48px;margin-bottom:14px">✍️</div>
       <div style="font-size:16px;font-weight:700;color:var(--dim);margin-bottom:8px">Книга ещё не написана</div>
-      <div style="font-size:13px">Нажмите <strong style="color:var(--txt)">▶ Запустить</strong> — агенты создадут текст, и он появится здесь</div>
+      <div style="font-size:13px">Нажмите <strong style="color:var(--txt)">▶ Запустить</strong> — команда агентов создаст текст, и он появится здесь</div>
+      <div style="font-size:12px;margin-top:18px;color:var(--faint)">Когда книга будет готова: для KDP → EPUB, для Литрес → .docx</div>
+      <button class="btn ghost sm" style="margin-top:10px" data-action="publish-guide">Что дальше? — как опубликовать</button>
     </div>`;
   } else {
     // Оглавление со скроллом
@@ -3222,12 +3338,46 @@ function showCompletionBanner(){
   if(errCount){
     if(txt) txt.innerHTML=`⚠ <span id="cb-stats">Готово частично: ${done.length} из ${total} · ${errCount} упало · ${money(projectCost())}</span>`;
   } else {
-    if(txt) txt.innerHTML=`✅ <span id="cb-stats">${done.length} агентов · ~${words.toLocaleString('ru-RU')} слов · ${money(projectCost())}</span>`;
+    if(txt) txt.innerHTML=`✅ <span id="cb-stats">${done.length} агентов · ~${words.toLocaleString('ru-RU')} слов · ${money(projectCost())}</span> <span class="cb-pub-hint">Для KDP → EPUB, для Литрес → .docx</span>`;
   }
   const retryBtn=$('#cb-retry'); if(retryBtn) retryBtn.style.display=errCount?'':'none';
   cb.style.display='flex';
 }
 function hideCompletionBanner(){ const b=$('#completion-banner'); if(b) b.style.display='none'; }
+// #40: краткий чеклист публикации человеческим языком
+function openPublishGuide(){
+  openDrawer('🚀 Что дальше?',`
+    <p class="hint" style="margin-top:0">Книга готова. Осталось опубликовать — вот короткие шаги.</p>
+    <div class="pub-block">
+      <div class="pub-h">📗 Amazon KDP (электронная книга)</div>
+      <ol class="pub-list">
+        <li>Скачайте файл в формате <b>EPUB</b> (кнопка «📗 EPUB» / «Скачать EPUB»).</li>
+        <li>Зайдите на kdp.amazon.com → «Create» → Kindle eBook.</li>
+        <li>Загрузите EPUB, добавьте обложку, название и описание.</li>
+        <li>Обязательно отметьте использование ИИ при загрузке.</li>
+        <li>Назначьте цену и опубликуйте.</li>
+      </ol>
+    </div>
+    <div class="pub-block">
+      <div class="pub-h">📄 Литрес / Ridero (рунет)</div>
+      <ol class="pub-list">
+        <li>Скачайте файл в формате <b>Word (.docx)</b> (кнопка «📄 Word»).</li>
+        <li>Зарегистрируйтесь как автор на selfpub.ru (Литрес) или ridero.ru.</li>
+        <li>Загрузите .docx — площадка сама сверстает книгу.</li>
+        <li>Добавьте обложку, аннотацию и ключевые слова.</li>
+        <li>Отправьте на модерацию и публикацию.</li>
+      </ol>
+    </div>
+    <div class="hint" style="margin-top:6px">Совет: вычитайте текст и проверьте имена/факты перед загрузкой — площадки не любят сырой ИИ-текст.</div>
+    <div class="actions" style="margin-top:14px">
+      <button class="btn ok" id="pub-epub">📗 Скачать EPUB</button>
+      <button class="btn ghost" id="pub-docx">📄 Скачать Word</button>
+    </div>
+  `,b=>{
+    b.querySelector('#pub-epub').onclick=()=>exportEpub();
+    b.querySelector('#pub-docx').onclick=()=>exportDocx();
+  });
+}
 // Item 28: сброс упавших узлов в idle и повторный прогон только их (и зависимых от них волн)
 function retryFailedNodes(){
   const failed=state.nodes.filter(n=>n.status==='error');
@@ -3254,12 +3404,16 @@ function showOnboarding(){
       <div style="display:flex;gap:8px">
         <input id="ob-key" type="password" placeholder="sk-… вставьте ключ" style="flex:1;background:var(--panel2);border:1px solid var(--line2);color:var(--txt);border-radius:9px;padding:10px 12px;font-size:13.5px;font-family:inherit">
         <select id="ob-preset" style="background:var(--panel2);border:1px solid var(--line2);color:var(--txt);border-radius:9px;padding:9px 10px;font-size:12.5px;font-family:inherit;flex-shrink:0">
-          <option value="">Провайдер…</option>
-          <option value="https://api.deepseek.com|deepseek-chat">DeepSeek (~$0.01/кн.)</option>
-          <option value="https://api.openai.com/v1|gpt-4o-mini">OpenAI GPT-4o mini</option>
-          <option value="https://openrouter.ai/api/v1|deepseek/deepseek-chat">OpenRouter</option>
+          <option value="deepseek">DeepSeek (~$0.01/кн.)</option>
+          <option value="openai">OpenAI GPT-4o mini</option>
+          <option value="openrouter">OpenRouter</option>
         </select>
       </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:7px;flex-wrap:wrap">
+        <button class="btn ghost sm" id="ob-test" type="button">Проверить ключ</button>
+        <span id="ob-test-res" style="font-size:12px"></span>
+      </div>
+      <div class="onboarding-hint" id="ob-keyhelp"></div>
       <div class="onboarding-hint">Ключ хранится только в браузере, уходит на локальный прокси — не в сторонние сервисы.</div>
     </div>
     <div class="onboarding-step">
@@ -3279,10 +3433,35 @@ function showOnboarding(){
   </div>`;
   document.body.appendChild(el);
 
-  el.querySelector('#ob-preset').onchange=ev=>{
-    if(!ev.target.value) return;
-    const [url,model]=ev.target.value.split('|');
-    state.global.baseURL=url; state.global.model=model;
+  // #34: провайдеры с адресом API, моделью и ссылкой на получение ключа
+  const PROVIDERS={
+    deepseek:{url:'https://api.deepseek.com',model:'deepseek-chat',name:'DeepSeek',keyUrl:'https://platform.deepseek.com/api_keys'},
+    openai:{url:'https://api.openai.com/v1',model:'gpt-4o-mini',name:'OpenAI',keyUrl:'https://platform.openai.com/api-keys'},
+    openrouter:{url:'https://openrouter.ai/api/v1',model:'deepseek/deepseek-chat',name:'OpenRouter',keyUrl:'https://openrouter.ai/keys'},
+  };
+  const sel=el.querySelector('#ob-preset');
+  const help=el.querySelector('#ob-keyhelp');
+  const applyProvider=()=>{
+    const p=PROVIDERS[sel.value]||PROVIDERS.deepseek;
+    state.global.baseURL=p.url; state.global.model=p.model;
+    help.innerHTML=`Нет ключа? → <a href="${p.keyUrl}" target="_blank" rel="noopener" style="color:var(--accent,#6c63ff)">Получить на ${esc(p.name)}</a> · ~$2 хватит на десятки книг`;
+  };
+  applyProvider();
+  sel.onchange=applyProvider;
+  // Проверка ключа: тестовый запрос с одним коротким сообщением
+  const testRes=el.querySelector('#ob-test-res');
+  el.querySelector('#ob-test').onclick=async()=>{
+    const key=el.querySelector('#ob-key').value.trim();
+    if(!key){ testRes.style.color='var(--err)'; testRes.textContent='Сначала вставьте ключ'; return; }
+    const p=PROVIDERS[sel.value]||PROVIDERS.deepseek;
+    testRes.style.color='var(--faint)'; testRes.textContent='Проверяю…';
+    try{
+      await callLLM({baseURL:p.url,apiKey:key,model:p.model,temperature:0},[{role:'user',content:'ping'}]);
+      testRes.style.color='var(--ok)'; testRes.textContent='✓ ключ работает';
+    }catch(e){
+      const raw=String(e.message||e);
+      testRes.style.color='var(--err)'; testRes.textContent='✗ '+humanError(statusFromError(raw),raw);
+    }
   };
   let selectedTpl='story';
   el.querySelectorAll('.onboarding-tpl').forEach(btn=>btn.onclick=()=>{
@@ -3292,9 +3471,9 @@ function showOnboarding(){
   const dismiss=()=>{ el.remove(); state.onboarded=true; save(); };
   el.querySelector('#ob-skip').onclick=dismiss;
   el.querySelector('#ob-start').onclick=()=>{
+    // #34: ключ можно пропустить — запросим при первом «▶ Запустить»
     const key=el.querySelector('#ob-key').value.trim();
-    if(!key){ const ki=el.querySelector('#ob-key'); ki.style.borderColor='var(--err)'; ki.focus(); return; }
-    state.global.apiKey=key;
+    if(key) state.global.apiKey=key;
     const t=PROJECT_TPLS[selectedTpl];
     if(t){
       const tpls=t.roles.map(r=>TEMPLATES.find(x=>x.role===r)).filter(Boolean);
@@ -3303,7 +3482,7 @@ function showOnboarding(){
       state.project.genre=t.genre; state.project.brief=t.brief;
     }
     dismiss(); render();
-    toast('Готово! Укажите название книги и нажмите ▶ Запустить','ok');
+    toast(key?'Готово! Укажите название книги и нажмите ▶ Запустить':'Готово! Ключ спросим при первом запуске','ok');
   };
 }
 function showOnboardingIfNeeded(){ if(!hasKey()&&!state.onboarded) showOnboarding(); }
@@ -3314,6 +3493,7 @@ $('#cb-read').onclick=()=>switchView('reader');
 $('#cb-docx').onclick=exportDocx;
 $('#cb-epub').onclick=exportEpub;
 $('#cb-dismiss').onclick=hideCompletionBanner;
+{ const _cbNext=$('#cb-next'); if(_cbNext) _cbNext.onclick=openPublishGuide; }
 { const _cbRetry=$('#cb-retry'); if(_cbRetry) _cbRetry.onclick=retryFailedNodes; }
 showOnboardingIfNeeded();
 // Меню «⋯ Ещё»
