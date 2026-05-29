@@ -3052,7 +3052,7 @@ function buildTemplate(key, opts={}){
   // Применяем настройки проекта
   const g = GENRES.find(x=>x.v===opts.genreCode);
   if(g){ state.project.genre=g.l; state.project.fb2genre=g.v; }
-  if(opts.audience) state.project.audience=opts.audience;
+  state.project.audience = opts.audience || (g?g.aud:state.project.audience);
   if(opts.title) state.project.title=opts.title;
   const lenTxt = (LENGTHS.find(x=>x.v===opts.lengthWords)||{}).words || '';
   state.project.brief = opts.brief || [t.brief, g?('жанр: '+g.l+', тон '+g.tone):'', lenTxt?('объём: '+lenTxt):''].filter(Boolean).join('. ');
