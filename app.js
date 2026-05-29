@@ -94,7 +94,8 @@ function defaultState(){
   const startTpls=startRoles.map(r=>TEMPLATES.find(t=>t.role===r)).filter(Boolean);
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
-  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
+  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
+    styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
@@ -459,11 +460,36 @@ async function buildMessages(n){
   const styleBlock = pr.styleRef
     ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${styleSample}\n"""`
     : '';
-  // 🎓 Школа стиля: паспорт стиля + паттерны вовлечения инжектятся только в пишущие роли
+  // 🎓 Школа стиля: профиль(и) стиля инжектятся только в пишущие роли
   const wr=['writer','line','logedit','fanout','beatsheet'].includes(roleKeyOf(n));
-  const passportBlock = (wr && pr.stylePassport)
-    ? '\n\nПАСПОРТ СТИЛЯ (пиши строго в этой манере, но СВОИМ сюжетом и словами — не копируй источник):\n'+pr.stylePassport + (pr.engagementPatterns?'\n\nПРИЁМЫ ВОВЛЕЧЕНИЯ (применяй):\n'+pr.engagementPatterns:'')
-    : '';
+  let passportBlock='';
+  if(wr){
+    const lib=Array.isArray(state.styleLibrary)?state.styleLibrary:[];
+    const mix=(Array.isArray(pr.styleMix)?pr.styleMix:[])
+      .map(m=>({ w:m.weight, e:lib.find(x=>x.id===m.id) })).filter(x=>x.e).slice(0,3);
+    if(mix.length){
+      // Нормализуем веса к 100; доминирующий — с максимальным весом.
+      const sum=mix.reduce((a,x)=>a+(x.w||0),0)||1;
+      mix.forEach(x=>{ x.pct=Math.round((x.w||0)/sum*100); });
+      mix.sort((a,b)=>b.pct-a.pct);
+      // Бюджет на стиль/сюжет тем меньше, чем больше стилей (блок ≤ ~2500 симв).
+      const styleCap = mix.length>=3?420:(mix.length===2?620:900);
+      const plotCap  = mix.length>=3?260:(mix.length===2?360:520);
+      const lines=mix.map(x=>{
+        const st=(x.e.style||'').slice(0,styleCap);
+        const pl=(x.e.plot||'').slice(0,plotCap);
+        return `• ${x.pct}% — «${x.e.name||'стиль'}»:\n  Стиль: ${st}`+(pl?`\n  Сюжетные приёмы: ${pl}`:'');
+      }).join('\n');
+      passportBlock='\n\nСПЛАВ СТИЛЕЙ (следуй пропорциям, доминирует стиль с наибольшим весом):\n'+lines+
+        '\n\nПиши СВОИМ сюжетом и словами в этом сплаве, не копируй источники.';
+      // Паттерны вовлечения — от доминирующего стиля.
+      const domEng=(mix[0].e.engagement||'').slice(0,700);
+      if(domEng) passportBlock+='\n\nПРИЁМЫ ВОВЛЕЧЕНИЯ (применяй):\n'+domEng;
+    } else if(pr.stylePassport){
+      // Обратная совместимость: старое поле без библиотеки/микса.
+      passportBlock='\n\nПАСПОРТ СТИЛЯ (пиши строго в этой манере, но СВОИМ сюжетом и словами — не копируй источник):\n'+pr.stylePassport + (pr.engagementPatterns?'\n\nПРИЁМЫ ВОВЛЕЧЕНИЯ (применяй):\n'+pr.engagementPatterns:'');
+    }
+  }
   const preds=state.edges.filter(e=>e.to===n.id).map(e=>node(e.from)).filter(Boolean);
   const budget=state.global.maxContextChars||8000;
   const predsWithOutput=preds.filter(p=>p.output);
@@ -3531,7 +3557,28 @@ function evenSample(arr, max){
   return out;
 }
 let _styleBuilding=false;
-async function buildStylePassport(rawText, sourceName){
+// Парсит 3 блока (ПАСПОРТ СТИЛЯ / ПАТТЕРНЫ ВОВЛЕЧЕНИЯ / СЮЖЕТНЫЕ ПРИЁМЫ) из ответа reduce.
+function parseStyleBlocks(reduced){
+  const txt=String(reduced||'');
+  const mEng=txt.match(/ПАТТЕРНЫ\s+ВОВЛЕЧЕНИЯ/i);
+  const mPlot=txt.match(/СЮЖЕТНЫЕ\s+ПРИЁМЫ/i);
+  let style='', engagement='', plot='';
+  // конец паспорта = начало паттернов или начало сюжета (что раньше), иначе конец текста
+  const styleEnd=mEng?mEng.index:(mPlot?mPlot.index:txt.length);
+  style=txt.slice(0,styleEnd).replace(/^\s*ПАСПОРТ\s+СТИЛЯ\s*/i,'').trim();
+  if(mEng){
+    const engStart=mEng.index+mEng[0].length;
+    const engEnd=(mPlot && mPlot.index>mEng.index)?mPlot.index:txt.length;
+    engagement=txt.slice(engStart,engEnd).trim();
+  }
+  if(mPlot){
+    plot=txt.slice(mPlot.index+mPlot[0].length).trim();
+  }
+  return { style, engagement, plot };
+}
+// Извлекает 3 блока профиля стиля и СОХРАНЯЕТ запись в state.styleLibrary.
+// Обратно совместимое имя buildStylePassport — алиас ниже.
+async function buildStyleProfile(rawText, sourceName){
   if(_styleBuilding) return;
   const text=String(rawText||'').trim();
   if(!text){ toast('Сначала загрузите или вставьте образец текста','warn'); return; }
@@ -3551,7 +3598,7 @@ async function buildStylePassport(rawText, sourceName){
       : `Анализирую ${used} фрагмент(ов)`);
     if(truncated) toast(`Текст крупный — анализирую ${used} из ${total} фрагментов (равномерная выборка)`,'warn');
 
-    const MAP_SYS='Ты литературовед. Из фрагмента извлеки ТОЛЬКО абстрактные приёмы стиля, НЕ пересказывай сюжет и НЕ цитируй дословно. Отметь: лицо и время повествования, среднюю длину и ритм предложений, характер лексики, долю и манеру диалогов, тон, образность/тропы, как удерживается внимание.';
+    const MAP_SYS='Ты литературовед. Из фрагмента извлеки ТОЛЬКО абстрактные приёмы, НЕ пересказывай сюжет и НЕ цитируй дословно. Отметь: лицо и время повествования, среднюю длину и ритм предложений, характер лексики, долю и манеру диалогов, тон, образность/тропы, как удерживается внимание. Также подметь СЮЖЕТНЫЕ ПРИЁМЫ: типичные повороты, как строится арка/акты, типы конфликтов, как подаются твисты и развязки (как приём, без конкретного сюжета).';
     const observations=[];
     for(let i=0;i<chunks.length;i++){
       setProg(`Анализирую фрагмент ${i+1} из ${chunks.length}…`);
@@ -3567,70 +3614,156 @@ async function buildStylePassport(rawText, sourceName){
     }
     if(!observations.length){ toast('Не удалось извлечь наблюдения (проверьте ключ и модель)','err'); return; }
 
-    setProg('Свожу наблюдения в паспорт стиля…');
-    const REDUCE_SYS='Сведи наблюдения в инструкцию для писателя. Без цитат и имён персонажей источника. Только переносимые приёмы. Выдай РОВНО два блока, каждый максимум ~250 слов, начинающиеся со строк-заголовков:\n\nПАСПОРТ СТИЛЯ\n<инструкция: голос, ритм, лексика, POV, диалоги, тон, табу — как писать в этом стиле>\n\nПАТТЕРНЫ ВОВЛЕЧЕНИЯ\n<какие крючки, повороты, эмоциональная динамика держат читателя — что применять>';
+    setProg('Свожу наблюдения в профиль стиля…');
+    const REDUCE_SYS='Сведи наблюдения в инструкцию для писателя. Без цитат и имён персонажей источника. Только переносимые приёмы. Выдай РОВНО три блока, каждый максимум ~220 слов, начинающиеся со строк-заголовков:\n\nПАСПОРТ СТИЛЯ\n<голос, ритм, лексика, POV, диалоги, тон, табу — как писать в этом стиле>\n\nПАТТЕРНЫ ВОВЛЕЧЕНИЯ\n<крючки, эмоциональная динамика, что держит внимание>\n\nСЮЖЕТНЫЕ ПРИЁМЫ\n<типичные сюжетные повороты, структура (как строится арка/акты), типы конфликтов, как подаются твисты и развязки — переносимые приёмы, БЕЗ конкретного сюжета источника>';
     const reduced=await callLLM({ ...c, temperature:0.2 },[
       {role:'system',content:REDUCE_SYS},
       {role:'user',content:observations.map((o,i)=>`Фрагмент ${i+1}:\n${o}`).join('\n\n')}
     ]);
 
-    // Разбор двух блоков. Если разделитель не найден — кладём всё в паспорт.
-    let passport=reduced.trim(), patterns='';
-    const m=reduced.match(/ПАТТЕРНЫ\s+ВОВЛЕЧЕНИЯ/i);
-    if(m){
-      passport=reduced.slice(0,m.index).replace(/^\s*ПАСПОРТ\s+СТИЛЯ\s*/i,'').trim();
-      patterns=reduced.slice(m.index+m[0].length).trim();
-    } else {
-      passport=reduced.replace(/^\s*ПАСПОРТ\s+СТИЛЯ\s*/i,'').trim();
-    }
-
-    state.project.stylePassport=passport;
-    state.project.engagementPatterns=patterns;
-    state.project.styleSourceName=sourceName||'вставленный текст';
+    const { style, engagement, plot }=parseStyleBlocks(reduced);
+    const name=(sourceName||'').trim()||'вставленный текст';
+    const entry={ id:uid(), name, source:name, style, engagement, plot, ts:Date.now() };
+    if(!Array.isArray(state.styleLibrary)) state.styleLibrary=[];
+    state.styleLibrary.push(entry);
+    // Удобство: сразу делаем новый стиль единственным активным в миксе.
+    state.project.styleMix=[{id:entry.id, weight:100}];
     save();
-    logRow('Школа стиля','done',`Паспорт стиля построен (${used} фрагм., источник: ${state.project.styleSourceName})`);
-    toast('🎓 Паспорт стиля готов — будет подмешиваться в пишущих агентов','ok');
-    openStyleSchool(); // перерисовать drawer с результатом
+    logRow('Школа стиля','done',`Профиль стиля «${name}» построен (${used} фрагм.) и добавлен в библиотеку`);
+    toast('🎓 Профиль стиля «'+name+'» в библиотеке — активен в миксе','ok');
+    openStyleSchool('lib'); // показать библиотеку с результатом
   }catch(e){
     logRow('Школа стиля','error',e.message);
-    toast('Ошибка построения паспорта: '+e.message,'err');
+    toast('Ошибка построения профиля: '+e.message,'err');
   }finally{
     _styleBuilding=false;
   }
 }
-function openStyleSchool(){
+// Обратная совместимость: старое имя.
+const buildStylePassport=buildStyleProfile;
+// Сплавляет выбранные взвешенные стили в ОДИН компактный профиль (3 блока) → новая запись библиотеки.
+let _styleFusing=false;
+async function fuseStyles(mix){
+  if(_styleFusing) return;
+  if(!hasKey()){ toast('Нужен API-ключ','err'); openSettings(); return; }
+  const lib=state.styleLibrary||[];
+  const picked=(mix||[]).map(m=>({ w:m.weight, e:lib.find(x=>x.id===m.id) })).filter(x=>x.e);
+  if(picked.length<2){ toast('Выберите минимум 2 стиля для сплава','warn'); return; }
+  _styleFusing=true;
+  const c={ baseURL:state.global.baseURL, apiKey:pickKey(), model:state.global.model, temperature:0.3 };
+  const setProg=msg=>{ const el=document.querySelector('#ss-progress-mix'); if(el){ el.style.display=''; el.textContent=msg; } };
+  try{
+    setProg('Сплавляю стили в один профиль…');
+    const sum=picked.reduce((a,x)=>a+(x.w||0),0)||1;
+    const body=picked.map(x=>{
+      const pct=Math.round((x.w||0)/sum*100);
+      return `СТИЛЬ «${x.e.name}» (вес ${pct}%):\nПАСПОРТ:\n${x.e.style||'—'}\nПАТТЕРНЫ:\n${x.e.engagement||'—'}\nСЮЖЕТНЫЕ ПРИЁМЫ:\n${x.e.plot||'—'}`;
+    }).join('\n\n———\n\n');
+    const FUSE_SYS='Тебе даны несколько профилей авторского стиля с весами. Синтезируй из них ОДИН цельный профиль так, чтобы пропорции соблюдались (доминирует стиль с наибольшим весом). Выдай РОВНО три блока, каждый ~220 слов, с заголовками-строками:\n\nПАСПОРТ СТИЛЯ\n<…>\n\nПАТТЕРНЫ ВОВЛЕЧЕНИЯ\n<…>\n\nСЮЖЕТНЫЕ ПРИЁМЫ\n<…>\n\nБез имён персонажей и цитат — только переносимые приёмы.';
+    const reduced=await callLLM(c,[
+      {role:'system',content:FUSE_SYS},
+      {role:'user',content:body}
+    ]);
+    const { style, engagement, plot }=parseStyleBlocks(reduced);
+    const name='Микс: '+picked.map(x=>x.e.name).join('+');
+    const entry={ id:uid(), name, source:'сплав', style, engagement, plot, ts:Date.now() };
+    if(!Array.isArray(state.styleLibrary)) state.styleLibrary=[];
+    state.styleLibrary.push(entry);
+    state.project.styleMix=[{id:entry.id, weight:100}];
+    save();
+    logRow('Школа стиля','done',`Сплав «${name}» добавлен в библиотеку и активирован`);
+    toast('🔥 Сплав «'+name+'» готов и активен','ok');
+    openStyleSchool('lib');
+  }catch(e){
+    logRow('Школа стиля','error',e.message);
+    toast('Ошибка сплава: '+e.message,'err');
+  }finally{
+    _styleFusing=false;
+  }
+}
+function openStyleSchool(activeTab){
   const pr=state.project;
-  const has=!!(pr.stylePassport && pr.stylePassport.trim());
-  const intro=`<div class="ss-intro">Загрузите образец успешного текста (ваш, классику или лицензированный). ИИ извлечёт приёмы — голос, ритм, структуру, крючки — <b>НЕ копируя текст</b>. Профиль будет подмешиваться во всех пишущих агентов.</div>`;
+  const lib=Array.isArray(state.styleLibrary)?state.styleLibrary:(state.styleLibrary=[]);
+  const mix=Array.isArray(pr.styleMix)?pr.styleMix:(pr.styleMix=[]);
+  const tab=activeTab||'create';
+  const fmtDate=ts=>{ try{ return new Date(ts).toLocaleDateString('ru-RU'); }catch(e){ return ''; } };
 
-  const existing = has ? `
-    <div class="ss-result">
-      <div class="ss-src">📚 Источник: <b>${esc(pr.styleSourceName||'не указан')}</b></div>
-      <div class="field"><label>ПАСПОРТ СТИЛЯ</label>
-        <textarea id="ss-passport" rows="8" class="ss-area">${esc(pr.stylePassport)}</textarea></div>
-      <div class="field"><label>ПРИЁМЫ ВОВЛЕЧЕНИЯ</label>
-        <textarea id="ss-patterns" rows="6" class="ss-area">${esc(pr.engagementPatterns||'')}</textarea></div>
-      <div class="actions">
-        <button class="btn ok" id="ss-save-edit">Сохранить правки</button>
-        <button class="btn ghost" id="ss-clear">🗑 Очистить</button>
-      </div>
-    </div>
-    <div class="section-label">Переобучить на новом образце</div>` : '';
-
-  openDrawer('🎓 Школа стиля', intro + existing + `
+  // ── вкладка «Создать» ──
+  const createPane=`
+    <div class="ss-intro">Загрузите образец успешного текста (ваш, классику или лицензированный). ИИ извлечёт приёмы — голос, ритм, структуру, крючки и <b>сюжетные приёмы</b> — <b>НЕ копируя текст</b>. Профиль попадёт в библиотеку.</div>
     <div class="dropzone" id="ss-drop">
       <div class="dropzone-icon">📥</div>
       <div class="dropzone-text">Перетащите файл сюда или <label class="dz-link">выберите<input type="file" id="ss-file" accept=".txt,.md,.docx" hidden></label></div>
       <div class="dropzone-hint">.txt · .md · .docx</div>
     </div>
     <div class="field"><label>…или вставьте образец текста вручную</label>
-      <textarea id="ss-text" rows="10" placeholder="Вставьте фрагмент(ы) успешного текста…"></textarea></div>
+      <textarea id="ss-text" rows="9" placeholder="Вставьте фрагмент(ы) успешного текста…"></textarea></div>
+    <div class="field"><label>Название стиля</label>
+      <input id="ss-name" placeholder="напр. Булгаков, Хемингуэй, мой стиль…"></div>
     <div id="ss-progress" class="ss-progress" style="display:none"></div>
-    <div class="actions"><button class="btn ok" id="ss-build">🔬 Построить паспорт стиля</button></div>
+    <div class="actions"><button class="btn ok" id="ss-build">🔬 Извлечь стиль</button></div>`;
+
+  // ── вкладка «Библиотека» ──
+  const libCards=lib.length ? lib.slice().reverse().map(e=>`
+    <div class="ss-card" data-id="${e.id}">
+      <div class="ss-card-head">
+        <strong>${esc(e.name||'без названия')}</strong>
+        <span class="ss-card-meta">${esc(e.source||'')} · ${fmtDate(e.ts)}</span>
+      </div>
+      <details class="ss-det"><summary>Паспорт стиля</summary><div class="ss-det-body">${esc(e.style||'—')}</div></details>
+      <details class="ss-det"><summary>Паттерны вовлечения</summary><div class="ss-det-body">${esc(e.engagement||'—')}</div></details>
+      <details class="ss-det"><summary>Сюжетные приёмы</summary><div class="ss-det-body">${esc(e.plot||'—')}</div></details>
+      <div class="ss-card-actions">
+        <button class="btn ghost mini" data-rename="${e.id}">✎ Переименовать</button>
+        <button class="btn ghost mini" data-del="${e.id}">🗑 Удалить</button>
+      </div>
+    </div>`).join('') : `<div class="ss-empty">Библиотека пуста. Создайте первый стиль во вкладке «Создать».</div>`;
+  const libPane=`<div class="ss-lib">${libCards}</div>`;
+
+  // ── вкладка «Микс» ──
+  const mixById=Object.fromEntries(mix.map(m=>[m.id,m.weight]));
+  const mixRows=lib.length ? lib.slice().reverse().map(e=>{
+    const on=Object.prototype.hasOwnProperty.call(mixById,e.id);
+    const w=on?mixById[e.id]:50;
+    return `<div class="ss-mix-row" data-id="${e.id}">
+      <label class="ss-mix-pick"><input type="checkbox" class="ss-mix-cb" ${on?'checked':''}> <span>${esc(e.name||'—')}</span></label>
+      <div class="ss-mix-w">
+        <input type="range" class="ss-mix-slider" min="0" max="100" value="${w}" ${on?'':'disabled'}>
+        <span class="ss-mix-pct">${w}%</span>
+      </div>
+    </div>`;
+  }).join('') : `<div class="ss-empty">Сначала добавьте стили в библиотеку.</div>`;
+  const mixPane=`
+    <div class="ss-intro">Выберите до <b>3</b> стилей и задайте веса. «Применить микс» подмешает сплав во всех пишущих агентов. «Сплавить» синтезирует один чистый профиль через ИИ.</div>
+    <div class="ss-mix-list">${mixRows}</div>
+    <div class="ss-mix-sum" id="ss-mix-sum"></div>
+    <div id="ss-progress-mix" class="ss-progress" style="display:none"></div>
+    <div class="actions">
+      <button class="btn ok" id="ss-mix-apply">✅ Применить микс</button>
+      <button class="btn ghost" id="ss-mix-fuse">🔥 Сплавить в один стиль</button>
+    </div>`;
+
+  openDrawer('🎓 Школа стиля', `
+    <div class="set-tabs">
+      <button class="set-tab ${tab==='create'?'active':''}" data-sstab="create" type="button">Создать</button>
+      <button class="set-tab ${tab==='lib'?'active':''}" data-sstab="lib" type="button">Библиотека${lib.length?` (${lib.length})`:''}</button>
+      <button class="set-tab ${tab==='mix'?'active':''}" data-sstab="mix" type="button">Микс</button>
+    </div>
+    <div class="set-pane" data-sspane="create" style="${tab==='create'?'':'display:none'}">${createPane}</div>
+    <div class="set-pane" data-sspane="lib" style="${tab==='lib'?'':'display:none'}">${libPane}</div>
+    <div class="set-pane" data-sspane="mix" style="${tab==='mix'?'':'display:none'}">${mixPane}</div>
   `, b=>{
+    // переключение вкладок
+    b.querySelectorAll('.set-tab').forEach(t=>t.onclick=()=>{
+      b.querySelectorAll('.set-tab').forEach(x=>x.classList.toggle('active',x===t));
+      b.querySelectorAll('.set-pane').forEach(p=>p.style.display=p.dataset.sspane===t.dataset.sstab?'':'none');
+    });
+
+    // ── Создать ──
     const ta=b.querySelector('#ss-text');
     const dz=b.querySelector('#ss-drop');
     const fileInput=b.querySelector('#ss-file');
+    const nameInput=b.querySelector('#ss-name');
     let loadedName='';
     const handleFile=async f=>{
       if(!f) return;
@@ -3643,30 +3776,79 @@ function openStyleSchool(){
           try{ ta.value=await docxToText(f); loadedName=f.name; toast('📄 .docx распознан: '+f.name,'ok'); }
           catch(err){ console.warn('docx parse failed',err); toast('Не удалось прочитать .docx ('+err.message+'). Сохраните как .txt.','err'); }
         } else { toast('Поддерживаются .txt, .md, .docx','warn'); }
+        if(loadedName && nameInput && !nameInput.value.trim()){
+          nameInput.value=loadedName.replace(/\.(txt|md|docx)$/i,'');
+        }
       }catch(e){ toast('Ошибка чтения файла: '+e.message,'err'); }
     };
     fileInput.onchange=e=>handleFile(e.target.files[0]);
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.add('dragover'); }));
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.remove('dragover'); }));
     dz.addEventListener('drop',e=>{ const f=e.dataTransfer?.files?.[0]; handleFile(f); });
-
     b.querySelector('#ss-build').onclick=()=>{
       const txt=ta.value.trim();
       if(!txt){ toast('Сначала загрузите или вставьте образец текста','warn'); return; }
-      buildStylePassport(txt, loadedName||'вставленный текст');
+      const nm=(nameInput.value.trim()||loadedName||'вставленный текст');
+      buildStyleProfile(txt, nm);
     };
-    if(has){
-      b.querySelector('#ss-save-edit').onclick=()=>{
-        state.project.stylePassport=b.querySelector('#ss-passport').value.trim();
-        state.project.engagementPatterns=b.querySelector('#ss-patterns').value.trim();
-        save(); toast('Правки паспорта сохранены','ok');
+
+    // ── Библиотека ──
+    b.querySelectorAll('[data-del]').forEach(btn=>btn.onclick=()=>{
+      const id=btn.dataset.del;
+      state.styleLibrary=(state.styleLibrary||[]).filter(x=>x.id!==id);
+      state.project.styleMix=(state.project.styleMix||[]).filter(m=>m.id!==id);
+      save(); toast('Стиль удалён','ok'); openStyleSchool('lib');
+    });
+    b.querySelectorAll('[data-rename]').forEach(btn=>btn.onclick=()=>{
+      const id=btn.dataset.rename;
+      const e=(state.styleLibrary||[]).find(x=>x.id===id); if(!e) return;
+      const nv=prompt('Новое название стиля:', e.name||'');
+      if(nv && nv.trim()){ e.name=nv.trim(); save(); openStyleSchool('lib'); }
+    });
+
+    // ── Микс ──
+    const sumEl=b.querySelector('#ss-mix-sum');
+    const rows=()=>Array.from(b.querySelectorAll('.ss-mix-row'));
+    const checkedRows=()=>rows().filter(r=>r.querySelector('.ss-mix-cb').checked);
+    const refreshSum=()=>{
+      if(!sumEl) return;
+      const sel=checkedRows();
+      const total=sel.reduce((a,r)=>a+parseInt(r.querySelector('.ss-mix-slider').value||0),0);
+      sumEl.textContent=sel.length?`Выбрано ${sel.length}/3 · сумма весов ${total}% (нормализуется к 100%)`:'Ничего не выбрано';
+    };
+    rows().forEach(r=>{
+      const cb=r.querySelector('.ss-mix-cb');
+      const slider=r.querySelector('.ss-mix-slider');
+      const pct=r.querySelector('.ss-mix-pct');
+      cb.onchange=()=>{
+        if(cb.checked && checkedRows().length>3){ cb.checked=false; toast('Можно выбрать максимум 3 стиля','warn'); return; }
+        slider.disabled=!cb.checked;
+        refreshSum();
       };
-      b.querySelector('#ss-clear').onclick=()=>{
-        state.project.stylePassport=''; state.project.engagementPatterns=''; state.project.styleSourceName='';
-        save(); logRow('Школа стиля','done','Паспорт стиля очищен'); toast('Паспорт стиля очищен','ok');
-        openStyleSchool();
-      };
-    }
+      slider.oninput=()=>{ pct.textContent=slider.value+'%'; refreshSum(); };
+    });
+    refreshSum();
+    const collectMix=()=>{
+      const sel=checkedRows();
+      if(!sel.length) return [];
+      const raw=sel.map(r=>({ id:r.dataset.id, weight:parseInt(r.querySelector('.ss-mix-slider').value||0) }));
+      const total=raw.reduce((a,x)=>a+x.weight,0)||1;
+      return raw.map(x=>({ id:x.id, weight:Math.round(x.weight/total*100) }));
+    };
+    const applyBtn=b.querySelector('#ss-mix-apply');
+    if(applyBtn) applyBtn.onclick=()=>{
+      const m=collectMix();
+      if(!m.length){ toast('Выберите хотя бы один стиль','warn'); return; }
+      if(m.length>3){ toast('Максимум 3 стиля','warn'); return; }
+      state.project.styleMix=m; save();
+      toast('🎨 Микс применён ('+m.length+' стил.) — активен в пишущих агентах','ok');
+    };
+    const fuseBtn=b.querySelector('#ss-mix-fuse');
+    if(fuseBtn) fuseBtn.onclick=()=>{
+      const m=collectMix();
+      if(m.length<2){ toast('Для сплава выберите минимум 2 стиля','warn'); return; }
+      fuseStyles(m);
+    };
   });
 }
 
