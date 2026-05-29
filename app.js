@@ -750,6 +750,7 @@ function render(){
     hintEl.textContent='Тяни блок за шапку • соединяй кружки (выход→вход) • клик по связи — удалить';
   }
   renderNodes(); renderEdges(); renderLoopCards();
+  if(_panelNodeId){ const pn=node(_panelNodeId); if(pn && pn.status!=='running') refreshNodePanel(); }
   if(_currentView==='reader') renderReader();
   if(_currentView==='simple') renderSimpleProgress();
   updateStyleRefBadge();
@@ -903,7 +904,7 @@ function renderGroups(){
 }
 
 /* ============ DRAG + СВЯЗИ ============ */
-const canvas=$('#canvas'); let drag=null, wire=null, groupDrag=null, boxSel=null;
+const canvas=$('#canvas'); let drag=null, wire=null, groupDrag=null, boxSel=null, _dragMoved=false, _panelNodeId=null;
 // #46: множественное выделение
 const _selected=new Set();
 function clearSelection(){ if(_selected.size){ _selected.clear(); renderNodes(); } }
@@ -926,6 +927,7 @@ nodesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('.port.out'); if(p){ wire={from:p.dataset.id}; e.stopPropagation(); e.preventDefault(); return; }
   const h=e.target.closest('[data-drag]'); if(!h) return;
   if(e.target.closest('button,input,textarea,select')) return; // не перехватывать клики по кнопкам внутри шапки
+  _dragMoved=false;
   const n=node(h.dataset.drag); const pt=canvasPoint(e); pushUndo();
   // #46: если тащим выделенный узел — двигаем всю группу выделения
   if(_selected.has(n.id) && _selected.size>1){
@@ -938,6 +940,51 @@ nodesEl.addEventListener('mousedown',e=>{
   }
   e.preventDefault();
 });
+// Клик по телу/шапке плитки (без перетаскивания) → боковая панель текста
+nodesEl.addEventListener('click',e=>{
+  if(e.target.closest('button,input,textarea,select,.port')) return; // кнопки/порты — своя логика
+  if(_dragMoved){ _dragMoved=false; return; }                        // это было перетаскивание, не клик
+  const card=e.target.closest('.node'); if(!card) return;
+  const id=card.dataset.node; if(id) openNodePanel(id);
+});
+function openNodePanel(id){
+  const n=node(id); if(!n) return;
+  _panelNodeId=id;
+  const out=n.error?`<div class="np-empty"><div class="np-empty-ic">⚠</div>${esc(n.error)}</div>`
+    :(n.output?`<div class="md">${md2html(typeof typo==='function'?typo(n.output):n.output)}</div>`
+      :`<div class="np-empty"><div class="np-empty-ic">✍️</div>Этот агент ещё не запускался.<br>Нажмите «▶ Прогнать» ниже.</div>`);
+  const words=n.output?(n.output.match(/\S+/g)||[]).length:0;
+  const meta=(n.tokensIn||n.tokensOut||words)?`<div class="np-meta"><span>~${words.toLocaleString('ru-RU')} слов</span>${(n.tokensIn||n.tokensOut)?`<span>${(n.tokensIn+n.tokensOut)} ток.</span><span>${money(nodeCost(n))}</span>`:''}${n.ms?`<span>${(n.ms/1000).toFixed(1)}с</span>`:''}</div>`:'';
+  const nVer=(n.outputVersions||[]).length;
+  const p=$('#node-panel');
+  p.innerHTML=`
+    <div class="np-head">
+      <div class="np-emoji">${n.emoji}</div>
+      <div class="np-titles"><div class="np-name">${esc(n.name)}</div><div class="np-role">${esc(n.role||'')}</div></div>
+      <button class="icon-btn" id="np-close" title="Закрыть">✕</button>
+    </div>
+    ${meta}
+    <div class="np-body" id="np-body">${out}</div>
+    <div class="np-foot">
+      <button class="btn ok sm" id="np-run">▶ Прогнать</button>
+      <button class="btn ghost sm" id="np-rerun" title="Игнорировать кэш — получить другой вариант">🎲 Заново</button>
+      ${n.output?'<button class="btn ghost sm" id="np-edit">✎ Править</button>':''}
+      ${nVer>1?`<button class="btn ghost sm" id="np-ver">± Версии (${nVer})</button>`:''}
+      <button class="btn ghost sm" id="np-cfg">⚙ Настроить</button>
+    </div>`;
+  p.classList.add('show'); p.setAttribute('aria-hidden','false');
+  nodesEl.querySelectorAll('.node.panel-active').forEach(el=>el.classList.remove('panel-active'));
+  nodesEl.querySelector(`[data-node="${id}"]`)?.classList.add('panel-active');
+  $('#np-close').onclick=closeNodePanel;
+  $('#np-run').onclick=()=>{ runNode(id); };
+  $('#np-rerun').onclick=()=>{ n.cacheHash=''; n._loopPrev=''; runNode(id); };
+  const eb=$('#np-edit'); if(eb) eb.onclick=()=>{ closeNodePanel(); openManualEdit(id); };
+  const vb=$('#np-ver'); if(vb) vb.onclick=()=>{ const vs=n.outputVersions; if(vs&&vs.length>1) openWordDiff('Версии: '+esc(n.name), vs[1].output, n.output, ()=>openNodePanel(id)); };
+  $('#np-cfg').onclick=()=>{ openNode(id); };
+}
+function closeNodePanel(){ const p=$('#node-panel'); p.classList.remove('show'); p.setAttribute('aria-hidden','true'); _panelNodeId=null;
+  nodesEl.querySelectorAll('.node.panel-active').forEach(el=>el.classList.remove('panel-active')); }
+function refreshNodePanel(){ if(_panelNodeId && $('#node-panel').classList.contains('show')) openNodePanel(_panelNodeId); }
 edgesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('[data-group-drag]'); if(!p) return;
   const g=(state.groups||[]).find(x=>x.id===p.dataset.groupDrag); if(!g) return;
@@ -996,7 +1043,7 @@ function highlightValidPorts(fromId){
 }
 function clearPortHighlight(){ nodesEl.querySelectorAll('.port-valid').forEach(p=>p.classList.remove('port-valid')); }
 window.addEventListener('mousemove',e=>{
-  if(drag){ const pt=canvasPoint(e);
+  if(drag){ _dragMoved=true; const pt=canvasPoint(e);
     if(drag.multi){ const dx=pt.x-drag.ox, dy=pt.y-drag.oy;
       drag.multi.forEach(s=>{ const m=node(s.id); if(m){ m.x=Math.max(0,s.x+dx); m.y=Math.max(0,s.y+dy);
         const el=nodesEl.querySelector(`[data-node="${m.id}"]`); if(el){ el.style.left=m.x+'px'; el.style.top=m.y+'px'; } } });
@@ -1342,6 +1389,7 @@ async function runNode(id){
       const reader=res.body.getReader(), dec=new TextDecoder(); let lastPartialSave=0;
       while(true){ const {value,done}=await reader.read(); if(done) break; acc+=dec.decode(value,{stream:true});
         const b=document.getElementById('body-'+id); if(b){ b.classList.remove('empty'); b.textContent=acc; b.scrollTop=b.scrollHeight; }
+        if(_panelNodeId===id){ const pb=document.getElementById('np-body'); if(pb){ pb.textContent=acc; pb.scrollTop=pb.scrollHeight; } }
         n.output=acc; const now=Date.now(); if(now-lastPartialSave>2000){ save(); lastPartialSave=now; } }
       if(!acc.trim()) throw new Error('пустой ответ от модели');
       // #48: фиксируем ТО, ЧТО РЕАЛЬНО ушло и вернулось (для секции «📡 Что ушло/вернулось»).
@@ -1788,7 +1836,7 @@ document.addEventListener('keydown', e => {
   if(ctrl && e.key==='z'){ e.preventDefault(); undoCanvas(); return; }
   if(ctrl && e.key==='y'){ e.preventDefault(); redoCanvas(); return; }
   if(ctrl && e.key==='Enter'){ e.preventDefault(); runPipeline(); return; }
-  if(e.key==='Escape'){ closeDrawer(); return; }
+  if(e.key==='Escape'){ if(_panelNodeId) closeNodePanel(); closeDrawer(); return; }
   if(e.key==='r' && !ctrl){
     switchView(typeof _currentView!=='undefined' && _currentView==='reader'?'canvas':'reader');
     return;
