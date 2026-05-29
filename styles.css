@@ -1062,3 +1062,31 @@ body[data-view="reader"] .book-inspector{
   padding:12px;text-align:center;background:var(--panel2);border-radius:8px}
 .bi-actions{display:flex;flex-direction:column;gap:7px;margin-top:14px}
 .bi-actions .btn{justify-content:flex-start;width:100%}
+
+/* ════ БИБЛИОТЕКА КНИГ ════ */
+.bl-top{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.bl-top .btn{flex:1;min-width:140px;justify-content:center}
+.bl-filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;padding-bottom:12px;
+  border-bottom:1px solid var(--line)}
+.bl-chip{font-size:12px;padding:4px 11px;border-radius:999px;cursor:pointer;
+  background:var(--panel2);border:1px solid var(--line2);color:var(--dim);transition:.12s}
+.bl-chip:hover{color:var(--txt);border-color:var(--accent)}
+.bl-chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.bl-list{display:flex;flex-direction:column;gap:9px}
+.bl-empty{font-size:13px;color:var(--faint);line-height:1.6;text-align:center;
+  padding:26px 12px;background:var(--panel2);border-radius:10px;border:1px dashed var(--line2)}
+.bl-card{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--line);transition:.12s}
+.bl-card:hover{border-color:var(--line2)}
+.bl-card.current{border-color:var(--accent);background:var(--panel3)}
+.bl-card-main{flex:1;min-width:0}
+.bl-card-title{font-size:14px;font-weight:700;color:var(--txt);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bl-cur{font-size:11px;font-weight:600;color:var(--accent2);margin-left:8px}
+.bl-card-meta{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:5px;
+  font-size:11px;color:var(--dim)}
+.bl-tag{padding:2px 8px;border-radius:999px;background:var(--line);color:var(--txt);font-size:11px}
+.bl-words,.bl-date{color:var(--faint)}
+.bl-card-acts{display:flex;gap:5px;flex-shrink:0}
+.bl-card-acts .btn{padding:5px 10px;font-size:12px}
+.bl-card-acts .btn[disabled]{opacity:.4;cursor:default}

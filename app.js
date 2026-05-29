@@ -94,7 +94,8 @@ function defaultState(){
   const startTpls=startRoles.map(r=>TEMPLATES.find(t=>t.role===r)).filter(Boolean);
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
-  return { project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
+  return { _bookId:'',
+    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
@@ -131,7 +132,149 @@ function save(){
     const data=JSON.stringify(state,(k,v)=>(k==='_vec'||k==='_bestOutput'||k==='_scoreHistory'||k==='_loopPrev'||k==='lastRequest'||k==='lastRawOutput')?undefined:v);
     if(data.length>4*1024*1024) toast('⚠ Хранилище почти полно ('+Math.round(data.length/1024)+' KB). Очистите журнал или экспортируйте.','warn');
     localStorage.setItem(KEY,data);
+    // #BOOKLIB: тихое автосохранение текущей книги в библиотеку (если уже сохранялась).
+    autoSyncBook();
   },40);
+}
+
+/* ════ БИБЛИОТЕКА КНИГ ═══════════════════════════════════════════════
+   Активный проект по-прежнему живёт в localStorage[KEY]. Дополнительно
+   BOOKS_KEY хранит массив снимков сохранённых книг:
+   {id, title, genre, words, ts, data}  где data = снимок state без
+   транзиентных полей и без секретов (тот же replacer что в save() + safeReplacer). */
+const BOOKS_KEY='izd_books';
+// Транзиентные поля state, которые не сериализуем (синхронно со списком в save()).
+const _TRANSIENT=new Set(['_vec','_bestOutput','_scoreHistory','_loopPrev','lastRequest','lastRawOutput']);
+function _bookReplacer(k,v){
+  if(_TRANSIENT.has(k)) return undefined;
+  // secrets → '' (ключи и токены не храним в библиотеке; они в global активного проекта)
+  if(SECRET_KEYS.has(k)) return '';
+  return v;
+}
+function loadBooks(){ try{ const a=JSON.parse(localStorage.getItem(BOOKS_KEY)); return Array.isArray(a)?a:[]; }catch{ return []; } }
+function saveBooks(arr){ try{ localStorage.setItem(BOOKS_KEY,JSON.stringify(arr)); }catch(e){ toast('⚠ Не удалось сохранить библиотеку: '+String(e.message||e).slice(0,60),'warn'); } }
+// Снимок текущего состояния: сериализуем тем же способом что save(), затем парсим обратно.
+function snapshotCurrent(){ return JSON.parse(JSON.stringify(state,_bookReplacer)); }
+// Подсчёт слов книги по главам (чистая проза).
+function _bookWords(){
+  try{ return bookNodes().reduce((s,n)=>s+((cleanProse(n)||'').match(/\S+/g)||[]).length,0); }
+  catch{ return 0; }
+}
+// Сохранить текущий проект в библиотеку (создать запись или обновить существующую по _bookId).
+// НЕ вызывает save() — чтобы не зациклить автосинк.
+function saveCurrentBook(){
+  if(!state._bookId) state._bookId=uid();
+  const rec={ id:state._bookId, title:(state.project.title||'').trim()||'Без названия',
+    genre:(state.project.genre||'').trim(), words:_bookWords(), ts:Date.now(), data:snapshotCurrent() };
+  const books=loadBooks();
+  const i=books.findIndex(b=>b.id===rec.id);
+  if(i>=0) books[i]=rec; else books.push(rec);
+  saveBooks(books);
+  return rec;
+}
+// #BOOKLIB: тихий debounce-автосинк из save(). Обновляет запись, только если книга
+// уже в библиотеке (есть _bookId И запись существует) ИЛИ есть осмысленный контент.
+let _autoSyncTimer=null;
+function autoSyncBook(){
+  clearTimeout(_autoSyncTimer);
+  _autoSyncTimer=setTimeout(()=>{
+    if(!state._bookId) return; // ещё не сохранялась вручную — не плодим записи автоматически
+    const books=loadBooks();
+    if(!books.some(b=>b.id===state._bookId)) return; // запись удалена — не воскрешаем
+    saveCurrentBook();
+  },800);
+}
+// Открыть сохранённую книгу (сначала сохраняем текущую, чтобы не потерять).
+function openBook(id){
+  saveCurrentBook();
+  const book=loadBooks().find(b=>b.id===id);
+  if(!book){ toast('Книга не найдена','warn'); return; }
+  state=Object.assign(defaultState(), book.data);
+  state._bookId=id;
+  if(state.project) state.project=Object.assign({},defaultState().project,state.project);
+  rebuildBibleVecs();
+  save(); render(); closeDrawer();
+  toast('Открыта книга «'+(book.title||'Без названия')+'»');
+}
+// Создать новую книгу (текущую сохраняем).
+function newBook(){
+  saveCurrentBook();
+  state=defaultState(); state._bookId=uid();
+  rebuildBibleVecs();
+  save(); render(); closeDrawer();
+  toast('Новая книга создана');
+}
+// Удалить книгу из библиотеки (без нативного confirm — перерисовываем drawer).
+function deleteBook(id){
+  const books=loadBooks().filter(b=>b.id!==id);
+  saveBooks(books);
+  toast('Книга удалена');
+  openBookLibrary(); // перерисовать список
+}
+// Дублировать книгу (новый id, пометка «копия»).
+function duplicateBook(id){
+  const src=loadBooks().find(b=>b.id===id);
+  if(!src) return;
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=uid(); copy.ts=Date.now();
+  copy.title=(src.title||'Без названия')+' (копия)';
+  if(copy.data) copy.data._bookId=copy.id;
+  const books=loadBooks(); books.push(copy); saveBooks(books);
+  toast('Книга скопирована');
+  openBookLibrary();
+}
+// Состояние фильтра жанров в drawer (на время жизни drawer).
+let _bookFilterGenre='';
+function openBookLibrary(){
+  const books=loadBooks().slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+  // Список присутствующих жанров для чипов-фильтров.
+  const genres=[...new Set(books.map(b=>(b.genre||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  if(_bookFilterGenre && _bookFilterGenre!=='__all' && !genres.includes(_bookFilterGenre)) _bookFilterGenre='';
+  const filterVal=_bookFilterGenre||'__all';
+  const shown=books.filter(b=>filterVal==='__all'?true:((b.genre||'').trim()===filterVal));
+  const chip=(val,label)=>`<button class="bl-chip${filterVal===val?' active':''}" data-book-filter="${esc(val)}">${esc(label)}</button>`;
+  const chips=[chip('__all','Все')].concat(genres.map(g=>chip(g,g))).join('');
+  let cards;
+  if(!books.length){
+    cards=`<div class="bl-empty">Библиотека пуста.<br>Сохраните текущую книгу или создайте новую.</div>`;
+  } else if(!shown.length){
+    cards=`<div class="bl-empty">Нет книг в жанре «${esc(filterVal)}».</div>`;
+  } else {
+    cards=shown.map(b=>{
+      const cur=(b.id===state._bookId);
+      const dt=b.ts?new Date(b.ts).toLocaleString('ru-RU'):'';
+      return `<div class="bl-card${cur?' current':''}" data-book-id="${esc(b.id)}">
+        <div class="bl-card-main">
+          <div class="bl-card-title">${esc(b.title||'Без названия')}${cur?'<span class="bl-cur">● текущая</span>':''}</div>
+          <div class="bl-card-meta">
+            ${b.genre?`<span class="bl-tag">${esc(b.genre)}</span>`:''}
+            <span class="bl-words">~${(b.words||0).toLocaleString('ru-RU')} сл.</span>
+            <span class="bl-date">${esc(dt)}</span>
+          </div>
+        </div>
+        <div class="bl-card-acts">
+          <button class="btn ok bl-open" data-book-open="${esc(b.id)}"${cur?' disabled':''}>Открыть</button>
+          <button class="btn ghost bl-dup" data-book-dup="${esc(b.id)}" title="Дублировать">⧉</button>
+          <button class="btn ghost bl-del" data-book-del="${esc(b.id)}" title="Удалить">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  openDrawer('📚 Мои книги',`
+    <div class="bl-top">
+      <button class="btn ok" data-book-new>➕ Новая книга</button>
+      <button class="btn ghost" data-book-save>💾 Сохранить текущую в библиотеку</button>
+    </div>
+    ${books.length?`<div class="bl-filters">${chips}</div>`:''}
+    <div class="bl-list">${cards}</div>`,
+  b=>{
+    b.querySelector('[data-book-new]')?.addEventListener('click',newBook);
+    b.querySelector('[data-book-save]')?.addEventListener('click',()=>{ saveCurrentBook(); openBookLibrary(); toast('Текущая книга сохранена в библиотеку'); });
+    b.querySelectorAll('[data-book-filter]').forEach(el=>el.onclick=()=>{ _bookFilterGenre=el.dataset.bookFilter; openBookLibrary(); });
+    b.querySelectorAll('[data-book-open]').forEach(el=>el.onclick=()=>openBook(el.dataset.bookOpen));
+    b.querySelectorAll('[data-book-dup]').forEach(el=>el.onclick=()=>duplicateBook(el.dataset.bookDup));
+    b.querySelectorAll('[data-book-del]').forEach(el=>el.onclick=()=>deleteBook(el.dataset.bookDel));
+  });
 }
 
 /* ════ BACKUP ════════════════════════════════════════════════════════ */
@@ -829,6 +972,7 @@ function renderLeftRail(){
       ${chapHtml}
     </div>
     <div class="lr-nav">
+      <button class="lr-nav-btn" data-action="book-library"><span class="lr-nav-ic">📚</span> Мои книги</button>
       <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
       <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
       <button class="lr-nav-btn" data-action="style-school"><span class="lr-nav-ic">🎓</span> Школа стиля</button>
@@ -3096,6 +3240,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='edit-input') openInput(); else if(a==='open-node') openNode(id); else if(a==='run-node') runNode(id);
   else if(a==='run-from'){ closeDrawer(); runFromNode(id); }
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
+  else if(a==='book-library') openBookLibrary();
   else if(a==='restore-version'){
     const nodeId = t.dataset.node;
     const verIdx = parseInt(t.dataset.ver);
