@@ -706,4 +706,45 @@ button{font-family:inherit}
   font-family: inherit;
   line-height: 1.5;
 }
+
+/* ── Loop cards ────────────────────────────── */
+.loop-card{
+  position:absolute;
+  width:175px;
+  background:#13152a;
+  border:2px dashed #4f46e5;
+  border-radius:10px;
+  padding:10px 12px;
+  z-index:10;
+  pointer-events:auto;
+}
+.loop-card-title{font-size:11px;font-weight:700;color:#818cf8;margin-bottom:8px}
+.loop-card-field{margin-bottom:6px}
+.loop-card-label{font-size:10px;color:#555;margin-bottom:2px}
+.loop-card-val{font-size:10px;color:#94a3b8;background:#1e2235;border-radius:4px;padding:3px 6px;word-break:break-all}
+.loop-card-val.mono{font-family:monospace}
+.loop-card-row{display:flex;justify-content:space-between;font-size:10px;color:#6b7280;margin-bottom:4px}
+.loop-card-status{margin-top:6px;padding-top:6px;border-top:1px solid #1e2235;font-size:10px;color:#4f46e5}
+
+/* ── Node delete and collapse buttons ──────── */
+.node-btn{
+  width:18px;height:18px;border-radius:50%;
+  background:#1e2235;border:1px solid #2a3050;
+  color:#555;cursor:pointer;font-size:11px;
+  display:inline-flex;align-items:center;justify-content:center;
+  flex:none;line-height:1;transition:.15s;margin-left:2px;
+}
+.node-del:hover{background:#ef4444;border-color:#ef4444;color:#fff}
+.node-collapse:hover{background:#2a3050;color:#c9cde0}
+
+/* ── Loop iteration badge on node ─────────── */
+.loop-iter-badge{
+  background:#4f46e5;color:#fff;
+  font-size:9px;padding:2px 6px;
+  border-radius:10px;white-space:nowrap;
+  margin-left:auto;
+}
+
+/* ── Loop back-arc edge ─────────────────────── */
+.edge.loop-back{stroke:#4f46e5;stroke-width:2;fill:none;stroke-dasharray:8 4}
 .node.variants { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2); }

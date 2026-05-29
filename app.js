@@ -67,7 +67,7 @@ function evalCondition(cond,output){
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
   output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'', outputVersions:[],
-  variants:1, fanoutCount:0, fanoutOutputs:[] }; }
+  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false }; }
 function checkSchema(n){
   if(!n.outputSchema||!n.outputSchema.trim()) return null; // нет схемы → всё ок
   try{
@@ -484,13 +484,18 @@ function render(){
   const rb=$('#run-btn'); rb.textContent=paused?'▶ Продолжить':'▶ Запустить';
   const sb=$('#stop-btn'); if(sb){ sb.style.display=running?'':'none'; }
   $('#canvas-hint').textContent='Тяни блок за шапку • соединяй кружки (выход→вход) • клик по связи — удалить';
-  renderNodes(); renderEdges();
+  renderNodes(); renderEdges(); renderLoopCards();
   if(_currentView==='reader') renderReader();
   updateStyleRefBadge();
 }
 function updateStyleRefBadge(){
   const badge = document.querySelector('#style-ref-badge');
   if(badge) badge.style.display = state.project.styleRef ? '' : 'none';
+}
+function loopBadge(n){
+  const loopEdge = state.edges.find(e=>e.from===n.id&&(e.isLoop||e.maxRetries>0));
+  if(!loopEdge||!(loopEdge._retryCount||0)) return '';
+  return `<span class="loop-iter-badge">🔁 ${loopEdge._retryCount}/${loopEdge.maxRetries}</span>`;
 }
 function renderNodes(){
   const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
@@ -505,6 +510,7 @@ function renderNodes(){
         <div class="node-head" data-drag="${n.id}">
           <div class="node-emoji">${n.emoji}</div>
           <div><div class="node-name">${esc(n.name)}</div><div class="node-role">${esc(n.role)}</div></div>
+          <button class="node-btn node-del" data-action="delete-node" data-id="${n.id}" title="Удалить">×</button>
         </div>
         <div class="node-body ${n.prompt?'':'empty'}">${n.prompt?esc(n.prompt):'Двойной клик — редактировать'}</div>
         <div class="node-foot"><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">✎ Изменить</button></div>
@@ -523,10 +529,13 @@ function renderNodes(){
       <div class="node-head" data-drag="${n.id}">
         <div class="node-emoji">${n.emoji}</div>
         <div><div class="node-name">${esc(n.name)}${n.requireApproval?' 🔒':''}</div><div class="node-role">${esc(n.role)}</div></div>
+        ${loopBadge(n)}
+        <button class="node-btn node-collapse" data-action="toggle-collapse" data-id="${n.id}" title="${n.collapsed?'Развернуть':'Свернуть'}">${n.collapsed?'▸':'▾'}</button>
+        <button class="node-btn node-del" data-action="delete-node" data-id="${n.id}" title="Удалить узел">×</button>
         <div class="node-status"></div>
       </div>
-      <div class="node-body ${n.output||n.error?'':'empty'}" id="body-${n.id}">${out}</div>
-      ${meta?`<div class="node-meta">${meta}</div>`:''}
+      ${n.collapsed?'':`<div class="node-body ${n.output||n.error?'':'empty'}" id="body-${n.id}">${out}</div>
+      ${meta?`<div class="node-meta">${meta}</div>`:''}`}
       ${appr}
     </div>`;
   }).join('');
@@ -536,16 +545,55 @@ function portPos(id,side){ const n=node(id); return {x:n.x+(side==='out'?NW:0), 
 function edgePath(a,b){ const dx=Math.max(40,Math.abs(b.x-a.x)*0.5); return `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`; }
 function renderEdges(){
   const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
-  edgesEl.innerHTML=renderGroups()+state.edges.filter(e=>!collapsedIds.has(e.from)&&!collapsedIds.has(e.to)).map(e=>{ if(!node(e.from)||!node(e.to)) return '';
+  edgesEl.innerHTML=`<defs><marker id="loop-arr" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#4f46e5"/></marker></defs>`+renderGroups()+state.edges.filter(e=>!collapsedIds.has(e.from)&&!collapsedIds.has(e.to)).map(e=>{ if(!node(e.from)||!node(e.to)) return '';
     const p1=portPos(e.from,'out'), p2=portPos(e.to,'in');
     const d=edgePath(p1,p2);
     const flow=node(e.from).status==='running'||node(e.to).status==='running';
     const cond=e.condition&&e.condition.trim()?'conditional':'';
     const isCyclic=(e.maxRetries||0)>0;
+    // For loop (backward) edges, use a curved arc that goes below nodes
+    if(e.isLoop){
+      const fx=p1.x, fy=p1.y, tx=p2.x, ty=p2.y;
+      const dLoop=`M ${fx} ${fy} C ${fx+60} ${fy+120}, ${tx-60} ${ty+120}, ${tx} ${ty}`;
+      return `<path class="edge loop-back" d="${dLoop}" style="stroke:#4f46e5;stroke-dasharray:8 4;fill:none" marker-end="url(#loop-arr)"></path>
+        <path class="edge hit" d="${dLoop}" data-edge="${e.id}" title="Петля: ${esc(e.condition||'всегда')} (${e._retryCount||0}/${e.maxRetries||5})"></path>`;
+    }
     const cyclicStyle=isCyclic?` style="stroke:#f59e0b;stroke-dasharray:8 4 2 4"`:'';
     const midX=(p1.x+p2.x)/2, midY=(p1.y+p2.y)/2;
     const badge=isCyclic?`<text x="${midX}" y="${midY-6}" text-anchor="middle" fill="#f59e0b" font-size="10" font-family="monospace" style="pointer-events:none">↩${e._retryCount||0}/${e.maxRetries}</text>`:'';
     return `<path class="edge ${flow?'flow':''} ${isCyclic?'cyclic':cond}" d="${d}"${cyclicStyle}></path><path class="edge hit" d="${d}" data-edge="${e.id}" title="${isCyclic?'Повторы: '+(e._retryCount||0)+'/'+e.maxRetries+(cond?' | Условие: '+esc(e.condition):''):cond?'Условие: '+esc(e.condition):''}"></path>${badge}`; }).join('');
+}
+function renderLoopCards(){
+  // Remove existing loop cards
+  document.querySelectorAll('.loop-card').forEach(el=>el.remove());
+  const NW=212;
+  state.edges.filter(e=>e.isLoop).forEach(e=>{
+    const fromNode=node(e.from); const toNode=node(e.to);
+    if(!fromNode||!toNode) return;
+    const card=document.createElement('div');
+    card.className='loop-card';
+    card.dataset.loopEdge=e.id;
+    card.style.cssText=`left:${fromNode.x+NW+24}px;top:${fromNode.y}px;position:absolute;`;
+    const toName=esc(toNode.name||'?');
+    const iterText=e._retryCount?`Итерация ${e._retryCount} из ${e.maxRetries||5}`:'Ожидание';
+    const scoreText=e._autoScore!=null?` · оценка ${e._autoScore}/10`:'';
+    card.innerHTML=`
+      <div class="loop-card-title">🔁 Петля → ${toName}</div>
+      <div class="loop-card-field">
+        <div class="loop-card-label">Условие выхода (JS):</div>
+        <div class="loop-card-val mono">${e.condition?esc(e.condition):'<span style="color:var(--faint)">не задано</span>'}</div>
+      </div>
+      <div class="loop-card-row">
+        <span>Авто-оценка:</span>
+        <span style="color:${e.autoEval?'var(--ok)':'var(--faint)'}">${e.autoEval?'✅ вкл.':'выкл.'}</span>
+      </div>
+      ${e.autoEval?`<div class="loop-card-row"><span>Порог:</span><span>${e.evalThreshold||7}/10</span></div>`:''}
+      <div class="loop-card-row"><span>Макс. итераций:</span><span>${e.maxRetries||5}</span></div>
+      <div class="loop-card-status">${iterText}${scoreText}</div>
+      <button class="btn ghost sm" style="width:100%;margin-top:6px" data-action="open-edge" data-id="${e.id}">⚙ Настроить</button>
+    `;
+    document.getElementById('canvas').appendChild(card);
+  });
 }
 const GROUP_COLORS=['#6c63ff','#19d3c5','#34d399','#fbbf24','#f87171','#a78bfa'];
 function renderGroups(){
@@ -1579,6 +1627,21 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='stop'){ if(abortCtrl) abortCtrl.abort(); }
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
   else if(a==='switch-view') switchView(t.dataset.view);
+  else if(a==='delete-node'){
+    if(!confirm('Удалить агента «'+esc(node(id)?.name||id)+'»?')) return;
+    state.nodes=state.nodes.filter(x=>x.id!==id);
+    state.edges=state.edges.filter(e=>e.from!==id&&e.to!==id);
+    save(); render(); closeDrawer();
+  }
+  else if(a==='toggle-collapse'){
+    const n=node(id); if(n){ n.collapsed=!n.collapsed; save(); renderNodes(); }
+  }
+  else if(a==='open-edge'){
+    const ed=state.edges.find(x=>x.id===id);
+    if(!ed) return;
+    const hitPath=edgesEl.querySelector(`[data-edge="${id}"]`);
+    if(hitPath) hitPath.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  }
   else if(a==='edit-input') openInput(); else if(a==='open-node') openNode(id); else if(a==='run-node') runNode(id);
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
   else if(a==='restore-version'){
