@@ -11,8 +11,8 @@
   <div class="brand"><span class="brand-dot"></span> ИИ-Издательство</div>
   <input id="proj-title" class="title-input" placeholder="Название книги…">
   <span id="style-ref-badge" class="hint-pill" title="Стиль-ориентир задан — агенты пишут в вашем голосе" style="display:none;color:var(--ok)">✍️ стиль</span>
-  <button class="btn primary" data-action="run" id="run-btn" title="Запустить конвейер (все агенты по порядку)">▶ Запустить</button>
-  <button class="btn danger" data-action="stop" id="stop-btn" style="display:none" title="Остановить конвейер">■ Стоп</button>
+  <button class="btn primary" data-action="run" id="run-btn" title="Запустить создание книги (команда агентов по порядку)">▶ Запустить</button>
+  <button class="btn danger" data-action="stop" id="stop-btn" style="display:none" title="Остановить создание">■ Стоп</button>
   <div class="spacer"></div>
   <span class="hint-pill" id="cost-state" title="Суммарная стоимость токенов">Σ $0.00</span>
   <span class="hint-pill" id="api-state" title="Статус API-ключа">● ключ не задан</span>
@@ -83,6 +83,7 @@
     </div>
     <button class="btn primary lg" id="simp-run">▶ Написать книгу</button>
     <button class="btn ghost sm simp-expert" id="simp-to-expert">⚙ Перейти в режим эксперта →</button>
+    <div class="simp-progress" id="simp-progress" style="display:none"></div>
   </div>
 </div>
 <div class="completion-banner" id="completion-banner" style="display:none">
@@ -90,8 +91,9 @@
   <div class="cb-btns">
     <button class="btn danger sm" id="cb-retry" style="display:none">↻ Повторить упавшие</button>
     <button class="btn ok sm" id="cb-read">📖 Читать</button>
-    <button class="btn ghost sm" id="cb-docx">📄 Word</button>
-    <button class="btn ghost sm" id="cb-epub">📗 EPUB</button>
+    <button class="btn ghost sm" id="cb-docx" title="Для Литрес">📄 Word</button>
+    <button class="btn ghost sm" id="cb-epub" title="Для KDP">📗 EPUB</button>
+    <button class="btn ghost sm" id="cb-next" title="Как опубликовать книгу">Что дальше?</button>
     <button class="icon-btn" id="cb-dismiss" title="Закрыть">✕</button>
   </div>
 </div>
