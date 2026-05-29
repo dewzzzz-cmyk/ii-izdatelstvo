@@ -2985,30 +2985,80 @@ function bindProj(sel,key){ const el=$(sel); el.addEventListener('change',()=>{ 
     };
   }
 })();
+// Каталог жанров: код FB2 + название + типичная аудитория + тон для брифа
+const GENRES = [
+  {v:'detective',          l:'Детектив',              aud:'взрослые 25–55',   tone:'напряжённый, с интригой и неожиданной развязкой'},
+  {v:'thriller',           l:'Триллер',               aud:'взрослые',         tone:'динамичный, держит в саспенсе'},
+  {v:'fantasy',            l:'Фэнтези',               aud:'14–35',            tone:'эпичный, образный, с проработанным миром'},
+  {v:'sf',                 l:'Научная фантастика',    aud:'16–45',            tone:'идейный, с технологиями и социальными вопросами'},
+  {v:'love',               l:'Любовный роман',        aud:'женщины 20–45',    tone:'эмоциональный, о чувствах и отношениях'},
+  {v:'prose_contemporary', l:'Современная проза',     aud:'взрослые',         tone:'реалистичный, психологичный'},
+  {v:'horror',             l:'Ужасы',                 aud:'18+',              tone:'тревожный, атмосферный'},
+  {v:'adventure',          l:'Приключения',           aud:'12–40',            tone:'насыщенный действием'},
+  {v:'child_prose',        l:'Детская проза',         aud:'6–12',             tone:'простой, тёплый, поучительный'},
+  {v:'nonfiction',         l:'Нон-фикшн',             aud:'взрослые',         tone:'ясный, структурированный, по делу'},
+  {v:'sci_history',        l:'История',               aud:'взрослые',         tone:'фактологичный, повествовательный'},
+  {v:'humor',              l:'Юмор',                  aud:'взрослые',         tone:'лёгкий, ироничный'},
+];
+const LENGTHS = [
+  {v:'flash',   l:'Рассказ — до 5 000 слов',   words:'до 5 000 слов'},
+  {v:'novella', l:'Повесть — 15–40 тыс. слов', words:'15–40 тыс. слов'},
+  {v:'novel',   l:'Роман — 60–120 тыс. слов',  words:'60–120 тыс. слов'},
+];
+// roles — линейная цепочка; loops — рёбра-перепроверки {from,to} (индексы roles),
+// from = проверяющий агент, to = к кому возвращаем на доработку, base = базовый порог 1–10.
 const PROJECT_TPLS = {
-  solo:{ label:'🤖 Соло-агент', roles:['writer'], genre:'', brief:'Один агент — задаёте промт, получаете результат' },
-  story:{ label:'📖 Рассказ', roles:['scout','writer','logedit','proof'], genre:'Рассказ', brief:'Короткий рассказ до 5000 слов' },
-  nonfic:{ label:'📚 Нон-фикшн', roles:['scout','dev','writer','factcheck','meta'], genre:'Нон-фикшн', brief:'Книга на основе экспертизы автора' },
-  novel:{ label:'✍️ Роман', roles:['scout','dev','writer','logedit','line','proof','continuity','art','layout','meta','mkt'], genre:'Роман', brief:'Полный производственный цикл' },
-  chapters:{ label:'🗂 Роман по главам', roles:['scout','dev','fanout','proof'], genre:'Роман', brief:'Полный роман с параллельной записью глав' },
-  beatsheet:{ label:'🎬 Save The Cat', roles:['scout','beatsheet','writer','proof'], genre:'Роман', brief:'Структура Save The Cat — 15 битов для романа' }
+  solo:{ label:'🤖 Соло-агент', icon:'🤖', roles:['writer'], loops:[], brief:'Один агент — задаёте промт, получаете результат' },
+  story:{ label:'📖 Рассказ', icon:'📖', roles:['scout','writer','logedit','proof'], loops:[], brief:'Короткий рассказ' },
+  nonfic:{ label:'📚 Нон-фикшн', icon:'📚', roles:['scout','dev','writer','factcheck','meta'], loops:[], brief:'Книга на основе экспертизы автора' },
+  novel:{ label:'✍️ Роман', icon:'✍️', roles:['scout','dev','writer','logedit','line','proof','continuity','art','layout','meta','mkt'], loops:[], brief:'Полный производственный цикл' },
+  chapters:{ label:'🗂 Роман по главам', icon:'🗂', roles:['scout','dev','fanout','proof'], loops:[], brief:'Роман с параллельной записью глав' },
+  beatsheet:{ label:'🎬 Save The Cat', icon:'🎬', roles:['scout','beatsheet','writer','proof'], loops:[], brief:'Структура Save The Cat — 15 битов' },
+  // ── Издательские циклы с перепроверкой (петли авто-оценки) ──
+  qualityloop:{ label:'🔁 Редактура до качества', icon:'🔁',
+    roles:['dev','writer','logedit','proof'],
+    loops:[ {from:2,to:1,base:8,name:'Литред → доработка'}, {from:3,to:2,base:9,name:'Корректор → доработка'} ],
+    brief:'Литред и корректор возвращают текст на доработку, пока оценка не достигнет порога' },
+  house:{ label:'🏛 Издательство — полный цикл', icon:'🏛',
+    roles:['scout','dev','writer','continuity','line','proof','factcheck','meta'],
+    loops:[ {from:3,to:2,base:8,name:'Контроль логики → автор'}, {from:4,to:2,base:8,name:'Литред → автор'}, {from:5,to:4,base:9,name:'Корректор → литред'} ],
+    brief:'Производственный цикл как в издательстве: автор → проверки непротиворечивости, литредактуры и корректуры с возвратами на доработку' },
+  nonficcheck:{ label:'📋 Нон-фикшн с фактчеком', icon:'📋',
+    roles:['scout','dev','writer','factcheck','proof'],
+    loops:[ {from:3,to:2,base:8,name:'Фактчек → автор'} ],
+    brief:'Каждый раздел проходит проверку фактов: при ошибках возвращается автору' },
 };
-function applyTemplate(key){
-  // Map template key to agent roles
-  const roleMap = {
-    'solo':  ['writer'],
-    'story': ['dev','writer','proof'],
-    'novel': ['scout','dev','writer','line','proof','continuity','meta','mkt'],
-  };
-  const roles = roleMap[key] || roleMap['story'];
-  const tpls = roles.map(r => TEMPLATES.find(t => t.role === r)).filter(Boolean);
+// Строит граф из шаблона + применяет настройки (жанр/аудитория/объём/строгость).
+// opts: {genreCode, audience, lengthWords, strictness(0..2), title, brief}
+function buildTemplate(key, opts={}){
+  const t = PROJECT_TPLS[key]; if(!t) return;
+  const tpls = t.roles.map(r => TEMPLATES.find(x => x.role === r)).filter(Boolean);
   if(!tpls.length) return;
-  state.nodes = tpls.map((tp,i) => freshNode(tp, 60+(i%3)*260, 40+Math.floor(i/3)*190));
+  // Узлы — раскладка с запасом по вертикали (чтобы петли были видны)
+  state.nodes = tpls.map((tp,i)=>freshNode(tp, 60+(i%3)*260, 40+Math.floor(i/3)*210));
   state.edges = [];
-  for(let i=0; i<state.nodes.length-1; i++)
-    state.edges.push({id:uid(), from:state.nodes[i].id, to:state.nodes[i+1].id, condition:'',maxRetries:0,_retryCount:0});
+  // Линейная цепочка
+  for(let i=0;i<state.nodes.length-1;i++)
+    state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0,isLoop:false,autoEval:false,evalThreshold:7,_autoScore:null});
+  // Петли перепроверки: from(проверяющий) → to(на доработку), авто-оценка
+  const strictDelta = (opts.strictness===2?1 : opts.strictness===0?-1 : 0); // строже/мягче порог
+  (t.loops||[]).forEach(lp=>{
+    const from=state.nodes[lp.from], to=state.nodes[lp.to];
+    if(!from||!to) return;
+    const thr=Math.max(5,Math.min(10,(lp.base||8)+strictDelta));
+    state.edges.push({id:uid(),from:from.id,to:to.id,condition:'',maxRetries:opts.strictness===2?6:4,_retryCount:0,
+      isLoop:true,autoEval:true,evalThreshold:thr,_autoScore:null});
+  });
+  // Применяем настройки проекта
+  const g = GENRES.find(x=>x.v===opts.genreCode);
+  if(g){ state.project.genre=g.l; state.project.fb2genre=g.v; }
+  if(opts.audience) state.project.audience=opts.audience;
+  if(opts.title) state.project.title=opts.title;
+  const lenTxt = (LENGTHS.find(x=>x.v===opts.lengthWords)||{}).words || '';
+  state.project.brief = opts.brief || [t.brief, g?('жанр: '+g.l+', тон '+g.tone):'', lenTxt?('объём: '+lenTxt):''].filter(Boolean).join('. ');
   save(); render();
 }
+function applyTemplate(key){ buildTemplate(key, {}); } // для режима «Просто» — без диалога
 
 let _simpTpl = 'story';
 function initSimplifiedMode(){
@@ -3104,19 +3154,64 @@ function renderSimpleProgress(){
 
 function openTemplates(){
   openDrawer('🗂 Шаблоны проекта',`
-    <p class="hint" style="margin-top:0">Выберите стартовый пакет. Текущий холст будет заменён.</p>
-    ${Object.entries(PROJECT_TPLS).map(([k,t])=>`
-      <div style="margin-bottom:12px"><button class="btn ghost" style="width:100%;text-align:left;padding:12px 14px" data-tpl="${k}">
-        <strong>${t.label}</strong><br><span style="color:var(--dim);font-size:12px">${t.roles.map(r=>TEMPLATES.find(x=>x.role===r)?.name).filter(Boolean).join(' → ')}</span>
-      </button></div>`).join('')}`,
-  b=>{ b.querySelectorAll('[data-tpl]').forEach(btn=>btn.onclick=()=>{
-    const t=PROJECT_TPLS[btn.dataset.tpl]; if(!t) return;
-    const tpls=t.roles.map(r=>TEMPLATES.find(x=>x.role===r)).filter(Boolean);
-    state.nodes=tpls.map((tp,i)=>freshNode(tp,60+(i%3)*260,40+Math.floor(i/3)*190));
-    state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
-    state.project.genre=t.genre; state.project.brief=t.brief;
-    save(); render(); closeDrawer(); toast(t.label+' — команда агентов готова','ok');
-  }); });
+    <p class="hint" style="margin-top:0">Выберите стартовый пакет агентов. Шаблоны с 🔁 содержат циклы перепроверки — редактор возвращает текст на доработку, пока авто-оценка не достигнет порога.</p>
+    ${Object.entries(PROJECT_TPLS).map(([k,t])=>{
+      const chain=t.roles.map(r=>TEMPLATES.find(x=>x.role===r)?.name).filter(Boolean).join(' → ');
+      const loopBadge=(t.loops&&t.loops.length)?`<span class="tpl-loop-badge">🔁 ${t.loops.length} ${t.loops.length===1?'проверка':'проверки'}</span>`:'';
+      return `<div class="tpl-card" data-tpl="${k}">
+        <div class="tpl-card-head"><strong>${t.label}</strong>${loopBadge}</div>
+        <div class="tpl-card-desc">${esc(t.brief||'')}</div>
+        <div class="tpl-card-chain">${chain}</div>
+      </div>`;
+    }).join('')}`,
+  b=>{ b.querySelectorAll('[data-tpl]').forEach(card=>card.onclick=()=>openTemplateSetup(card.dataset.tpl)); });
+}
+// Шаг 2: настройка жанра/аудитории/объёма/строгости перед созданием
+function openTemplateSetup(key){
+  const t=PROJECT_TPLS[key]; if(!t) return;
+  const hasLoops=t.loops&&t.loops.length;
+  openDrawer('⚙ Настройка: '+t.label,`
+    <div class="field"><label>Название книги</label><input id="ts-title" value="${esc(state.project.title||'')}" placeholder="Можно заполнить позже"></div>
+    <div class="field"><label>Жанр</label><select id="ts-genre">
+      <option value="">— не выбран —</option>
+      ${GENRES.map(g=>`<option value="${g.v}"${state.project.fb2genre===g.v?' selected':''}>${g.l}</option>`).join('')}
+    </select></div>
+    <div class="row2">
+      <div class="field"><label>Аудитория</label><input id="ts-aud" value="${esc(state.project.audience||'')}" placeholder="подставится из жанра"></div>
+      <div class="field"><label>Объём</label><select id="ts-len">
+        ${LENGTHS.map(x=>`<option value="${x.v}">${x.l}</option>`).join('')}
+      </select></div>
+    </div>
+    ${hasLoops?`<div class="field"><label>Строгость проверок</label>
+      <select id="ts-strict">
+        <option value="0">Мягкая — порог ниже, меньше повторов (дешевле)</option>
+        <option value="1" selected>Обычная — как в издательстве</option>
+        <option value="2">Строгая — высокий порог, больше итераций (дороже)</option>
+      </select>
+      <div class="hint">Циклы: ${t.loops.map(l=>esc(l.name)).join(' · ')}. Каждая итерация — доп. вызовы LLM (автор + оценка).</div></div>`:''}
+    <div class="field"><label>Бриф (о чём книга) — необязательно</label>
+      <textarea id="ts-brief" rows="3" placeholder="Если оставить пустым — соберём из жанра и шаблона">${esc(state.project.brief||'')}</textarea></div>
+    <div class="hint" style="color:var(--warn)">⚠ Текущий холст будет заменён.</div>
+    <div class="actions">
+      <button class="btn ok" id="ts-create">Создать команду агентов</button>
+      <button class="btn ghost" id="ts-back">← Назад</button>
+    </div>`,
+  b=>{
+    const gsel=b.querySelector('#ts-genre'), aud=b.querySelector('#ts-aud');
+    gsel.onchange=()=>{ const g=GENRES.find(x=>x.v===gsel.value); if(g && !aud.value.trim()) aud.value=g.aud; };
+    b.querySelector('#ts-back').onclick=openTemplates;
+    b.querySelector('#ts-create').onclick=()=>{
+      buildTemplate(key,{
+        title:b.querySelector('#ts-title').value.trim(),
+        genreCode:gsel.value,
+        audience:aud.value.trim(),
+        lengthWords:b.querySelector('#ts-len').value,
+        strictness:hasLoops?parseInt(b.querySelector('#ts-strict').value):1,
+        brief:b.querySelector('#ts-brief').value.trim()
+      });
+      closeDrawer(); toast(t.label+' — команда готова'+(hasLoops?' (с циклами перепроверки)':''),'ok');
+    };
+  });
 }
 function autoLayout(){ state.nodes.forEach((n,i)=>{ n.x=60+(i%3)*250; n.y=40+Math.floor(i/3)*180; });
   state.edges=[]; for(let i=0;i<state.nodes.length-1;i++) state.edges.push({id:uid(),from:state.nodes[i].id,to:state.nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0}); save(); render(); toast('Схема выстроена в цепочку'); }
