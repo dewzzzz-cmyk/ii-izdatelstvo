@@ -2004,6 +2004,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   if(a==='run'){ isPaused()?runPipeline(true):runPipeline(false); }
   else if(a==='stop'){ if(abortCtrl) abortCtrl.abort(); }
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
+  else if(a==='text-analysis') openTextAnalysis();
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='delete-node'){
     const del=node(id); if(!del) return;
@@ -2235,6 +2236,171 @@ function openEntities(){
       b.querySelectorAll('[data-ent]').forEach(r=>r.style.display=r.textContent.toLowerCase().includes(q)?'':'none');
     };
   });
+}
+
+/* ============ АНАЛИЗ ТЕКСТА (локально, без LLM) ============ */
+// Курируемый словарь RU-штампов / канцелярита / слов-паразитов
+const TA_CLICHE=['внезапно','казалось','по-прежнему','стоит отметить','играет важную роль','следует отметить','на самом деле','тем не менее','в конце концов','так или иначе','как известно','не что иное как','имеет место','в значительной степени'];
+// Глаголы атрибуции (речи)
+const TA_SPEECH=['сказал','сказала','сказали','спросил','спросила','ответил','ответила','произнёс','произнес','произнесла','воскликнул','воскликнула','проговорил','проговорила','буркнул','буркнула','прошептал','прошептала','крикнул','крикнула','пробормотал','пробормотала','промолвил','добавил','добавила'];
+// Формы глагола «быть/являться»
+const TA_BE=['был','была','было','были','есть','быть','будет','будут','буду','будем','будешь','является','являются','являлся','являлась','являлись','суть'];
+
+function taSentences(text){ return (text||'').split(/[.!?…]+/).map(s=>s.trim()).filter(s=>s.length>1); }
+function taSyllables(text){ return ((text||'').toLowerCase().match(/[аеёиоуыэюя]/g)||[]).length; }
+function taHash(str){ let h=5381; for(let i=0;i<str.length;i++){ h=((h<<5)+h)+str.charCodeAt(i); h|=0; } return h>>>0; }
+
+function openTextAnalysis(){
+  const nodes=state.nodes.filter(n=>n.output);
+  const text=nodes.map(n=>n.output).join('\n\n');
+  if(!text.trim()){
+    openDrawer('📊 Анализ текста','<div class="hint" style="color:var(--faint);margin-top:0">Запустите конвейер — анализ строится по результатам агентов. Все метрики считаются локально, без обращения к LLM.</div>');
+    return;
+  }
+  const tokens=tokensOf(text);
+  const wordCount=tokens.length;
+  const sents=taSentences(text);
+
+  /* ── #9 Повторы / штампы / паразиты ── */
+  const freq={};
+  tokens.forEach(t=>{ const s=stem(t); if(s.length>2 && !STOP_RU.has(s)){ freq[s]=(freq[s]||0)+1; } });
+  const top=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,20)
+    .map(([w,c])=>({w,c,per1k: wordCount? c*1000/wordCount : 0}));
+  const chipsHtml=top.map(t=>`<span class="ta-chip${t.per1k>5?' ta-warn':''}" title="${t.c}× всего, ${t.per1k.toFixed(1)} на 1000 слов">${esc(t.w)} <b>${t.per1k.toFixed(1)}</b>/1k</span>`).join('');
+
+  // Биграммы-повторы: одно знаменательное слово в окне ±3 предложений
+  const sentStems=sents.map(s=>{ const set=new Set(); (tokensOf(s)).forEach(t=>{ const st=stem(t); if(st.length>3 && !STOP_RU.has(st)) set.add(st); }); return set; });
+  const nearRepeats=[];
+  for(let i=0;i<sents.length;i++){
+    for(let j=i+1;j<=Math.min(i+3,sents.length-1);j++){
+      for(const st of sentStems[i]){
+        if(sentStems[j].has(st)){
+          nearRepeats.push({word:st, a:sents[i], b:sents[j], dist:j-i});
+        }
+      }
+    }
+  }
+  // оставим только уникальные по слову, не более 15
+  const seenRep=new Set();
+  const repList=nearRepeats.filter(r=>{ if(seenRep.has(r.word)) return false; seenRep.add(r.word); return true; }).slice(0,15);
+  const repHtml=repList.length? repList.map(r=>`<div class="ta-bar"><b style="color:var(--warn)">«${esc(r.word)}»</b> <span style="color:var(--faint)">(через ${r.dist} предл.)</span><br><span style="color:var(--dim);font-size:11px">…${esc(r.a.slice(0,80))}… ↔ …${esc(r.b.slice(0,80))}…</span></div>`).join('')
+    : '<div class="ta-bar" style="color:var(--faint)">Близких повторов знаменательных слов не найдено.</div>';
+
+  // Штампы / канцелярит
+  const lowText=text.toLowerCase().replace(/ё/g,'е');
+  const cliche=TA_CLICHE.map(c=>{ const re=new RegExp(c.replace(/ё/g,'е').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'); const m=lowText.match(re); return {c, n: m?m.length:0}; }).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  const clicheHtml=cliche.length? cliche.map(x=>`<span class="ta-chip${x.n>3?' ta-warn':''}">${esc(x.c)} <b>${x.n}×</b></span>`).join('')
+    : '<span style="color:var(--faint);font-size:12px">Штампов из словаря не обнаружено.</span>';
+
+  /* ── #10 Читаемость (рус. Флеш, формула Оборневой) ── */
+  const nSent=Math.max(1,sents.length);
+  const syl=taSyllables(text);
+  const avgLen=wordCount/nSent;
+  const sylPerWord=wordCount? syl/wordCount : 0;
+  const flesch=206.835 - 1.3*avgLen - 60.1*sylPerWord;
+  let fleschLabel, fleschCls;
+  if(flesch>80){ fleschLabel='легко (нач. школа)'; fleschCls='ok'; }
+  else if(flesch>60){ fleschLabel='средне (подросток)'; fleschCls='ok'; }
+  else if(flesch>30){ fleschLabel='сложно (вуз)'; fleschCls='warn'; }
+  else { fleschLabel='очень сложно'; fleschCls='warn'; }
+
+  /* ── #13 Дубли между главами (шинглинг 6-грамм, Jaccard) ── */
+  const shingleSets=nodes.map(n=>{
+    const toks=tokensOf(n.output);
+    const set=new Set();
+    for(let i=0;i+6<=toks.length;i++){ set.add(taHash(toks.slice(i,i+6).join(' '))); }
+    return set;
+  });
+  const dupPairs=[];
+  for(let i=0;i<nodes.length;i++){
+    for(let j=i+1;j<nodes.length;j++){
+      const A=shingleSets[i],B=shingleSets[j];
+      if(!A.size||!B.size) continue;
+      let inter=0; A.forEach(h=>{ if(B.has(h)) inter++; });
+      const jac=inter/(A.size+B.size-inter);
+      if(jac>0.15){
+        // найдём пример дублирующегося пассажа
+        const toksA=tokensOf(nodes[i].output); let sample='';
+        for(let k=0;k+6<=toksA.length;k++){ if(B.has(taHash(toksA.slice(k,k+6).join(' ')))){ sample=toksA.slice(k,k+12).join(' '); break; } }
+        dupPairs.push({a:nodes[i].name,b:nodes[j].name,jac,inter,sample});
+      }
+    }
+  }
+  const dupHtml=dupPairs.length? dupPairs.map(d=>`<div class="ta-bar ta-warn"><b>${esc(d.a)}</b> ↔ <b>${esc(d.b)}</b>: ${d.inter} похожих фрагментов (Jaccard ${(d.jac*100).toFixed(0)}%)<br><span style="color:var(--dim);font-size:11px">пример: «…${esc(d.sample)}…»</span></div>`).join('')
+    : '<div class="ta-bar" style="color:var(--faint)">Значимых дублей между главами (>15% пересечения) не найдено.</div>';
+
+  /* ── #14 Диалог / нарратив + глаголы речи ── */
+  const paras=text.split(/\n{1,}/).map(p=>p.trim()).filter(Boolean);
+  const dialogParas=paras.filter(p=>/^[—«]/.test(p)).length;
+  const dialogPct=paras.length? dialogParas*100/paras.length : 0;
+  const beCount=tokens.filter(t=>TA_BE.includes(t.toLowerCase())).length;
+  const bePct=wordCount? beCount*100/wordCount : 0;
+  // пассив: краткие причастия на -н/-нн + причастия -нн-/-енн-
+  const passiveCount=(lowText.match(/[а-я]+[ео]?нн?(ый|ая|ое|ые|ого|ому|ыми|ом|а|о|ы)?\b/g)||[]).length;
+  // глаголы атрибуции
+  const speechFreq={};
+  tokens.forEach(t=>{ const lt=t.toLowerCase(); if(TA_SPEECH.includes(lt)) speechFreq[lt]=(speechFreq[lt]||0)+1; });
+  const speechTotal=Object.values(speechFreq).reduce((a,b)=>a+b,0);
+  const speechSorted=Object.entries(speechFreq).sort((a,b)=>b[1]-a[1]);
+  const domSpeech=speechSorted[0];
+  const domPct=domSpeech&&speechTotal? domSpeech[1]*100/speechTotal : 0;
+  const speechChips=speechSorted.slice(0,12).map(([w,c])=>{ const p=speechTotal? c*100/speechTotal:0; return `<span class="ta-chip${p>40?' ta-warn':''}">${esc(w)} <b>${c}×</b> (${p.toFixed(0)}%)</span>`; }).join('') || '<span style="color:var(--faint);font-size:12px">Глаголов атрибуции не найдено.</span>';
+  const dialogBadge=`диалогов ${dialogPct.toFixed(0)}%`+(domSpeech?`, доминирует: ${esc(domSpeech[0])} (${domPct.toFixed(0)}%)`:'');
+
+  /* ── #15 Ритм предложений ── */
+  const lens=sents.map(s=>(tokensOf(s)).length).filter(l=>l>0);
+  const blocks='▁▂▃▄▅▆▇█';
+  const maxLen=Math.max(1,...lens);
+  const spark=lens.map(l=>blocks[Math.min(blocks.length-1,Math.round((l/maxLen)*(blocks.length-1)))]).join('');
+  // серии 3+ одинаковой длины (±1) и монстры >40
+  let monotony=0;
+  for(let i=0;i+2<lens.length;i++){ if(Math.abs(lens[i]-lens[i+1])<=1 && Math.abs(lens[i+1]-lens[i+2])<=1) monotony++; }
+  const monsters=lens.filter(l=>l>40).length;
+  const avgRhythm=lens.length? lens.reduce((a,b)=>a+b,0)/lens.length : 0;
+
+  const html=`
+    <p class="hint" style="margin-top:0">Локальный анализ ${nodes.length} глав(ы), ${wordCount.toLocaleString('ru')} слов, ${sents.length} предложений. Все метрики считаются в браузере, без обращения к LLM.</p>
+
+    <div class="ta-section">
+      <h3>🔁 #9 Повторы, штампы, паразиты</h3>
+      <p class="ta-note">Топ-20 знаменательных слов (частота на 1000 слов). <span class="ta-warn-text">Красным</span> — больше 5 на 1000.</p>
+      <div class="ta-chips">${chipsHtml}</div>
+      <h4 class="ta-h4">Близкие повторы (одно слово в окне ±3 предложений)</h4>
+      ${repHtml}
+      <h4 class="ta-h4">Штампы и канцелярит</h4>
+      <div class="ta-chips">${clicheHtml}</div>
+    </div>
+
+    <div class="ta-section">
+      <h3>📖 #10 Читаемость (рус. Флеш, ф-ла Оборневой)</h3>
+      <p class="ta-note">Индекс = 206.835 − 1.3×(слов/предл.) − 60.1×(слогов/слово). Чем выше — тем легче читать.</p>
+      <div class="ta-bar">Ср. длина предложения: <b>${avgLen.toFixed(1)}</b> слов · Слогов/слово: <b>${sylPerWord.toFixed(2)}</b></div>
+      <div class="ta-bar">Индекс читаемости: <b style="color:var(--${fleschCls})">${flesch.toFixed(0)}</b> — ${fleschLabel}</div>
+    </div>
+
+    <div class="ta-section">
+      <h3>🧬 #13 Дубли между главами (самоплагиат)</h3>
+      <p class="ta-note">Шинглинг по 6-граммам слов, пары глав с пересечением (Jaccard) выше 15%.</p>
+      ${dupHtml}
+    </div>
+
+    <div class="ta-section">
+      <h3>💬 #14 Диалог / нарратив + глаголы речи</h3>
+      <p class="ta-note">Доля абзацев-диалогов, насыщенность «быть/являться» и пассивом, баланс глаголов атрибуции.</p>
+      <div class="ta-badge">${dialogBadge}</div>
+      <div class="ta-bar">Абзацев-диалогов: <b>${dialogPct.toFixed(0)}%</b> · «быть/являться»: <b>${bePct.toFixed(1)}%</b> слов · пассив (≈): <b>${passiveCount}</b></div>
+      <h4 class="ta-h4">Глаголы атрибуции (всего ${speechTotal})</h4>
+      <div class="ta-chips">${speechChips}</div>
+    </div>
+
+    <div class="ta-section">
+      <h3>🎵 #15 Ритм предложений</h3>
+      <p class="ta-note">Длины предложений (в словах) как спарклайн. Ищем монотонность (серии ±1 слово) и «монстров» (>40 слов).</p>
+      <div class="ta-spark">${spark||'—'}</div>
+      <div class="ta-bar">Ср. длина: <b>${avgRhythm.toFixed(1)}</b> слов · монотонных серий (3+): <b class="${monotony>0?'ta-warn-text':''}">${monotony}</b> · предложений-монстров (>40): <b class="${monsters>0?'ta-warn-text':''}">${monsters}</b></div>
+    </div>
+  `;
+  openDrawer('📊 Анализ текста',html);
 }
 
 /* ============ ГАЙД ============ */
