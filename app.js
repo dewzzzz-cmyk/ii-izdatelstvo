@@ -1021,9 +1021,21 @@ function render(){
 /* ============ ЛЕВАЯ КОЛОНКА «КАБИНЕТ АВТОРА» ============
    Структура книги (главы/агенты) + навигация. Чисто аддитивно:
    зовёт существующие функции open... и switchView. Не падает на пустом проекте. */
+// Метка активного стиля (микс из библиотеки или одиночный паспорт) — чтобы стиль не применялся «молча»
+function activeStyleLabel(){
+  const pr=state.project||{}; const lib=state.styleLibrary||[];
+  if(pr.styleMix && pr.styleMix.length){
+    const names=pr.styleMix.map(m=>{ const s=lib.find(x=>x.id===m.id); return s?s.name:null; }).filter(Boolean);
+    if(names.length) return names.join(' + ');
+  }
+  if(pr.stylePassport && pr.stylePassport.trim()) return pr.styleSourceName||'свой стиль';
+  if(pr.styleRef && pr.styleRef.trim()) return 'образец автора';
+  return '';
+}
 function renderLeftRail(){
   const rail=$('#lr-body'); if(!rail) return;
   const pr=state.project||{};
+  const styleLbl=activeStyleLabel();
   const chapters=(typeof bookNodes==='function')?bookNodes():[];
   const STAT={done:'✓',error:'❌',running:'⏳',review:'⏳',variants:'⏳',skip:'•',idle:'•'};
   const SCLS={done:'s-done',error:'s-error',running:'s-running',review:'s-running',variants:'s-running'};
@@ -1049,12 +1061,14 @@ function renderLeftRail(){
     <div class="lr-head">
       <div class="lr-title">📖 ${esc(pr.title||'Без названия')}</div>
       ${chapters.length?`<div class="lr-sub">${chapters.length} ${chapters.length===1?'глава':'глав'}</div>`:''}
+      ${styleLbl?`<div class="lr-style-badge" data-action="style-school" title="Активный стиль письма подмешивается во всех агентов. Нажмите чтобы изменить/снять.">✍️ Стиль: ${esc(styleLbl)} <span class="lr-style-x" data-action="clear-style" title="Снять стиль">✕</span></div>`:''}
     </div>
     <div class="lr-chapters">
       <div class="lr-sec-label">Структура книги</div>
       ${chapHtml}
     </div>
     <div class="lr-nav">
+      <button class="lr-nav-btn lr-nav-new" data-action="new-book"><span class="lr-nav-ic">➕</span> Новая книга</button>
       <button class="lr-nav-btn" data-action="book-library"><span class="lr-nav-ic">📚</span> Мои книги</button>
       <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
       <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
@@ -3389,6 +3403,11 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='run-from'){ closeDrawer(); runFromNode(id); }
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
   else if(a==='book-library') openBookLibrary();
+  else if(a==='new-book'){ if(typeof newBook==='function') newBook(); }
+  else if(a==='clear-style'){
+    state.project.styleMix=[]; state.project.stylePassport=''; state.project.engagementPatterns=''; state.project.styleSourceName='';
+    save(); render(); toast('Стиль снят — агенты пишут обычным голосом','ok');
+  }
   else if(a==='restore-version'){
     const nodeId = t.dataset.node;
     const verIdx = parseInt(t.dataset.ver);

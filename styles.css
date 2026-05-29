@@ -1119,3 +1119,13 @@ body[data-view="reader"] .book-inspector{
 .att-apply{background:var(--warn);color:#1a1305;border:none;border-radius:8px;
   padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
 .att-apply:hover{filter:brightness(1.08)}
+
+/* ── Бейдж активного стиля + кнопка «Новая книга» в левой колонке ── */
+.lr-style-badge{margin-top:7px;font-size:11px;color:#a5b4fc;background:rgba(79,70,229,.14);
+  border:1px solid #4f46e5;border-radius:8px;padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:6px;line-height:1.3}
+.lr-style-badge:hover{background:rgba(79,70,229,.22)}
+.lr-style-x{margin-left:auto;color:#818cf8;font-size:12px;padding:0 2px;border-radius:4px}
+.lr-style-x:hover{color:#fff;background:#4f46e5}
+.lr-nav-new{background:linear-gradient(135deg,#7c6cff,#5247e6)!important;color:#fff!important;border-color:#5247e6!important;font-weight:700}
+.lr-nav-new:hover{filter:brightness(1.08)}
+.lr-nav-new .lr-nav-ic{color:#fff}
