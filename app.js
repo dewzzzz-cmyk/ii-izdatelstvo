@@ -328,6 +328,15 @@ async function callLLM(c, messages){
   if(!r.ok) throw new Error(await r.text());
   return await r.text();
 }
+async function runAutoEval(output, n){
+  const c=cfg(n);
+  const resp=await callLLM(c,[
+    {role:'system',content:'Ты — строгий редактор. Оцени текст по критериям: логическая связность, соответствие брифу, качество нарратива, отсутствие противоречий. Ответь ТОЛЬКО одним целым числом от 1 до 10. Никаких пояснений.'},
+    {role:'user',content:`Проект: «${state.project.title||'без названия'}»\nБриф: ${state.project.brief||'не задан'}\n\nТекст:\n${smartTrunc(output||'',3000)}`}
+  ]);
+  const num=parseInt((resp||'').match(/\d+/)?.[0]||'0');
+  return Math.min(10,Math.max(1,num||5));
+}
 async function autoBibleUpdate(output, role){
   if(!['writer','logedit','line'].includes(role)) return;
   if(!output || output.length < 200) return;
@@ -663,10 +672,20 @@ window.addEventListener('mouseup',e=>{
   if(wire){ const tgt=document.elementFromPoint(e.clientX,e.clientY); const ip=tgt&&tgt.closest&&tgt.closest('.port.in');
     if(ip) addEdge(wire.from,ip.dataset.id); wire=null; const t=edgesEl.querySelector('.edge-temp'); if(t)t.remove(); renderEdges(); }
 });
-function addEdge(from,to){ if(from===to) return toast('Нельзя соединить агента с собой','err');
+function addEdge(from,to){
+  if(from===to) return toast('Нельзя соединить агента с собой','err');
   if(state.edges.some(x=>x.from===from&&x.to===to)) return;
-  if(wouldCycle(from,to)) return toast('Связь создаёт петлю — отклонено','err');
-  state.edges.push({id:uid(),from,to,condition:'',maxRetries:0,_retryCount:0}); save(); renderEdges(); }
+  if(wouldCycle(from,to)){
+    // Backward edge → create as loop edge
+    state.edges.push({id:uid(),from,to,condition:'',maxRetries:5,_retryCount:0,
+      isLoop:true,autoEval:false,evalThreshold:7,_autoScore:null});
+    toast('🔁 Петля создана — настройте условие выхода','ok');
+  } else {
+    state.edges.push({id:uid(),from,to,condition:'',maxRetries:0,_retryCount:0,
+      isLoop:false,autoEval:false,evalThreshold:7,_autoScore:null});
+  }
+  save(); renderEdges();
+}
 function wouldCycle(from,to){ const seen=new Set(),st=[to]; while(st.length){ const c=st.pop(); if(c===from) return true; if(seen.has(c)) continue; seen.add(c); state.edges.filter(e=>e.from===c).forEach(e=>st.push(e.to)); } return false; }
 edgesEl.addEventListener('click',e=>{
   const tog=e.target.closest('[data-toggle]'); if(tog){ const g=(state.groups||[]).find(x=>x.id===tog.dataset.toggle); if(g){ g.collapsed=!g.collapsed; save(); render(); return; } }
@@ -674,25 +693,66 @@ edgesEl.addEventListener('click',e=>{
   const p=e.target.closest('[data-edge]'); if(!p) return;
   const ed=state.edges.find(x=>x.id===p.dataset.edge); if(!ed) return;
   const src=node(ed.from); const dst=node(ed.to);
-  openDrawer('⚡ Связь: '+esc((src?.name||'?')+' → '+(dst?.name||'?')),`
-    <div class="field"><label>Условие (JS)</label>
-      <textarea id="ec-cond" rows="3" placeholder="Оставьте пустым — всегда активна&#10;Пример: output.includes('отклонить')">${esc(ed.condition||'')}</textarea>
-      <div class="hint">Переменная <code>output</code> — текст вывода агента-источника. При <code>false</code> этот путь пропускается.</div></div>
-    <div class="field"><label>Повторы при fail</label>
-      <div style="display:flex;align-items:center;gap:8px">
-        <input type="number" min="0" max="5" id="ec-retries" value="${ed.maxRetries||0}" style="width:60px">
-        <span style="font-size:11px;color:var(--dim)">перезапусков источника (0 = нет). Работает только при заданном условии.</span>
-      </div>
+  openDrawer('⚡ Связь: '+esc((src?.name||'?')+' → '+(dst?.name||'?')),
+`<div class="field"><label>Условие выхода (JS)</label>
+  <textarea id="ec-cond" rows="3" placeholder="output.includes('PASS')&#10;Оставьте пустым — выходить только по авто-оценке">${esc(ed.condition||'')}</textarea>
+  <div class="hint">Переменная <code>output</code> — текст вывода. <code>true</code> = выйти из петли, <code>false</code> = повторить.</div>
+</div>
+${ed.isLoop?`
+<div class="section-label" style="margin-top:12px">⚙ Настройки петли</div>
+<div class="row2">
+  <div class="field"><label>Макс. итераций</label>
+    <input type="number" min="1" max="20" id="ec-retries" value="${ed.maxRetries||5}" style="width:80px">
+  </div>
+  <div class="field"><label>Возврат к</label>
+    <span style="font-size:12px;color:var(--txt2)">${esc(node(ed.to)?.name||'?')}</span>
+  </div>
+</div>
+<label class="check" style="margin:8px 0"><input type="checkbox" id="ec-autoeval" ${ed.autoEval?'checked':''}> Авто-оценка LLM (проверяет качество после каждой итерации)</label>
+<div id="ec-thresh-wrap" style="${ed.autoEval?'':'display:none'}">
+  <div class="field"><label>Порог выхода (1–10)</label>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" min="1" max="10" id="ec-thresh" value="${ed.evalThreshold||7}" style="width:60px">
+      <span style="font-size:11px;color:var(--dim)">Цикл прекращается когда оценка ≥ порога</span>
     </div>
-    <div class="actions">
-      <button class="btn ok" id="ec-save">Сохранить</button>
-      <button class="btn ghost" id="ec-test">▶ Тест</button>
-      <button class="btn danger" id="ec-del">🗑 Удалить связь</button>
-    </div>`,
+  </div>
+</div>
+${ed._autoScore!=null?`<div style="font-size:11px;color:var(--accent);margin-top:4px">Последняя оценка: ${ed._autoScore}/10</div>`:''}
+`:`
+<div class="field"><label>Повторы при fail</label>
+  <div style="display:flex;align-items:center;gap:8px">
+    <input type="number" min="0" max="10" id="ec-retries" value="${ed.maxRetries||0}" style="width:60px">
+    <span style="font-size:11px;color:var(--dim)">перезапусков источника (0 = нет)</span>
+  </div>
+</div>`}
+<div class="actions" style="margin-top:12px">
+  <button class="btn ok" id="ec-save">Сохранить</button>
+  <button class="btn ghost" id="ec-test">▶ Тест условия</button>
+  <button class="btn danger" id="ec-del">🗑 Удалить связь</button>
+</div>`,
   b=>{
-    b.querySelector('#ec-save').onclick=()=>{ ed.condition=b.querySelector('#ec-cond').value.trim(); ed.maxRetries=parseInt(b.querySelector('#ec-retries')?.value)||0; save(); renderEdges(); closeDrawer(); toast('Условие сохранено','ok'); };
-    b.querySelector('#ec-test').onclick=()=>{ const cond=b.querySelector('#ec-cond').value.trim(); const r=evalCondition(cond,src?.output); toast(cond?(r?'✅ true — ребро активно':'❌ false — ребро пропущено'):'(пусто) → всегда активно',r?'ok':'err'); };
-    b.querySelector('#ec-del').onclick=()=>{ state.edges=state.edges.filter(x=>x.id!==ed.id); save(); renderEdges(); closeDrawer(); toast('Связь удалена'); };
+    // Toggle auto-eval threshold visibility
+    const autoCb=b.querySelector('#ec-autoeval');
+    const threshWrap=b.querySelector('#ec-thresh-wrap');
+    if(autoCb) autoCb.onchange=()=>{ if(threshWrap) threshWrap.style.display=autoCb.checked?'':'none'; };
+    b.querySelector('#ec-save').onclick=()=>{
+      ed.condition=b.querySelector('#ec-cond').value.trim();
+      ed.maxRetries=parseInt(b.querySelector('#ec-retries')?.value)||0;
+      if(ed.isLoop){
+        ed.autoEval=b.querySelector('#ec-autoeval')?.checked||false;
+        ed.evalThreshold=parseInt(b.querySelector('#ec-thresh')?.value)||7;
+      }
+      save(); renderEdges(); closeDrawer(); toast('Настройки петли сохранены','ok');
+    };
+    b.querySelector('#ec-test').onclick=()=>{
+      const cond=b.querySelector('#ec-cond').value.trim();
+      const r=evalCondition(cond,src?.output);
+      toast(cond?(r?'✅ true — выходим из петли':'🔁 false — повторяем'):'(пусто) → только по авто-оценке',r?'ok':'');
+    };
+    b.querySelector('#ec-del').onclick=()=>{
+      state.edges=state.edges.filter(x=>x.id!==ed.id);
+      save(); renderEdges(); closeDrawer(); toast('Связь удалена');
+    };
   });
 });
 
@@ -840,6 +900,16 @@ async function runNode(id){
         if(n.outputVersions.length > 5) n.outputVersions = n.outputVersions.slice(0, 5);
       }
       save(); renderNodes(); renderEdges();
+      // Auto-eval for outgoing loop edges
+      const loopEdges=state.edges.filter(e=>e.from===n.id && e.isLoop && e.autoEval);
+      for(const le of loopEdges){
+        try{
+          const score=await runAutoEval(n.output, n);
+          le._autoScore=score;
+          logRow(n.name,'ok',`авто-оценка: ${score}/10`);
+          save();
+        }catch(err){ console.warn('auto-eval failed',err); }
+      }
       // Auto-bible update (non-blocking, fire-and-forget)
       autoBibleUpdate(n.output, TEMPLATES.find(t=>t.name===n.name)?.role || '').catch(()=>{});
       return true;
@@ -869,15 +939,27 @@ function runnableNodes(){
     // Все predecessors должны завершиться (done/error/skip)
     const allDone=inEdges.map(e=>node(e.from)).filter(Boolean).every(d=>d.status==='done'||d.status==='error'||d.status==='skip');
     if(!allDone) return false;
-    // Если есть условные рёбра — хотя бы одно должно быть активным
-    const hasConditions=inEdges.some(e=>e.condition&&e.condition.trim());
+    // Если есть условные рёбра или петли — проверяем выход/повтор
+    const hasConditions=inEdges.some(e=>(e.condition&&e.condition.trim())||e.isLoop);
     if(!hasConditions) return true;
-    const anyActive=inEdges.some(e=>evalCondition(e.condition, node(e.from)?.output));
+    // Для каждого ребра вычисляем, является ли оно «активным» (разрешает выполнение downstream)
+    const edgeActive=(e)=>{
+      const output=node(e.from)?.output;
+      if(e.isLoop){
+        // Loop edge: active (exit loop) when js-condition passes, OR auto-eval score passes, OR neither condition set
+        const jsPass=e.condition&&e.condition.trim() ? evalCondition(e.condition,output) : false;
+        const evalPass=e.autoEval && e._autoScore!=null && e._autoScore>=(e.evalThreshold||7);
+        const noCondition=!e.condition&&!e.autoEval;
+        return jsPass||evalPass||noCondition;
+      }
+      return evalCondition(e.condition,output);
+    };
+    const anyActive=inEdges.some(e=>edgeActive(e));
     if(!anyActive){
-      // Cyclic retry: рёбра с условием, которое не прошло, у которых есть оставшиеся попытки
+      // Cyclic/loop retry: рёбра, условие которых не прошло, у которых есть оставшиеся попытки
       const retryEdges=inEdges.filter(e=>{
-        if(!e.condition||!e.condition.trim()) return false;
-        if(evalCondition(e.condition,node(e.from)?.output)) return false;
+        if(edgeActive(e)) return false;
+        if(!e.isLoop && (!e.condition||!e.condition.trim())) return false;
         const src=node(e.from);
         return src && (e.maxRetries||0)>0 && (e._retryCount||0)<e.maxRetries;
       });
@@ -886,7 +968,7 @@ function runnableNodes(){
           e._retryCount=(e._retryCount||0)+1;
           const src=node(e.from);
           if(src){ src.status='idle'; src.output=''; src.cacheHash='';
-            logRow(src.name,'retry',`Повтор ${e._retryCount}/${e.maxRetries} — условие не прошло`); }
+            logRow(src.name,'retry',`Повтор ${e._retryCount}/${e.maxRetries}${e.isLoop?' (петля)':' — условие не прошло'}`); }
         });
         save(); return false;
       }
