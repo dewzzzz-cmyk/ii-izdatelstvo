@@ -41,8 +41,6 @@ button{font-family:inherit}
 /* Compact ghost buttons in topbar only */
 .topbar .btn.ghost{padding:6px 10px;font-size:12px;flex-shrink:0}
 .topbar .btn.primary,.topbar .btn.danger{flex-shrink:0}
-/* Visual separator between primary and secondary tools */
-.topbar-sep{width:1px;height:22px;background:var(--line2);flex-shrink:0;margin:0 2px}
 
 .node.review{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn)}
 .thinking{display:inline-flex;gap:4px;align-items:center;color:var(--run)}
@@ -76,12 +74,6 @@ button{font-family:inherit}
 .icon-btn:hover{color:var(--txt)}
 
 /* ---------- PROJECT BAR ---------- */
-.projbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0}
-.projbar input,.projbar select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 11px;font-size:13px}
-.projbar input:focus,.projbar select:focus{outline:none;border-color:var(--accent)}
-.projbar input{width:150px}
-.projbar input.grow{flex:1;width:auto}
-
 /* ---------- CANVAS ---------- */
 .canvas{position:absolute;inset:36px 0 0 0;overflow:auto;
   background:var(--bg);
@@ -176,17 +168,6 @@ button{font-family:inherit}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
 .toast.err{border-color:var(--err);color:#ffc9c9}
 .toast.ok{border-color:var(--ok)}
-
-/* ---------- «⋯ ЕЩЁ» DROPDOWN ---------- */
-.more-wrap{position:relative;flex-shrink:0}
-.more-dropdown{position:absolute;top:calc(100% + 8px);right:0;
-  background:var(--panel);border:1px solid var(--line2);border-radius:12px;
-  padding:6px;min-width:178px;z-index:30;flex-direction:column;gap:3px;
-  box-shadow:var(--shadow);display:none}
-.more-dropdown.show{display:flex}
-.more-dropdown .btn{text-align:left;width:100%;font-size:12.5px;padding:7px 12px;
-  justify-content:flex-start;border-radius:8px}
-.more-dropdown .btn:hover{transform:none;box-shadow:none;background:var(--panel2)}
 
 /* ---------- VIEW SWITCHER ---------- */
 .viewbar{display:flex;align-items:center;gap:4px;height:36px;padding:0 14px;
@@ -1022,3 +1003,21 @@ ins.wd{background:#16361f;color:#86efac;text-decoration:none;border-radius:3px}
   .studio{grid-template-columns:0 1fr}
   .studio:not(.rail-collapsed) .left-rail{opacity:0;pointer-events:none}
 }
+
+/* ── Раздел «Проект» в левой колонке (статический верх) ── */
+#lr-project{flex:0 0 auto;padding:11px 12px 12px;border-bottom:1px solid var(--line);
+  display:flex;flex-direction:column;gap:9px}
+#lr-project .lr-sec-label{padding:0 0 1px}
+#lr-project .lrp-field{display:flex;flex-direction:column;gap:4px}
+#lr-project .lrp-field label{font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--faint)}
+#lr-project input,#lr-project textarea{width:100%;box-sizing:border-box;
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit}
+#lr-project textarea{resize:vertical;line-height:1.45;min-height:48px}
+#lr-project input:focus,#lr-project textarea:focus{outline:none;border-color:var(--accent)}
+.lrp-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);
+  cursor:pointer;margin-top:1px}
+.lrp-toggle input{accent-color:var(--accent);cursor:pointer}
+/* #lr-body — растягиваемая часть: структура книги + навигация */
+#lr-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}

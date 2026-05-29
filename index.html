@@ -18,35 +18,32 @@
   <span class="hint-pill backup-ok" id="backup-state" title="Статус резервного копирования" style="display:none">💾</span>
   <span class="hint-pill" id="api-state" title="Статус API-ключа">● ключ не задан</span>
   <button class="btn ghost" data-action="settings" title="Глобальные настройки: API-ключ, модель, лимиты">⚙ Настройки</button>
-  <button class="btn ghost" data-action="export"   title="Экспорт книги (.md/.docx/.epub) и импорт/экспорт схемы">⬇ Экспорт</button>
-  <div class="topbar-sep"></div>
-  <button class="btn ghost" data-action="templates" title="Готовые пакеты агентов: Соло, Рассказ, Роман…">🗂 Шаблоны</button>
-  <button class="btn ghost" data-action="bible"     title="Библия книги: персонажи, мир, таймлайн — канон для всех агентов">📖 Библия</button>
-  <button class="btn ghost" data-action="guide"     title="Быстрый гайд по работе с редактором">? Гайд</button>
-  <div class="more-wrap" id="more-wrap">
-    <button class="btn ghost" id="more-btn" title="Дополнительные инструменты">⋯ Ещё</button>
-    <div class="more-dropdown" id="more-dropdown">
-      <button class="btn ghost" data-action="add-node"    title="Добавить нового агента на холст">＋ Агент</button>
-      <button class="btn ghost" data-action="log"         title="Журнал вызовов: агент / статус / токены / время">📋 Журнал</button>
-      <button class="btn ghost" data-action="chapters"    title="Режим «глава-за-главой»">📚 Главы</button>
-      <button class="btn ghost" data-action="entities"    title="Трекер сущностей">🗃 Сущности</button>
-      <button class="btn ghost" data-action="text-analysis" title="Анализ качества текста">📊 Анализ текста</button>
-      <button class="btn ghost" data-action="style-school" title="Обучить стиль на образцах книг">🎓 Школа стиля</button>
-    </div>
-  </div>
 </header>
 
-<div class="projbar">
-  <input id="proj-genre" placeholder="Жанр: детектив, фэнтези, нон-фикшн…">
-  <input id="proj-aud" placeholder="Аудитория: взрослые 25-45, подростки, бизнес…">
-  <input id="proj-brief" class="grow" placeholder="О чём книга — кто герой, в чём конфликт, чем заканчивается">
-  <label class="proj-toggle" title="Включить если хотите улучшить готовый текст, а не писать с нуля">
-    <input type="checkbox" id="proj-edit-mode"> 📄 Редактировать исходник
-  </label>
-</div>
-
 <div class="studio" id="studio">
-<aside class="left-rail" id="left-rail"><!-- заполняется renderLeftRail() --></aside>
+<aside class="left-rail" id="left-rail">
+  <!-- статический раздел «Проект» — renderLeftRail() его НЕ трогает -->
+  <div id="lr-project">
+    <div class="lr-sec-label">Проект</div>
+    <div class="lrp-field">
+      <label for="proj-genre">Жанр</label>
+      <input id="proj-genre" placeholder="детектив, фэнтези, нон-фикшн…">
+    </div>
+    <div class="lrp-field">
+      <label for="proj-aud">Аудитория</label>
+      <input id="proj-aud" placeholder="взрослые 25-45, подростки…">
+    </div>
+    <div class="lrp-field">
+      <label for="proj-brief">О чём книга</label>
+      <textarea id="proj-brief" rows="3" placeholder="Кто герой, в чём конфликт, чем заканчивается"></textarea>
+    </div>
+    <label class="lrp-toggle" title="Включить если хотите улучшить готовый текст, а не писать с нуля">
+      <input type="checkbox" id="proj-edit-mode"> 📄 Редактировать исходник
+    </label>
+  </div>
+  <!-- динамический раздел — renderLeftRail() пишет сюда -->
+  <div id="lr-body"><!-- заполняется renderLeftRail() --></div>
+</aside>
 <div class="main-pane" id="main-pane">
 <div class="viewbar" id="viewbar">
   <button class="lr-toggle" id="lr-toggle" data-action="toggle-rail" title="Свернуть/развернуть боковую панель">◀</button>
