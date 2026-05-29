@@ -19,7 +19,8 @@
 .md em{color:var(--dim)}
 .md-br{height:4px}
 html,body{margin:0;height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;font-size:14px}
+body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;font-size:14px;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden}
 button{font-family:inherit}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:9px}
@@ -27,7 +28,7 @@ button{font-family:inherit}
 
 /* ---------- TOPBAR ---------- */
 .topbar{display:flex;align-items:center;gap:8px;height:54px;padding:0 14px;border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg,#13151f,#0e0f17);position:relative;z-index:10;
+  background:linear-gradient(180deg,#13151f,#0e0f17);position:relative;z-index:10;flex-shrink:0;
   overflow-x:auto;scrollbar-width:none}
 .topbar::-webkit-scrollbar{display:none}
 .brand{font-weight:800;font-size:15px;display:flex;align-items:center;gap:9px;white-space:nowrap;flex-shrink:0}
@@ -75,14 +76,14 @@ button{font-family:inherit}
 .icon-btn:hover{color:var(--txt)}
 
 /* ---------- PROJECT BAR ---------- */
-.projbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+.projbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0}
 .projbar input,.projbar select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 11px;font-size:13px}
 .projbar input:focus,.projbar select:focus{outline:none;border-color:var(--accent)}
 .projbar input{width:150px}
 .projbar input.grow{flex:1;width:auto}
 
 /* ---------- CANVAS ---------- */
-.canvas{position:absolute;inset:150px 0 0 0;overflow:auto;
+.canvas{position:absolute;inset:36px 0 0 0;overflow:auto;
   background:var(--bg);
   background-image:radial-gradient(var(--grid) 1.2px, transparent 1.2px);
   background-size:26px 26px}
@@ -196,7 +197,7 @@ button{font-family:inherit}
 .view-tab:hover:not(.active){color:var(--dim);background:var(--panel2)}
 
 /* ---------- READER VIEW ---------- */
-.reader{position:absolute;inset:150px 0 0 0;overflow:auto;background:var(--bg);display:none}
+.reader{position:absolute;inset:36px 0 0 0;overflow:auto;background:var(--bg);display:none}
 .reader-inner{max-width:740px;margin:0 auto;padding:36px 24px 80px}
 .reader-text .md{font-size:14.5px;line-height:1.85;color:#d4d7e6}
 .reader-text .md p{margin:0 0 10px}
@@ -595,7 +596,7 @@ button{font-family:inherit}
 /* ─── Simplified Mode ─── */
 .simplified {
   position: absolute;
-  inset: 150px 0 0 0;
+  inset: 36px 0 0 0;
   overflow: auto;
   background: var(--bg);
 }
@@ -963,3 +964,59 @@ ins.wd{background:#16361f;color:#86efac;text-decoration:none;border-radius:3px}
 .ss-mix-slider:disabled{opacity:.35}
 .ss-mix-pct{font-size:12px;font-weight:600;color:var(--accent);min-width:38px;text-align:right}
 .ss-mix-sum{font-size:12px;color:var(--faint);text-align:center;margin:8px 0}
+
+/* ═══════════════════════════════════════════════════
+   КАБИНЕТ АВТОРА — 3-колоночный каркас (студия)
+   #studio: [left-rail | main-pane]; node-panel остаётся fixed поверх справа
+═══════════════════════════════════════════════════ */
+.studio{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:240px 1fr;overflow:hidden}
+.studio.rail-collapsed{grid-template-columns:0 1fr}
+
+.main-pane{position:relative;min-width:0;overflow:hidden}
+/* viewbar теперь внутри main-pane, поверх абсолютных вкладок */
+.main-pane .viewbar{position:absolute;top:0;left:0;right:0;z-index:5}
+
+/* ── Левая колонка: структура книги + навигация ── */
+.left-rail{background:var(--panel);border-right:1px solid var(--line2);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden;transition:opacity .15s}
+.studio.rail-collapsed .left-rail{opacity:0;pointer-events:none;border-right:none}
+.lr-head{padding:13px 14px 10px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.lr-title{font-weight:800;font-size:14px;color:var(--txt);line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lr-sub{font-size:11px;color:var(--faint);margin-top:3px}
+.lr-chapters{flex:1 1 auto;overflow-y:auto;padding:6px 8px}
+.lr-sec-label{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--faint);padding:8px 8px 5px}
+.lr-empty{font-size:12px;color:var(--faint);text-align:center;padding:22px 12px;line-height:1.5}
+.lr-chapter{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;
+  font-size:12.5px;color:var(--dim);transition:background .12s,color .12s;user-select:none}
+.lr-chapter:hover{background:var(--panel2);color:var(--txt)}
+.lr-chapter.active{background:var(--panel3);color:var(--txt)}
+.lr-ch-ic{flex:0 0 auto;width:16px;text-align:center;font-size:12px}
+.lr-ch-ic.s-done{color:var(--ok)}
+.lr-ch-ic.s-error{color:var(--err)}
+.lr-ch-ic.s-running{color:var(--accent)}
+.lr-ch-ic.s-idle{color:var(--faint)}
+.lr-ch-name{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lr-ch-words{flex:0 0 auto;font-size:10.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+
+.lr-nav{flex:0 0 auto;border-top:1px solid var(--line);padding:7px 8px}
+.lr-nav-btn{display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  background:transparent;border:none;color:var(--dim);cursor:pointer;font-family:inherit;
+  font-size:12.5px;padding:7px 9px;border-radius:8px;transition:background .12s,color .12s}
+.lr-nav-btn:hover{background:var(--panel2);color:var(--txt)}
+.lr-nav-btn .lr-nav-ic{flex:0 0 auto;width:18px;text-align:center;font-size:13px}
+.lr-foot{flex:0 0 auto;border-top:1px solid var(--line);padding:8px;display:flex;gap:7px}
+.lr-foot .lr-nav-btn{flex:1;justify-content:center;gap:6px;background:var(--panel2)}
+.lr-foot .lr-nav-btn:hover{background:var(--panel3)}
+
+/* кнопка сворачивания рейла в viewbar */
+.lr-toggle{background:transparent;border:none;color:var(--faint);cursor:pointer;font-family:inherit;
+  font-size:13px;padding:5px 9px;border-radius:8px;transition:.15s;margin-right:2px}
+.lr-toggle:hover{color:var(--txt);background:var(--panel2)}
+.studio.rail-collapsed .lr-toggle{transform:scaleX(-1)}
+
+@media(max-width:760px){
+  .studio{grid-template-columns:0 1fr}
+  .studio:not(.rail-collapsed) .left-rail{opacity:0;pointer-events:none}
+}

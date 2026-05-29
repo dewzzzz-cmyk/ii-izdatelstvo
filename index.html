@@ -45,9 +45,13 @@
   </label>
 </div>
 
+<div class="studio" id="studio">
+<aside class="left-rail" id="left-rail"><!-- заполняется renderLeftRail() --></aside>
+<div class="main-pane" id="main-pane">
 <div class="viewbar" id="viewbar">
-  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas">🗺 Холст</button>
+  <button class="lr-toggle" id="lr-toggle" data-action="toggle-rail" title="Свернуть/развернуть боковую панель">◀</button>
   <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader">📖 Книга</button>
+  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas">🗺 Схема</button>
   <button class="view-tab" id="tab-simple" data-action="switch-view" data-view="simple">✨ Просто</button>
 </div>
 <div class="canvas" id="canvas">
@@ -88,6 +92,8 @@
     <div class="simp-progress" id="simp-progress" style="display:none"></div>
   </div>
 </div>
+</div><!-- /#main-pane -->
+</div><!-- /#studio -->
 <div class="completion-banner" id="completion-banner" style="display:none">
   <div class="cb-text">✅ <span id="cb-stats">Книга готова!</span></div>
   <div class="cb-btns">
