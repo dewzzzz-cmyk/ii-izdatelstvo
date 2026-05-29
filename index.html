@@ -92,6 +92,7 @@
 </div><!-- /#main-pane -->
 <aside class="book-inspector" id="book-inspector"><!-- renderBookInspector() пишет сюда; виден только в view=reader --></aside>
 </div><!-- /#studio -->
+<div id="attention-bar" class="attention-bar" style="display:none"></div>
 <div class="completion-banner" id="completion-banner" style="display:none">
   <div class="cb-text">✅ <span id="cb-stats">Книга готова!</span></div>
   <div class="cb-btns">
@@ -125,6 +126,7 @@
   <button class="ctb-btn" data-tool="add-gate"><span style="color:#34d399">⏸</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#34d399">Ожидание</b><p>Пауза для одобрения</p><kbd>G</kbd></div></div></button>
   <button class="ctb-btn" data-tool="add-note"><span style="color:#8d92a8">✏</span><div class="ctb-tip"><div class="ctb-ti"><b>Заметка</b><p>Аннотация, не выполняется</p><kbd>N</kbd></div></div></button>
   <button class="ctb-btn" data-tool="add-merge"><span style="color:#19d3c5">⬡</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#19d3c5">Слияние</b><p>Объединить параллельные потоки</p><kbd>M</kbd></div></div></button>
+  <button class="ctb-btn" data-tool="add-decision"><span style="color:#fbbf24">🔔</span><div class="ctb-tip"><div class="ctb-ti"><b style="color:#fbbf24">Согласование</b><p>Спросить решение у человека</p></div></div></button>
   <div class="ctb-sep"></div>
   <button class="ctb-btn" data-tool="layout-chain">⤢<div class="ctb-tip"><div class="ctb-ti"><b>Цепочка</b><p>Выстроить узлы в линию</p></div></div></button>
   <button class="ctb-btn" data-tool="layout-tree">⊤<div class="ctb-tip"><div class="ctb-ti"><b>Дерево</b><p>Иерархия по уровням</p></div></div></button>

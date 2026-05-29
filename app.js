@@ -97,7 +97,7 @@ function defaultState(){
   return { _bookId:'',
     project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
     styleLibrary:[],
-    bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false,
+    bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
@@ -882,6 +882,86 @@ function md2html(text){
 /* ============ ЖУРНАЛ ============ */
 function logRow(node,status,msg,extra={}){ state.log.unshift({t:Date.now(),node,status,msg,...extra}); if(state.log.length>200) state.log.pop(); }
 
+/* ============ «ТРЕБУЕТ ВНИМАНИЯ» ============
+   Решения для человека: агент находит нестыковку → пайплайн паузится →
+   человек выбирает вариант в нижней панели → решение уходит в контекст узла. */
+function raiseAttention({nodeId,title,detail,options}){
+  if(!state.attention) state.attention=[];
+  const item={ id:uid(), nodeId, title:String(title||'').slice(0,160), detail:String(detail||''),
+    options:(options||[]).map(o=>({label:String(o.label||o.value||o),value:String(o.value||o.label||o)})),
+    status:'open', choice:'', ts:Date.now() };
+  state.attention.unshift(item);
+  logRow(node(nodeId)?.name||'Согласование','warn','🔔 нужно решение: '+item.title);
+  save(); renderAttention();
+  return item.id;
+}
+function resolveAttention(id,choice){
+  if(!state.attention) return;
+  const it=state.attention.find(a=>a.id===id); if(!it||it.status==='resolved') return;
+  choice=String(choice||'').trim(); if(!choice) return;
+  it.status='resolved'; it.choice=choice;
+  const n=node(it.nodeId);
+  if(n){
+    n.attentionChoice=choice;
+    // Дописываем решение в контекст узла, чтобы downstream его получил.
+    const line='РЕШЕНИЕ РЕДАКТОРА ('+it.title+'): '+choice;
+    n.output=(n.output?n.output+'\n\n':'')+line;
+  }
+  logRow(n?.name||'Согласование','ok','✔ решение: '+choice.slice(0,80));
+  // Если это decision-узел в review и у него больше нет открытых вопросов — достроить узел.
+  if(n && n.nodeType==='decision' && n.status==='review'){
+    const stillOpen=state.attention.some(a=>a.nodeId===n.id && a.status==='open');
+    if(!stillOpen){
+      const resolved=state.attention.filter(a=>a.nodeId===n.id && a.status==='resolved');
+      n.output='РЕШЕНИЯ:\n'+resolved.map(a=>'- '+a.detail+' → '+a.choice).join('\n');
+      n.status='done'; n.error='';
+      logRow(n.name,'ok','согласование завершено ('+resolved.length+' реш.)');
+    }
+  }
+  save(); renderAttention(); render();
+  // Подсказка «можно продолжить», когда все открытые вопросы закрыты.
+  if(!state.attention.some(a=>a.status==='open')){
+    toast('Все решения приняты — нажмите ▶ Продолжить','ok');
+  } else {
+    toast('Решение применено','ok');
+  }
+}
+function renderAttention(){
+  const bar=$('#attention-bar'); if(!bar) return;
+  const open=(state.attention||[]).filter(a=>a.status==='open');
+  if(!open.length){ bar.style.display='none'; bar.innerHTML=''; return; }
+  if(_attentionCollapsed){
+    bar.style.display='';
+    bar.innerHTML=`<div class="att-head att-head-collapsed">
+      <span class="att-badge">🔔 ${open.length}</span>
+      <span class="att-title">Требует внимания</span>
+      <button class="icon-btn att-toggle" data-action="att-expand" title="Развернуть">▴</button>
+    </div>`;
+    return;
+  }
+  const cards=open.map(a=>{
+    const opts=a.options.map(o=>
+      `<button class="att-opt" data-action="att-choose" data-id="${a.id}" data-val="${esc(o.value)}">${esc(o.label)}</button>`
+    ).join('');
+    return `<div class="att-card">
+      <div class="att-card-t">${esc(a.title)}</div>
+      ${a.detail&&a.detail!==a.title?`<div class="att-card-d">${esc(a.detail)}</div>`:''}
+      <div class="att-opts">${opts}</div>
+      <div class="att-custom">
+        <input class="att-input" data-id="${a.id}" placeholder="свой вариант…" />
+        <button class="att-apply" data-action="att-apply" data-id="${a.id}">Применить</button>
+      </div>
+    </div>`;
+  }).join('');
+  bar.style.display='';
+  bar.innerHTML=`<div class="att-head">
+      <span class="att-badge">🔔 ${open.length}</span>
+      <span class="att-title">Требует внимания: ${open.length}</span>
+      <button class="icon-btn att-toggle" data-action="att-collapse" title="Свернуть">▾</button>
+    </div>
+    <div class="att-cards">${cards}</div>`;
+}
+
 /* ============ РЕНДЕР ============ */
 const _VIEWS=['canvas','reader','simple'];
 let _currentView=(()=>{ const h=location.hash.slice(1); if(_VIEWS.includes(h)) return h;
@@ -890,6 +970,7 @@ let _currentView=(()=>{ const h=location.hash.slice(1); if(_VIEWS.includes(h)) r
 const nodesEl=$('#nodes'), edgesEl=$('#edges');
 /* CTB state + SPEC_NODES — declared here so renderNodes() can reference them */
 let _activeTool='select', _snapGrid=false, _showMinimap=false, _zoomLevel=100;
+let _attentionCollapsed=false;
 const SPEC_NODES={
   branch:   {emoji:'⎇', name:'Ветвь',     desc:'Параллельный поток',    color:'#60a5fa', prompt:'Раздели задачу на N параллельных подзадач. Выведи список — каждая на новой строке.'},
   condition:{emoji:'◇', name:'Условие',   desc:'if / else развилка',    color:'#fbbf24', prompt:'Оцени текст и реши: продолжать → выведи PASS, вернуть на доработку → выведи FAIL. Объясни решение.'},
@@ -899,6 +980,7 @@ const SPEC_NODES={
   merge:    {emoji:'⬡', name:'Слияние',   desc:'Объединить потоки',     color:'#19d3c5', prompt:'Объедини все входящие тексты в единый связный документ. Сохрани структуру.'},
   distill:  {emoji:'🗜',name:'Дистилл.',  desc:'Сжать контекст',        color:'#6c63ff', prompt:'Сожми предыдущий текст до 200–300 слов: главные события, ключевые факты о персонажах, открытые линии. Маркированный список.'},
   fanout:   {emoji:'🔀',name:'Fanout',    desc:'Параллельный запуск по списку задач', color:'#7c3aed', badge:'FAN', prompt:'Ты — писатель. Напиши главу по заданию. Придерживайся стиля и общего сюжета.'},
+  decision: {emoji:'🔔',name:'Согласование', desc:'Спросить решение у человека', color:'#fbbf24', prompt:'Сравни входные материалы, найди логические нестыковки/противоречия/развилки, требующие решения автора. Для КАЖДОЙ выдай JSON-массив: [{"issue":"что не так","options":["вариант 1","вариант 2","вариант 3"]}]. Только JSON, без пояснений.'},
 };
 function render(){
   // Статус в заголовке вкладки
@@ -934,6 +1016,7 @@ function render(){
   updateStyleRefBadge();
   renderLeftRail();
   renderBookInspector();
+  renderAttention();
 }
 /* ============ ЛЕВАЯ КОЛОНКА «КАБИНЕТ АВТОРА» ============
    Структура книги (главы/агенты) + навигация. Чисто аддитивно:
@@ -1671,6 +1754,44 @@ async function runNode(id){
   }
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── «Согласование»: спросить решение у человека ──────────────────────────
+  if(n.nodeType==='decision'){
+    n.status='running'; n.output=''; n.error=''; save(); renderNodes();
+    try{
+      const raw=await callLLM(cfg(n), msgs);
+      n.tokensIn=tokEst(msgs.map(m=>m.content).join('')); n.tokensOut=tokEst(raw);
+      let issues=[];
+      try{
+        const m=raw.match(/\[[\s\S]*\]/);
+        const parsed=JSON.parse(m?m[0]:raw);
+        if(Array.isArray(parsed)) issues=parsed.filter(x=>x&&x.issue);
+      }catch{}
+      // Очистим прежние открытые вопросы этого узла (на случай повторного прогона)
+      if(state.attention) state.attention=state.attention.filter(a=>!(a.nodeId===n.id&&a.status==='open'));
+      if(issues.length){
+        issues.forEach(iss=>{
+          const opts=(Array.isArray(iss.options)?iss.options:[]).map(o=>({label:String(o),value:String(o)}));
+          raiseAttention({ nodeId:n.id, title:n.name+': '+String(iss.issue).slice(0,60), detail:String(iss.issue),
+            options:opts.length?opts:[{label:'Принять',value:'Принять'}] });
+        });
+        n.status='review'; n.error='';
+        logRow(n.name,'warn','🔔 нужно решение: '+issues.length+' вопрос(ов)');
+        save(); renderNodes(); renderEdges();
+        toast('🔔 Требуется ваше решение — внизу','warn');
+        return true;
+      } else {
+        // Нет вопросов — узел просто завершён с выводом как есть.
+        n.output=raw; n.status='done'; n.error='';
+        logRow(n.name,'ok','нестыковок не найдено');
+        save(); renderNodes(); renderEdges();
+        return true;
+      }
+    }catch(err){
+      n.status='error'; n.error=String(err.message||err); save(); renderNodes(); return false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   n.status='running'; n.output=''; n.error=''; save(); renderNodes(); renderEdges();
   if(!abortCtrl) abortCtrl=new AbortController(); // fallback для одиночного прогона узла
   const maxR=state.global.maxRetries|0, t0=performance.now();
@@ -1720,6 +1841,19 @@ async function runNode(id){
       n.tokensIn=tokEst(msgs.map(m=>m.content).join('')); n.tokensOut=tokEst(acc); n.ms=Math.round(performance.now()-t0);
       n.status= n.requireApproval && !n.approved ? 'review' : 'done'; n.error='';
       logRow(n.name,'ok',`${n.tokensIn+n.tokensOut} ток., ${(n.ms/1000).toFixed(1)}с`,{cost:nodeCost(n)});
+      // Путь 2: авто-маркер ⚠ВОПРОС: — любой агент может поднять вопрос на согласование.
+      // Формат: строка «⚠ВОПРОС: <вопрос>», затем строки «- <вариант>».
+      const qm=acc.match(/⚠ВОПРОС:\s*([\s\S]*)$/);
+      if(qm){
+        const lines=qm[1].split('\n').map(l=>l.trim()).filter(Boolean);
+        const question=lines.shift()||'Требуется решение';
+        const opts=lines.filter(l=>/^[-•*]/.test(l)).map(l=>{const v=l.replace(/^[-•*]\s*/,'').trim();return{label:v,value:v};});
+        if(state.attention) state.attention=state.attention.filter(a=>!(a.nodeId===n.id&&a.status==='open'));
+        raiseAttention({ nodeId:n.id, title:n.name+': '+question.slice(0,60), detail:question,
+          options:opts.length?opts:[{label:'Принять как есть',value:'Принять как есть'}] });
+        n.status='review';
+        toast('🔔 Требуется ваше решение — внизу','warn');
+      }
       // Верификация Bible: логируем ключи, которые должны были использоваться
       const relevantBible=bibleFor(acc); if(relevantBible) logRow(n.name,'bible','Проверьте каноны: '+bibleFor(acc).split('\n').map(l=>l.split(':')[0].replace('•','').trim()).filter(Boolean).join(', '));
       // Проверка JSON-схемы выхода (если задана)
@@ -1780,7 +1914,7 @@ function topoOrder(){
   while(q.length){ const id=q.shift(); order.push(id); state.edges.filter(e=>e.from===id).forEach(e=>{ indeg.set(e.to,indeg.get(e.to)-1); if(indeg.get(e.to)===0) q.push(e.to); }); }
   return order.length===state.nodes.length? order : state.nodes.map(n=>n.id);
 }
-const isPaused=()=>state.nodes.some(n=>n.status==='review'||n.status==='variants');
+const isPaused=()=>state.nodes.some(n=>n.status==='review'||n.status==='variants')||(state.attention||[]).some(a=>a.status==='open');
 let running=false; let abortCtrl=null;
 // Находит узлы, готовые к запуску: idle + все зависимости done (или ошибочные — пропустить)
 // Узлы из цепочки target→…→checker (по прямым, НЕ петлевым рёбрам), включая концы.
@@ -1872,7 +2006,9 @@ async function runPipeline(resume){
     if(!state.runs) state.runs=[];
     state.runs.unshift({t:Date.now(),nodes:JSON.parse(JSON.stringify(state.nodes)),edges:JSON.parse(JSON.stringify(state.edges))});
     if(state.runs.length>5) state.runs.pop();
-    state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;delete n._loopPrev;n.failedWithDownstream=false;});
+    state.nodes.forEach(n=>{n.status='idle';n.error='';n.approved=false;delete n._loopPrev;n.failedWithDownstream=false;delete n.attentionChoice;});
+    state.attention=[]; // новый полный прогон — сбрасываем накопленные решения/вопросы
+    renderAttention();
     state.edges.forEach(e=>{ e._retryCount=0; e._scoreHistory=[]; e._bestScore=null; e._bestOutput=null; e._lastScored=null; });
     // #47: сбрасываем счётчик скрытых служебных вызовов на новый прогон
     state.auxTokens=0; state.auxCost=0;
@@ -1918,6 +2054,10 @@ async function runPipeline(resume){
       break;
     }
     if(results.includes('abort')) break;
+    if((state.attention||[]).some(a=>a.status==='open')){
+      toast('🔔 Требуется ваше решение — внизу','warn');
+      break;
+    }
     if(state.nodes.some(n=>n.status==='variants')){
       toast('Выберите вариант — пайплайн ждёт 🔀','warn');
       break;
@@ -1986,7 +2126,7 @@ async function runFromNode(id){
     };
     const results=await runWithLimit(wave.map(n=>()=>runOne(n)), state.global.maxConcurrent||3);
     if(results.includes('abort')) break;
-    if(state.nodes.some(n=>n.status==='variants'||n.status==='review')){ toast('Пайплайн ждёт действия','warn'); break; }
+    if(state.nodes.some(n=>n.status==='variants'||n.status==='review')||(state.attention||[]).some(a=>a.status==='open')){ toast('Пайплайн ждёт действия','warn'); break; }
   }
   running=false; $('#run-btn').disabled=false; render();
   const done=state.nodes.filter(n=>sub.has(n.id)&&n.status==='done').length;
@@ -3200,6 +3340,14 @@ let toastT; function toast(m,k=''){ const t=$('#toast'); t.textContent=m; t.clas
 document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]'); if(!t) return; const a=t.dataset.action,id=t.dataset.id;
   if(a==='run'){ isPaused()?runPipeline(true):runPipeline(false); }
   else if(a==='stop'){ if(abortCtrl) abortCtrl.abort(); }
+  else if(a==='att-choose'){ resolveAttention(id, t.dataset.val); }
+  else if(a==='att-apply'){
+    const inp=$('#attention-bar .att-input[data-id="'+id+'"]');
+    const v=inp&&inp.value.trim();
+    if(v) resolveAttention(id, v); else toast('Введите свой вариант','warn');
+  }
+  else if(a==='att-collapse'){ _attentionCollapsed=true; renderAttention(); }
+  else if(a==='att-expand'){ _attentionCollapsed=false; renderAttention(); }
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
   else if(a==='text-analysis') openTextAnalysis();
   else if(a==='style-school') openStyleSchool();
@@ -4606,6 +4754,7 @@ function ctbAction(tool){
     case 'add-gate':      ctbSetTool('place-gate');      break;
     case 'add-note':      ctbSetTool('place-note');      break;
     case 'add-merge':     ctbSetTool('place-merge');     break;
+    case 'add-decision':  ctbSetTool('place-decision');  break;
     case 'add-fanout':    ctbSetTool('place-fanout');    break;
     case 'layout-chain':  ctbLayoutChain(); break;
     case 'layout-tree':   ctbLayoutTree();  break;
