@@ -764,3 +764,27 @@ button{font-family:inherit}
 .ta-warn-text{color:var(--err)}
 .ta-badge{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;padding:5px 11px;font-size:12.5px;font-weight:700;margin-bottom:8px}
 .ta-spark{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:16px;line-height:1.1;letter-spacing:1px;color:var(--accent2);background:var(--panel3);border:1px solid var(--line2);border-radius:7px;padding:8px 10px;margin-bottom:8px;word-break:break-all}
+
+/* ── #46 Множественное выделение ───────────── */
+.node.selected{border-color:var(--accent)!important;box-shadow:0 0 0 2px var(--accent),0 0 18px rgba(108,99,255,.45)}
+.select-box{position:absolute;border:1.5px dashed var(--accent);background:rgba(108,99,255,.12);border-radius:4px;pointer-events:none;z-index:2}
+
+/* ── #43 Подсветка валидных портов при протяжке ───────────── */
+.port-valid{box-shadow:0 0 0 3px var(--ok);transform:scale(1.4);border-color:var(--ok)!important;background:var(--ok)!important}
+/* мини-лейбл порта при наведении */
+.port::after{content:'';position:absolute;bottom:120%;left:50%;transform:translateX(-50%);
+  background:var(--panel3);color:var(--txt);border:1px solid var(--line2);border-radius:5px;
+  padding:2px 6px;font-size:10px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s;z-index:6}
+.port:hover::after{opacity:1}
+.port.in::after{content:'вход'}
+.port.out::after{content:'выход'}
+
+/* ── #26 Поповер подтверждения петли ───────────── */
+.loop-confirm{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:8px;
+  display:flex;flex-direction:column;gap:5px;box-shadow:0 6px 22px rgba(0,0,0,.4);min-width:230px}
+.loop-confirm-title{font-size:11px;color:var(--faint);padding:2px 4px 4px;font-weight:700}
+.loop-confirm-btn{text-align:left;background:var(--panel3);border:1px solid var(--line2);color:var(--txt);
+  border-radius:7px;padding:8px 11px;font-size:12.5px;cursor:pointer;transition:.12s}
+.loop-confirm-btn:hover{border-color:var(--accent);background:var(--panel)}
+.loop-confirm-btn.loop{border-color:#4f46e5;color:#a5b4fc}
+.loop-confirm-btn.loop:hover{background:rgba(79,70,229,.18);border-color:#6366f1}

@@ -581,8 +581,9 @@ function renderNodes(){
     const badge=sp?`<span class="ntype-badge" style="background:${sp.color}1a;color:${sp.color}">${sp.name}</span>`:'';
     const ntAttr=n.nodeType?` data-ntype="${n.nodeType}"`:'';
     // Note nodes: simplified read-only card
+    const selCls=_selected.has(n.id)?' selected':'';
     if(n.nodeType==='note'){
-      return `<div class="node idle${ntAttr}" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">${badge}
+      return `<div class="node idle${selCls}"${ntAttr} data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">${badge}
         <div class="node-head" data-drag="${n.id}">
           <div class="node-emoji">${n.emoji}</div>
           <div><div class="node-name">${esc(n.name)}</div><div class="node-role">${esc(n.role)}</div></div>
@@ -598,7 +599,7 @@ function renderNodes(){
     const appr=n.status==='review'?`<div class="node-foot"><button class="btn ok sm" data-action="approve" data-id="${n.id}">✅ Принять</button><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">✍ Правка</button></div>`:
       n.status==='variants'?`<div class="node-foot"><button class="btn ok sm" data-action="open-variants" data-id="${n.id}">🔀 Выбрать вариант</button></div>`:
       `<div class="node-foot"><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">⚙ Настроить</button><button class="btn ghost sm" data-action="run-node" data-id="${n.id}">▶ Прогнать</button></div>`;
-    return `<div class="node ${n.status}"${ntAttr} data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
+    return `<div class="node ${n.status}${selCls}"${ntAttr} data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
       ${badge}
       <div class="port in" data-port="in" data-id="${n.id}"></div>
       <div class="port out" data-port="out" data-id="${n.id}"></div>
@@ -695,7 +696,10 @@ function renderGroups(){
 }
 
 /* ============ DRAG + СВЯЗИ ============ */
-const canvas=$('#canvas'); let drag=null, wire=null, groupDrag=null;
+const canvas=$('#canvas'); let drag=null, wire=null, groupDrag=null, boxSel=null;
+// #46: множественное выделение
+const _selected=new Set();
+function clearSelection(){ if(_selected.size){ _selected.clear(); renderNodes(); } }
 function updateGroupMembership(movedId){
   const n=node(movedId); if(!n||!state.groups||!state.groups.length) return;
   const cx=n.x+NW/2,cy=n.y+80;
@@ -715,7 +719,17 @@ nodesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('.port.out'); if(p){ wire={from:p.dataset.id}; e.stopPropagation(); e.preventDefault(); return; }
   const h=e.target.closest('[data-drag]'); if(!h) return;
   if(e.target.closest('button,input,textarea,select')) return; // не перехватывать клики по кнопкам внутри шапки
-  const n=node(h.dataset.drag); const pt=canvasPoint(e); pushUndo(); drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y}; e.preventDefault();
+  const n=node(h.dataset.drag); const pt=canvasPoint(e); pushUndo();
+  // #46: если тащим выделенный узел — двигаем всю группу выделения
+  if(_selected.has(n.id) && _selected.size>1){
+    const starts=[..._selected].map(id=>node(id)).filter(Boolean).map(m=>({id:m.id,x:m.x,y:m.y}));
+    drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y,multi:starts,ox:pt.x,oy:pt.y};
+  } else {
+    // Клик по невыделенному узлу — снимаем прежнее выделение
+    if(!_selected.has(n.id)) clearSelection();
+    drag={id:n.id,dx:pt.x-n.x,dy:pt.y-n.y};
+  }
+  e.preventDefault();
 });
 edgesEl.addEventListener('mousedown',e=>{
   const p=e.target.closest('[data-group-drag]'); if(!p) return;
@@ -725,36 +739,157 @@ edgesEl.addEventListener('mousedown',e=>{
   groupDrag={id:g.id,ox:pt.x,oy:pt.y,starts};
   e.preventDefault(); e.stopPropagation();
 });
-function canvasPoint(e){ const r=canvas.getBoundingClientRect(); return {x:e.clientX-r.left+canvas.scrollLeft, y:e.clientY-r.top+canvas.scrollTop}; }
+// #46: прямоугольное выделение — drag по ПУСТОМУ холсту при инструменте select
+canvas.addEventListener('mousedown',e=>{
+  if(e.button!==0) return;
+  if(drag||wire||groupDrag) return; // нода/порт/группа уже перехватили
+  if(_activeTool!=='select') return;
+  // только по пустому месту: не по ноде, порту, карточке петли, кнопке, группе
+  if(e.target.closest('.node,.port,.loop-card,button,[data-group-drag],[data-group-click],[data-toggle]')) return;
+  if(e.target.closest('[data-edge],path.edge')) return; // клик по связи — её обработчик
+  const pt=canvasPoint(e);
+  boxSel={sx:pt.x,sy:pt.y,cx:pt.x,cy:pt.y,additive:e.shiftKey,moved:false};
+  if(!boxSel.additive) clearSelection();
+});
+function getSelectBoxEl(){
+  let el=document.getElementById('_select-box');
+  if(!el){ el=document.createElement('div'); el.id='_select-box'; el.className='select-box'; nodesEl.appendChild(el); }
+  return el;
+}
+function updateSelectBox(){
+  if(!boxSel) return;
+  boxSel.moved=true;
+  const x=Math.min(boxSel.sx,boxSel.cx), y=Math.min(boxSel.sy,boxSel.cy);
+  const w=Math.abs(boxSel.cx-boxSel.sx), h=Math.abs(boxSel.cy-boxSel.sy);
+  const el=getSelectBoxEl();
+  el.style.cssText=`position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+}
+function finalizeBoxSelect(){
+  const bs=boxSel; boxSel=null;
+  const el=document.getElementById('_select-box'); if(el) el.remove();
+  if(!bs||!bs.moved){ if(!bs.additive) clearSelection(); return; } // просто клик по пустому — снять выделение
+  const x1=Math.min(bs.sx,bs.cx), y1=Math.min(bs.sy,bs.cy), x2=Math.max(bs.sx,bs.cx), y2=Math.max(bs.sy,bs.cy);
+  const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
+  state.nodes.forEach(n=>{
+    if(collapsedIds.has(n.id)) return;
+    const nx1=n.x, ny1=n.y, nx2=n.x+NW, ny2=n.y+120;
+    const inside=nx1>=x1&&ny1>=y1&&nx2<=x2&&ny2<=y2;
+    const overlap=nx1<x2&&nx2>x1&&ny1<y2&&ny2>y1;
+    if(inside||overlap) _selected.add(n.id);
+  });
+  renderNodes();
+}
+function canvasPoint(e){ const r=canvas.getBoundingClientRect(); const s=(_zoomLevel||100)/100;
+  return {x:(e.clientX-r.left+canvas.scrollLeft)/s, y:(e.clientY-r.top+canvas.scrollTop)/s}; }
+// #43: подсветка валидных входных портов при протяжке связи
+function highlightValidPorts(fromId){
+  nodesEl.querySelectorAll('.port.in').forEach(p=>{
+    p.classList.toggle('port-valid', p.dataset.id!==fromId);
+  });
+}
+function clearPortHighlight(){ nodesEl.querySelectorAll('.port-valid').forEach(p=>p.classList.remove('port-valid')); }
 window.addEventListener('mousemove',e=>{
-  if(drag){ const n=node(drag.id); const pt=canvasPoint(e); n.x=Math.max(0,pt.x-drag.dx); n.y=Math.max(0,pt.y-drag.dy);
-    const el=nodesEl.querySelector(`[data-node="${n.id}"]`); if(el){ el.style.left=n.x+'px'; el.style.top=n.y+'px'; } renderEdges(); }
+  if(drag){ const pt=canvasPoint(e);
+    if(drag.multi){ const dx=pt.x-drag.ox, dy=pt.y-drag.oy;
+      drag.multi.forEach(s=>{ const m=node(s.id); if(m){ m.x=Math.max(0,s.x+dx); m.y=Math.max(0,s.y+dy);
+        const el=nodesEl.querySelector(`[data-node="${m.id}"]`); if(el){ el.style.left=m.x+'px'; el.style.top=m.y+'px'; } } });
+    } else { const n=node(drag.id); n.x=Math.max(0,pt.x-drag.dx); n.y=Math.max(0,pt.y-drag.dy);
+      const el=nodesEl.querySelector(`[data-node="${n.id}"]`); if(el){ el.style.left=n.x+'px'; el.style.top=n.y+'px'; } }
+    renderEdges(); }
+  else if(boxSel){ const pt=canvasPoint(e); boxSel.cx=pt.x; boxSel.cy=pt.y; updateSelectBox(); }
   else if(groupDrag){ const pt=canvasPoint(e); const dx=pt.x-groupDrag.ox,dy=pt.y-groupDrag.oy;
     groupDrag.starts.forEach(s=>{ const n=node(s.id); if(n){ n.x=Math.max(0,s.x+dx); n.y=Math.max(0,s.y+dy); } }); renderNodes(); renderEdges(); }
   else if(wire){ const a=portPos(wire.from,'out'),b=canvasPoint(e); let t=edgesEl.querySelector('.edge-temp');
-    if(!t){ t=document.createElementNS('http://www.w3.org/2000/svg','path'); t.setAttribute('class','edge-temp'); edgesEl.appendChild(t); } t.setAttribute('d',edgePath(a,b)); }
+    if(!t){ t=document.createElementNS('http://www.w3.org/2000/svg','path'); t.setAttribute('class','edge-temp'); edgesEl.appendChild(t); } t.setAttribute('d',edgePath(a,b));
+    highlightValidPorts(wire.from); }
 });
 window.addEventListener('mouseup',e=>{
-  if(drag){ const dId=drag.id; drag=null; updateGroupMembership(dId); save(); }
+  if(drag){ const ids=drag.multi?drag.multi.map(s=>s.id):[drag.id]; drag=null; ids.forEach(updateGroupMembership); save(); }
+  if(boxSel){ finalizeBoxSelect(); }
   if(groupDrag){ groupDrag=null; save(); }
   if(wire){ const tgt=document.elementFromPoint(e.clientX,e.clientY); const ip=tgt&&tgt.closest&&tgt.closest('.port.in');
-    if(ip) addEdge(wire.from,ip.dataset.id); wire=null; const t=edgesEl.querySelector('.edge-temp'); if(t)t.remove(); renderEdges(); }
+    const from=wire.from; wire=null; clearPortHighlight();
+    const t=edgesEl.querySelector('.edge-temp'); if(t)t.remove(); renderEdges();
+    if(ip) addEdge(from,ip.dataset.id,e.clientX,e.clientY); }
 });
-function addEdge(from,to){
+function addEdge(from,to,clientX,clientY){
   if(from===to) return toast('Нельзя соединить агента с собой','err');
   if(state.edges.some(x=>x.from===from&&x.to===to)) return;
   if(wouldCycle(from,to)){
-    // Backward edge → create as loop edge
-    state.edges.push({id:uid(),from,to,condition:'',maxRetries:5,_retryCount:0,
-      isLoop:true,autoEval:false,evalThreshold:7,_autoScore:null});
-    toast('🔁 Петля создана — настройте условие выхода','ok');
-  } else {
-    state.edges.push({id:uid(),from,to,condition:'',maxRetries:0,_retryCount:0,
-      isLoop:false,autoEval:false,evalThreshold:7,_autoScore:null});
+    // Backward edge — НЕ создаём петлю молча. Спросим у пользователя через мини-поповер.
+    showLoopConfirm(from,to,clientX,clientY);
+    return;
   }
+  createNormalEdge(from,to);
+}
+function createNormalEdge(from,to){
+  state.edges.push({id:uid(),from,to,condition:'',maxRetries:0,_retryCount:0,
+    isLoop:false,autoEval:false,evalThreshold:7,_autoScore:null});
   save(); renderEdges();
 }
+function createLoopEdge(from,to){
+  state.edges.push({id:uid(),from,to,condition:"output.includes('DONE')",maxRetries:5,_retryCount:0,
+    isLoop:true,autoEval:false,evalThreshold:7,_autoScore:null});
+  save(); renderEdges();
+  toast('🔁 Петля создана — настройте условие выхода','ok');
+}
+// Мини-поповер подтверждения у курсора (НЕ нативный confirm — он блокирует).
+let _loopPopEl=null;
+function closeLoopConfirm(){ if(_loopPopEl){ _loopPopEl.remove(); _loopPopEl=null; } }
+function showLoopConfirm(from,to,clientX,clientY){
+  closeLoopConfirm();
+  const x=(typeof clientX==='number'?clientX:window.innerWidth/2);
+  const y=(typeof clientY==='number'?clientY:window.innerHeight/2);
+  const pop=document.createElement('div');
+  pop.className='loop-confirm';
+  pop.style.cssText=`position:fixed;left:${x}px;top:${y}px;z-index:10000`;
+  pop.innerHTML=`
+    <div class="loop-confirm-title">Обратная связь</div>
+    <button class="loop-confirm-btn loop" data-lc="loop">🔁 Создать петлю (повтор до улучшения)</button>
+    <button class="loop-confirm-btn" data-lc="normal">Обычная связь</button>`;
+  document.body.appendChild(pop);
+  _loopPopEl=pop;
+  // Не вылезать за правый/нижний край
+  const r=pop.getBoundingClientRect();
+  if(r.right>window.innerWidth-8) pop.style.left=(window.innerWidth-r.width-8)+'px';
+  if(r.bottom>window.innerHeight-8) pop.style.top=(window.innerHeight-r.height-8)+'px';
+  pop.addEventListener('click',ev=>{
+    const b=ev.target.closest('[data-lc]'); if(!b) return;
+    ev.stopPropagation();
+    if(b.dataset.lc==='loop') createLoopEdge(from,to); else createNormalEdge(from,to);
+    closeLoopConfirm();
+  });
+  // Клик вне поповера — отмена (связь не создаётся)
+  setTimeout(()=>document.addEventListener('mousedown',function onAway(ev){
+    if(_loopPopEl&&!_loopPopEl.contains(ev.target)){ closeLoopConfirm(); document.removeEventListener('mousedown',onAway); }
+    else if(!_loopPopEl){ document.removeEventListener('mousedown',onAway); }
+  }),0);
+}
 function wouldCycle(from,to){ const seen=new Set(),st=[to]; while(st.length){ const c=st.pop(); if(c===from) return true; if(seen.has(c)) continue; seen.add(c); state.edges.filter(e=>e.from===c).forEach(e=>st.push(e.to)); } return false; }
+// Удаление узлов с авто-перелинковкой: для каждой пары (pred→узел→succ) создаём pred→succ
+// (если ребра ещё нет и оно не образует недопустимую петлю). Возвращает true, если что-то перелинковали.
+function deleteNodesWithRelink(ids){
+  const del=new Set(ids);
+  let relinked=false;
+  del.forEach(id=>{
+    const preds=state.edges.filter(e=>e.to===id&&!del.has(e.from)).map(e=>e.from);
+    const succs=state.edges.filter(e=>e.from===id&&!del.has(e.to)).map(e=>e.to);
+    preds.forEach(p=>succs.forEach(s=>{
+      if(p===s) return;
+      if(state.edges.some(x=>x.from===p&&x.to===s)) return;
+      if(wouldCycle(p,s)) return; // не плодим петли при перелинковке
+      state.edges.push({id:uid(),from:p,to:s,condition:'',maxRetries:0,_retryCount:0,
+        isLoop:false,autoEval:false,evalThreshold:7,_autoScore:null});
+      relinked=true;
+    }));
+  });
+  state.nodes=state.nodes.filter(x=>!del.has(x.id));
+  state.edges=state.edges.filter(e=>!del.has(e.from)&&!del.has(e.to));
+  // Чистим выделение и группы
+  if(typeof _selected!=='undefined') ids.forEach(id=>_selected.delete(id));
+  (state.groups||[]).forEach(g=>{ g.nodeIds=g.nodeIds.filter(nid=>!del.has(nid)); });
+  return relinked;
+}
 edgesEl.addEventListener('click',e=>{
   const tog=e.target.closest('[data-toggle]'); if(tog){ const g=(state.groups||[]).find(x=>x.id===tog.dataset.toggle); if(g){ g.collapsed=!g.collapsed; save(); render(); return; } }
   const gc=e.target.closest('[data-group-click]'); if(gc){ openGroupEditor(gc.dataset.groupClick); return; }
@@ -1029,11 +1164,11 @@ function runnableNodes(){
     const edgeActive=(e)=>{
       const output=node(e.from)?.output;
       if(e.isLoop){
-        // Loop edge: active (exit loop) when js-condition passes, OR auto-eval score passes, OR neither condition set
+        // Loop edge: active (exit loop) when js-condition passes, OR auto-eval score passes.
+        // Если ни условия, ни авто-оценки нет — НЕ выходим сразу: крутим до исчерпания maxRetries.
         const jsPass=e.condition&&e.condition.trim() ? evalCondition(e.condition,output) : false;
         const evalPass=e.autoEval && e._autoScore!=null && e._autoScore>=(e.evalThreshold||7);
-        const noCondition=!e.condition&&!e.autoEval;
-        return jsPass||evalPass||noCondition;
+        return jsPass||evalPass;
       }
       return evalCondition(e.condition,output);
     };
@@ -1322,9 +1457,16 @@ document.addEventListener('keydown', e => {
     switchView(typeof _currentView!=='undefined' && _currentView==='reader'?'canvas':'reader');
     return;
   }
-  // Delete selected node — no persistent selected-node variable exists in this app;
-  // deletion is handled via the node drawer's "Удалить" button (#f-del).
-  // if(e.key==='Delete' || e.key==='Backspace'){ /* no _selNode available */ }
+  // #46: Delete удаляет всех выделенных (с авто-перелинковкой)
+  if((e.key==='Delete'||e.key==='Backspace') && _selected.size){
+    e.preventDefault();
+    const ids=[..._selected];
+    const relinked=deleteNodesWithRelink(ids);
+    save(); render();
+    toast(`Удалено агентов: ${ids.length}`+(relinked?' · связи перенаправлены':''));
+    return;
+  }
+  if(e.key==='Escape' && _selected.size){ clearSelection(); return; }
 });
 
 function openNode(id){
@@ -2008,9 +2150,9 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='switch-view') switchView(t.dataset.view);
   else if(a==='delete-node'){
     const del=node(id); if(!del) return;
-    state.nodes=state.nodes.filter(x=>x.id!==id);
-    state.edges=state.edges.filter(e=>e.from!==id&&e.to!==id);
-    save(); render(); closeDrawer(); toast('Агент «'+del.name+'» удалён');
+    const relinked=deleteNodesWithRelink([id]);
+    save(); render(); closeDrawer();
+    toast('Агент «'+del.name+'» удалён'+(relinked?' · связи перенаправлены':''));
   }
   else if(a==='toggle-collapse'){
     const n=node(id); if(n){ n.collapsed=!n.collapsed; save(); renderNodes(); }
@@ -2883,7 +3025,13 @@ function ctbLayoutTree(){
   save(); render(); toast('⊤ Дерево готово','ok');
 }
 
-/* ── Fit screen ── */
+/* ── Apply zoom via CSS transform (visual-only; node coords untouched) ── */
+function applyZoom(){
+  const s=(_zoomLevel||100)/100;
+  [nodesEl,edgesEl].forEach(el=>{ if(el){ el.style.transformOrigin='0 0'; el.style.transform=`scale(${s})`; } });
+}
+
+/* ── Fit screen (visual-only: pick scale + scroll, do NOT move nodes) ── */
 function ctbFitScreen(){
   if(!state.nodes.length) return;
   const cv=$('#canvas'); if(!cv) return;
@@ -2895,22 +3043,22 @@ function ctbFitScreen(){
   const cw=maxX-minX, ch=maxY-minY;
   if(cw<=0||ch<=0) return;
   const scale=Math.min(1, vw/cw, vh/ch);
-  _zoomLevel=Math.round(scale*100);
-  state.nodes.forEach(n=>{ n.x=(n.x-minX)*scale+60; n.y=(n.y-minY)*scale+40; });
-  save(); render(); cv.scrollTo(0,0); ctbSync();
+  _zoomLevel=Math.round(Math.max(25,Math.min(300,scale*100)));
+  applyZoom();
+  const s=_zoomLevel/100;
+  // Scroll so the bounding box top-left lands near the viewport origin
+  cv.scrollTo(Math.max(0,minX*s-60), Math.max(0,minY*s-40));
+  ctbSync();
   toast('⊙ Вместил всё на экран');
 }
 
-/* ── Zoom (scales node coordinates) ── */
+/* ── Zoom (CSS transform only — node coordinates never change) ── */
 function ctbZoom(factor){
   _zoomLevel=Math.round(Math.max(25,Math.min(300,_zoomLevel*factor)));
-  if(!state.nodes.length){ ctbSync(); return; }
-  const cx=state.nodes.reduce((s,n)=>s+n.x+106,0)/state.nodes.length;
-  const cy=state.nodes.reduce((s,n)=>s+n.y+80,0)/state.nodes.length;
-  state.nodes.forEach(n=>{ n.x=Math.max(0,cx+(n.x+106-cx)*factor-106); n.y=Math.max(0,cy+(n.y+80-cy)*factor-80); });
-  save(); render(); ctbSync();
+  applyZoom();
+  ctbSync();
 }
-function ctbZoomReset(){ ctbZoom((100/_zoomLevel)); _zoomLevel=100; ctbSync(); }
+function ctbZoomReset(){ _zoomLevel=100; applyZoom(); ctbSync(); }
 
 /* ── Palette ── */
 function ctbTogglePalette(){
@@ -2991,8 +3139,9 @@ function ctbInitDrag(pal){
     const cv=$('#canvas'); if(!cv) return;
     const r=cv.getBoundingClientRect();
     if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return;
-    const x=e.clientX-r.left+cv.scrollLeft-106;
-    const y=e.clientY-r.top+cv.scrollTop-60;
+    const _s=(_zoomLevel||100)/100;
+    const x=(e.clientX-r.left+cv.scrollLeft)/_s-106;
+    const y=(e.clientY-r.top+cv.scrollTop)/_s-60;
     const dd=dragData||{};
     if(dd.spectype){
       const n=freshSpecNode(dd.spectype,x,y); if(n){ state.nodes.push(n); save(); render(); toast(`${SPEC_NODES[dd.spectype].emoji} «${SPEC_NODES[dd.spectype].name}» добавлен`,'ok'); }
@@ -3011,8 +3160,9 @@ function ctbInitDrag(pal){
       const cv=$('#canvas'); if(!cv){ dragData=null; return; }
       const r=cv.getBoundingClientRect();
       if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom){
-        const x=e.clientX-r.left+cv.scrollLeft-106;
-        const y=e.clientY-r.top+cv.scrollTop-60;
+        const _s=(_zoomLevel||100)/100;
+        const x=(e.clientX-r.left+cv.scrollLeft)/_s-106;
+        const y=(e.clientY-r.top+cv.scrollTop)/_s-60;
         const dd=dragData; dragData=null;
         if(dd.spectype){
           const n=freshSpecNode(dd.spectype,x,y); if(n){ state.nodes.push(n); save(); render(); toast(`${SPEC_NODES[dd.spectype].emoji} «${SPEC_NODES[dd.spectype].name}» добавлен`,'ok'); }
@@ -3093,6 +3243,7 @@ function initCtb(){
     if(e.key==='+'||e.key==='=') ctbZoom(1.2);
     if(e.key==='-') ctbZoom(1/1.2);
   });
+  applyZoom();
   ctbSync();
 }
 
