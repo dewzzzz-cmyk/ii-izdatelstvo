@@ -235,9 +235,11 @@ button{font-family:inherit}
 /* ═══════════════════════════════════════════
    CANVAS TOOLBAR
 ═══════════════════════════════════════════ */
+/* при свёрнутой левой колонке тулбар возвращается влево */
+#studio.rail-collapsed ~ .ctb{ left:12px; }
 .ctb{
   position:fixed;
-  left:12px;
+  left:252px; /* правее левой колонки структуры (240px) */
   top:162px;
   z-index:18;
   display:none; /* shown only on canvas view via JS */
