@@ -1273,6 +1273,7 @@ function openVariantPicker(n){
       <div class="variant-head">
         <span class="variant-label">Вариант ${i+1}</span>
         <span class="variant-meta">${wc} слов</span>
+        ${i>0?`<button class="btn ghost sm" data-vdiff="${i}">± vs В1</button>`:''}
         <button class="btn ${n.output===v?'ok':'ghost'} sm" data-action="pick-variant" data-id="${n.id}" data-vi="${i}">
           ${n.output===v?'✓ Выбран':'Выбрать'}
         </button>
@@ -1280,7 +1281,13 @@ function openVariantPicker(n){
       <pre class="variant-preview">${preview}</pre>
     </div>`;
   });
-  openDrawer('Варианты: ' + esc(n.name), html);
+  openDrawer('Варианты: ' + esc(n.name), html, b=>{
+    b.querySelectorAll('[data-vdiff]').forEach(btn=>btn.onclick=()=>{
+      const i=+btn.dataset.vdiff;
+      openWordDiff(`± Вариант 1 ↔ Вариант ${i+1} — ${esc(n.name)}`,
+        n.variantOutputs[0]||'', n.variantOutputs[i]||'', ()=>openVariantPicker(n));
+    });
+  });
 }
 
 function approveNode(id){ const n=node(id); n.approved=true; n.status='done'; logRow(n.name,'ok','принято вручную');
@@ -1302,6 +1309,52 @@ function promptDiff(a,b){
     }
   }
   return html+'</div>';
+}
+
+/* ============ WORD DIFF (Item 17) ============ */
+// Пословный diff (LCS — динамика по словам, как у Myers для коротких текстов).
+// Возвращает HTML с <del class="wd"> (удалено) и <ins class="wd"> (добавлено).
+function wordDiff(oldText, newText){
+  // Токенизируем, сохраняя слова и разделители (пробелы/переносы) как отдельные токены —
+  // так структура текста (абзацы) не ломается.
+  const tok=s=>(s||'').match(/\s+|[^\s]+/g)||[];
+  const a=tok(oldText), b=tok(newText);
+  const n=a.length, m=b.length;
+  // LCS-таблица. Для очень длинных текстов ограничиваем, чтобы не съесть память.
+  if(n*m>4_000_000){
+    // Грубый fallback: показываем целиком как замену.
+    return `<del class="wd">${esc(oldText||'')}</del><ins class="wd">${esc(newText||'')}</ins>`;
+  }
+  const dp=Array.from({length:n+1},()=>new Uint32Array(m+1));
+  for(let i=n-1;i>=0;i--)
+    for(let j=m-1;j>=0;j--)
+      dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+  let i=0,j=0,html='',delBuf='',insBuf='';
+  const flush=()=>{
+    if(delBuf){ html+=`<del class="wd">${esc(delBuf)}</del>`; delBuf=''; }
+    if(insBuf){ html+=`<ins class="wd">${esc(insBuf)}</ins>`; insBuf=''; }
+  };
+  while(i<n&&j<m){
+    if(a[i]===b[j]){ flush(); html+=esc(a[i]); i++; j++; }
+    else if(dp[i+1][j]>=dp[i][j+1]){ delBuf+=a[i]; i++; }
+    else { insBuf+=b[j]; j++; }
+  }
+  while(i<n){ delBuf+=a[i]; i++; }
+  while(j<m){ insBuf+=b[j]; j++; }
+  flush();
+  return html;
+}
+// Открывает блок сравнения двух текстов через wordDiff.
+function openWordDiff(title, oldText, newText, backFn){
+  const dw=( (newText||'').match(/\S+/g)||[] ).length-( (oldText||'').match(/\S+/g)||[] ).length;
+  const dc=(newText||'').length-(oldText||'').length;
+  const human=(v,unit)=> (v>0?'+':'')+v+' '+unit;
+  openDrawer(title,
+    `<div class="hint" style="margin-bottom:8px">Красным — удалено, зелёным — добавлено (по словам). `+
+    `${human(dw,'сл.')} · ${human(dc,'симв.')}</div>`+
+    `<div class="diff-box">${wordDiff(oldText,newText)}</div>`+
+    (backFn?`<div class="actions" style="margin-top:12px"><button class="btn ghost" id="wd-back">← Назад</button></div>`:''),
+    backFn?b=>{ b.querySelector('#wd-back').onclick=backFn; }:undefined);
 }
 
 /* ============ DRAWER ============ */
@@ -1343,8 +1396,9 @@ function openNode(id){
       const label = i === 0 ? '(текущая)' : 'от ' + d.toLocaleTimeString('ru');
       const wc = Math.round((v.output||'').split(/\s+/).length);
       versSection += `<div class="ver-row">
-        <span class="ver-label">Версия ${n.outputVersions.length - i} ${esc(label)}</span>
+        <span class="ver-label">Версия ${n.outputVersions.length - i} ${esc(label)}${v.manual?' <span class="ver-tag">✎ ручная</span>':''}</span>
         <span class="ver-meta">${wc} сл.</span>
+        ${i > 0 ? `<button class="btn ghost xs" data-action="diff-version" data-node="${n.id}" data-ver="${i}" title="Сравнить с текущей">±</button>` : ''}
         ${i > 0 ? `<button class="btn ghost xs" data-action="restore-version" data-node="${n.id}" data-ver="${i}">↩</button>` : ''}
       </div>`;
     });
@@ -1389,6 +1443,7 @@ function openNode(id){
       <button class="btn ghost" id="f-run">▶ Прогнать</button>
       <button class="btn ghost" data-action="run-from" data-id="${n.id}">▶▶ Прогнать отсюда вниз</button>
       <button class="btn ghost" id="f-preview">👁 Промт</button>
+      ${n.output?`<button class="btn ghost" id="f-edit">✎ Править вручную</button>`:''}
       <button class="btn ghost" id="f-clone">⧉ Дублировать</button>
       <button class="btn danger" id="f-del">Удалить</button></div>
     ${hist}
@@ -1426,7 +1481,60 @@ function openNode(id){
     b.querySelector('#f-preview').onclick=()=>{ collect(); showPromptPreview(n).catch(e=>console.warn('preview error',e)); };
     b.querySelector('#f-del').onclick=()=>{ state.nodes=state.nodes.filter(x=>x.id!==n.id); state.edges=state.edges.filter(e=>e.from!==n.id&&e.to!==n.id); save(); render(); closeDrawer(); toast('Агент удалён'); };
     b.querySelector('#f-clone').onclick=()=>{ collect(); const copy=JSON.parse(JSON.stringify(n)); copy.id=uid(); copy.x=n.x+30; copy.y=n.y+30; copy.output=''; copy.summary=''; copy.cacheHash=''; copy.tokensIn=0; copy.tokensOut=0; copy.ms=0; copy.status='idle'; copy.error=''; copy.approved=false; copy.promptHistory=[]; state.nodes.push(copy); save(); render(); closeDrawer(); toast('Агент скопирован','ok'); };
+    b.querySelector('#f-edit')?.addEventListener('click',()=>openManualEdit(n.id));
     b.querySelectorAll('[data-revert]').forEach(btn=>btn.onclick=()=>{ const h=n.promptHistory[+btn.dataset.revert]; if(h){ b.querySelector('#f-prompt').value=h.prompt; toast('Версия подставлена — нажмите Сохранить'); } });
+  });
+}
+/* ============ РУЧНАЯ ПРАВКА ВЫВОДА (Item 18/19) ============ */
+function pushOutputVersion(n,extra={}){
+  if(!n.outputVersions) n.outputVersions=[];
+  n.outputVersions.unshift(Object.assign({ts:Date.now(),output:n.output,tokensIn:0,tokensOut:tokEst(n.output)},extra));
+  if(n.outputVersions.length>5) n.outputVersions=n.outputVersions.slice(0,5);
+}
+function openManualEdit(id){
+  const n=node(id); if(!n) return;
+  openDrawer(`✎ Правка вывода — ${esc(n.name)}`,`
+    <div class="hint" style="margin-top:0">Отредактируйте текст. Сохранение создаёт новую версию (помечена «ручная»). Выделите фрагмент и нажмите «🔄 Переписать выделенное» для точечной перегенерации через ИИ.</div>
+    <textarea id="me-text" class="manual-edit-ta" rows="18">${esc(n.output||'')}</textarea>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn ok" id="me-save">💾 Сохранить правку</button>
+      <button class="btn ghost" id="me-regen">🔄 Переписать выделенное</button>
+      <button class="btn ghost" id="me-back">← Назад</button>
+    </div>
+    <div class="hint" id="me-status" style="min-height:16px"></div>
+  `,b=>{
+    const ta=b.querySelector('#me-text');
+    b.querySelector('#me-save').onclick=()=>{
+      const val=ta.value;
+      if(val===n.output){ toast('Текст не изменился'); return; }
+      pushOutputVersion(n,{manual:true}); // фиксируем ПРЕДЫДУЩИЙ вывод как версию
+      n.output=val; n.error=''; if(n.status==='idle') n.status='done';
+      save(); render();
+      toast('Правка сохранена как новая версия','ok');
+      openNode(n.id);
+    };
+    b.querySelector('#me-back').onclick=()=>openNode(n.id);
+    b.querySelector('#me-regen').onclick=async()=>{
+      const s=ta.selectionStart, e=ta.selectionEnd;
+      const frag=ta.value.slice(s,e);
+      if(!frag.trim()){ toast('Сначала выделите фрагмент в тексте','err'); return; }
+      if(!hasKey()){ toast('Не задан API-ключ','err'); return; }
+      const st=b.querySelector('#me-status'); st.textContent='🔄 Переписываю выделенное…';
+      const btn=b.querySelector('#me-regen'); btn.disabled=true;
+      try{
+        const res=await callLLM(cfg(n),[
+          {role:'system',content:'Улучши этот фрагмент художественного текста, верни ТОЛЬКО переписанный фрагмент без пояснений.'},
+          {role:'user',content:frag}
+        ]);
+        const repl=(res||'').trim();
+        if(!repl){ st.textContent=''; toast('Пустой ответ модели','err'); return; }
+        ta.value=ta.value.slice(0,s)+repl+ta.value.slice(e);
+        // Выделяем вставленный фрагмент
+        ta.focus(); ta.setSelectionRange(s,s+repl.length);
+        st.textContent='✅ Фрагмент переписан. Не забудьте «Сохранить правку».';
+      }catch(err){ st.textContent=''; toast('Ошибка: '+err.message,'err'); }
+      finally{ btn.disabled=false; }
+    };
   });
 }
 function openSettings(){
@@ -2034,6 +2142,19 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
       toast('Версия восстановлена');
     }
   }
+  else if(a==='diff-version'){
+    const n=node(t.dataset.node);
+    const verIdx=parseInt(t.dataset.ver);
+    const v=n&&n.outputVersions?.[verIdx];
+    if(v) openWordDiff(`± Версия ${n.outputVersions.length-verIdx} ↔ текущая — ${esc(n.name)}`,
+      v.output||'', n.output||'', ()=>openNode(n.id));
+  }
+  else if(a==='baseline-textdiff'){
+    const n=node(id);
+    const bln=state.baseline&&state.baseline.nodes[id];
+    if(n&&bln) openWordDiff(`± Изменения текста — ${esc(n.name)}`,
+      bln.output||'', n.output||'', ()=>openBaselineCompare());
+  }
   else if(a === 'pick-variant'){
     const n = node(t.dataset.id);
     const vi = parseInt(t.dataset.vi);
@@ -2538,10 +2659,12 @@ function openBaselineCompare(){
     const dw=wc-bln.words;
     const col=delta>0?'var(--ok)':delta<0?'var(--err)':'var(--faint)';
     const sign=delta>=0?'+':'';
+    const canDiff=bln.output!=null;
     return `<div class="histrow" style="flex-wrap:wrap;gap:4px">
       <b style="min-width:130px">${esc(cur.name)}</b>
       <span style="color:${col};font-size:11px">${sign}${delta} симв. (${sign}${pct}%)</span>
       <span style="color:var(--faint);font-size:11px">${sign}${dw} слов · было ${bln.len}→стало ${cur.output.length}</span>
+      ${canDiff?`<button class="btn ghost xs" data-action="baseline-textdiff" data-id="${id}" title="Показать изменения текста">± текст</button>`:''}
     </div>`;
   }).join('');
   const newNodes=state.nodes.filter(n=>n.output&&!bl.nodes[n.id]);
