@@ -3293,7 +3293,16 @@ function nodeInBook(n){
   return defaultIncludeInBook(roleKeyOf(n));
 }
 // Узлы для книги в правильном порядке (топологическом).
-function bookNodes(){ return topoOrder().map(id=>node(id)).filter(nodeInBook); }
+function bookNodes(){
+  const ordered=topoOrder().map(id=>node(id)).filter(nodeInBook);
+  // Из цепочки «контентных» узлов (writer→line→proof) брать только ФИНАЛЬНЫЙ:
+  // Если у узла есть downstream-потомок, который тоже входит в книгу — узел промежуточный, не включать.
+  const inBookSet=new Set(ordered.map(n=>n.id));
+  return ordered.filter(n=>{
+    const hasBookDescendant=state.edges.some(e=>e.from===n.id && !e.isLoop && inBookSet.has(e.to));
+    return !hasBookDescendant;
+  });
+}
 // Заголовок главы: явный chapterTitle → первый H1/H2 из вывода → «Глава N».
 function chapterTitleOf(n,index){
   if(n.chapterTitle&&n.chapterTitle.trim()) return n.chapterTitle.trim();
