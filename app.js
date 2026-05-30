@@ -606,16 +606,25 @@ function conceptBlock(){
   const tone=(c.tone||'').trim();
   const chars=(Array.isArray(c.characters)?c.characters:[]).filter(p=>p&&((p.name||'').trim()||(p.role||'').trim()||(p.brief||'').trim()));
   if(!setting&&!plotTurns&&!tone&&!chars.length) return '';
+  // Детальные карточки персонажей — ключ к живым текстам
   const charsStr=chars.map(p=>{
-    const nm=(p.name||'').trim(); const rl=(p.role||'').trim(); const br=(p.brief||'').trim();
-    return nm+(rl?` (${rl})`:'')+(br?` — ${br}`:'');
-  }).join('; ');
-  let out='ЗАМЫСЕЛ КНИГИ (канон — соблюдать строго):';
-  if(setting) out+=`\nМесто и время: ${setting}`;
-  if(charsStr) out+=`\nПерсонажи: ${charsStr}`;
-  if(plotTurns) out+=`\nКлючевые повороты: ${plotTurns}`;
-  if(tone) out+=`\nТон: ${tone}`;
-  return out;
+    const parts=[];
+    const nm=(p.name||'').trim(); const age=(p.age||'').trim(); const rl=(p.role||'').trim();
+    const br=(p.brief||'').trim(); const sec=(p.secret||'').trim();
+    const det=(p.detail||'').trim(); const mot=(p.motive||'').trim();
+    let line=nm+(age?' ('+age+' лет)':'')+(rl?' — '+rl:'');
+    if(br) line+=': '+br;
+    if(sec) parts.push('Тайна: '+sec);
+    if(det) parts.push('Деталь: '+det);
+    if(mot) parts.push('Хочет: '+mot);
+    return line+(parts.length?'\n    '+parts.join(' | '):'');
+  }).join('\n  ');
+  let out='ЗАМЫСЕЛ КНИГИ (канон — соблюдать строго):\n';
+  if(setting) out+=`Место и время: ${setting}\n`;
+  if(charsStr) out+=`Персонажи:\n  ${charsStr}\n`;
+  if(plotTurns) out+=`Ключевые повороты: ${plotTurns}\n`;
+  if(tone) out+=`Тон: ${tone}`;
+  return out.trim();
 }
 async function buildMessages(n){
   const pr=state.project;
@@ -2857,40 +2866,59 @@ function openBible(){
 function openConcept(){
   const c=(state.project.concept)||(state.project.concept={setting:'',characters:[],plotTurns:'',tone:''});
   if(!Array.isArray(c.characters)) c.characters=[];
-  const charRows=c.characters.map((p,i)=>`<div class="concept-char-row" data-ci="${i}">
-    <input class="cc-name" value="${esc(p.name||'')}" placeholder="Имя">
-    <input class="cc-role" value="${esc(p.role||'')}" placeholder="Роль">
-    <input class="cc-brief" value="${esc(p.brief||'')}" placeholder="Краткая характеристика">
-    <button class="icon-btn" data-delchar="${i}">✕</button></div>`).join('');
+  const charCards=c.characters.map((p,i)=>`
+    <div class="cc-card" data-ci="${i}">
+      <div class="cc-card-head">
+        <span class="cc-card-emoji">🎭</span>
+        <input class="cc-name" value="${esc(p.name||'')}" placeholder="Имя персонажа" style="font-weight:700;flex:1">
+        <input class="cc-age" value="${esc(p.age||'')}" placeholder="Возраст" style="width:80px">
+        <button class="icon-btn" data-delchar="${i}" style="flex:none">✕</button>
+      </div>
+      <div class="cc-card-body">
+        <div class="cc-field"><label>Роль в истории</label><input class="cc-role" value="${esc(p.role||'')}" placeholder="Протагонист / антагонист / подозреваемый…"></div>
+        <div class="cc-field"><label>Характер и суть</label><input class="cc-brief" value="${esc(p.brief||'')}" placeholder="1 предложение — кто этот человек"></div>
+        <div class="cc-field cc-secret"><label>🔒 Что скрывает</label><input class="cc-hide" value="${esc(p.secret||'')}" placeholder="Главная тайна персонажа — мотив, ложь, страх"></div>
+        <div class="cc-field"><label>✨ Живая деталь</label><input class="cc-det" value="${esc(p.detail||'')}" placeholder="Одна конкретная черта: жест, привычка, деталь внешности"></div>
+        <div class="cc-field"><label>🎯 Чего хочет</label><input class="cc-mot" value="${esc(p.motive||'')}" placeholder="Главная цель или желание в этой истории"></div>
+      </div>
+    </div>`).join('');
   openDrawer('🧭 Замысел книги',`
-    <p class="hint" style="margin-top:0">Фундамент книги: мир, персонажи, ключевые повороты. Заполните сами или сгенерируйте ИИ из брифа — он уйдёт каноном во всех агентов.</p>
-    <div class="actions" style="margin:0 0 12px"><button class="btn ghost" id="cn-gen">🪄 Сгенерировать из брифа</button></div>
-    <label class="fld-label">Место и время действия</label>
-    <textarea id="cn-setting" rows="2" placeholder="Где и когда происходит действие">${esc(c.setting||'')}</textarea>
-    <label class="fld-label" style="margin-top:12px">Персонажи</label>
-    <div id="concept-chars">${charRows||'<div class="hint" style="color:var(--faint)">Пока никого. Добавьте персонажа.</div>'}</div>
-    <button class="btn ghost" id="cn-addchar" style="margin-top:8px">＋ персонаж</button>
-    <label class="fld-label" style="margin-top:12px">Ключевые повороты сюжета</label>
-    <textarea id="cn-plot" rows="3" placeholder="3-5 ключевых поворотов">${esc(c.plotTurns||'')}</textarea>
-    <label class="fld-label" style="margin-top:12px">Тон / настроение</label>
-    <input id="cn-tone" value="${esc(c.tone||'')}" placeholder="Например: мрачный, ироничный, тёплый">
+    <p class="hint" style="margin-top:0">Фундамент книги. Чем подробнее карточки персонажей — тем живее текст. Каждое поле уйдёт каноном во всех агентов.</p>
+    <div class="actions" style="margin:0 0 14px;gap:8px">
+      <button class="btn ghost" id="cn-gen">🪄 Сгенерировать из брифа</button>
+      <button class="btn ghost" id="cn-deepen">🎭 Углубить персонажей</button>
+    </div>
+    <div class="field"><label>Место и время действия</label>
+      <textarea id="cn-setting" rows="2" placeholder="Где и когда. Чем конкретнее — тем лучше">${esc(c.setting||'')}</textarea></div>
+    <div style="margin-top:14px;margin-bottom:8px;font-size:12px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.05em">Персонажи</div>
+    <div id="concept-chars">${charCards||'<div class="lr-empty">Нет персонажей. Сгенерируйте или добавьте вручную.</div>'}</div>
+    <button class="btn ghost sm" id="cn-addchar" style="margin-top:10px">＋ добавить персонажа</button>
+    <div class="field" style="margin-top:14px"><label>Ключевые повороты сюжета</label>
+      <textarea id="cn-plot" rows="4" placeholder="3-5 поворотов — конкретно: что происходит, чем удивляет читателя">${esc(c.plotTurns||'')}</textarea></div>
+    <div class="field"><label>Тон / настроение</label>
+      <input id="cn-tone" value="${esc(c.tone||'')}" placeholder="Мрачный, ироничный, лирический, жёсткий…"></div>
     <div class="actions" style="margin-top:16px">
-      <button class="btn ok" id="cn-save">💾 Сохранить</button>
+      <button class="btn ok" id="cn-save">💾 Сохранить замысел</button>
       <button class="btn ghost" id="cn-clear">🗑 Очистить</button></div>
   `,b=>{
     const collect=()=>{
       c.setting=b.querySelector('#cn-setting').value.trim();
       c.plotTurns=b.querySelector('#cn-plot').value.trim();
       c.tone=b.querySelector('#cn-tone').value.trim();
-      c.characters=[...b.querySelectorAll('.concept-char-row')].map(r=>({
-        name:r.querySelector('.cc-name').value.trim(),
-        role:r.querySelector('.cc-role').value.trim(),
-        brief:r.querySelector('.cc-brief').value.trim()
+      c.characters=[...b.querySelectorAll('.cc-card')].map(r=>({
+        name:(r.querySelector('.cc-name')?.value||'').trim(),
+        age:(r.querySelector('.cc-age')?.value||'').trim(),
+        role:(r.querySelector('.cc-role')?.value||'').trim(),
+        brief:(r.querySelector('.cc-brief')?.value||'').trim(),
+        secret:(r.querySelector('.cc-hide')?.value||'').trim(),
+        detail:(r.querySelector('.cc-det')?.value||'').trim(),
+        motive:(r.querySelector('.cc-mot')?.value||'').trim()
       })).filter(p=>p.name||p.role||p.brief);
     };
-    b.querySelector('#cn-addchar').onclick=()=>{ collect(); c.characters.push({name:'',role:'',brief:''}); save(); openConcept(); };
+    b.querySelector('#cn-addchar').onclick=()=>{ collect(); c.characters.push({name:'',age:'',role:'',brief:'',secret:'',detail:'',motive:''}); save(); openConcept(); };
     b.querySelectorAll('[data-delchar]').forEach(x=>x.onclick=()=>{ collect(); c.characters.splice(+x.dataset.delchar,1); save(); openConcept(); });
     b.querySelector('#cn-gen').onclick=()=>generateConcept();
+    b.querySelector('#cn-deepen').onclick=()=>deepenCharacters(collect);
     b.querySelector('#cn-save').onclick=()=>{ collect(); save(); toast('Замысел сохранён','ok'); closeDrawer(); };
     b.querySelector('#cn-clear').onclick=()=>{ c.setting='';c.characters=[];c.plotTurns='';c.tone=''; save(); openConcept(); toast('Замысел очищен'); };
   });
@@ -2901,7 +2929,7 @@ async function generateConcept(silent){
   const pr=state.project;
   const c=cfg({useGlobal:true});
   c.temperature=0.7;
-  const sys='Ты — редактор-разработчик. На основе брифа, жанра и аудитории создай ЗАМЫСЕЛ книги. Верни СТРОГО JSON: {"setting":"место и время","characters":[{"name":"","role":"","brief":"кратко 1 предложение"}],"plotTurns":"3-5 ключевых поворотов списком","tone":"тон/настроение"}. Только JSON.';
+  const sys='Ты — редактор-разработчик. Создай детальный ЗАМЫСЕЛ книги. Верни СТРОГО JSON:\n{"setting":"место, время, атмосфера — 1-2 предложения","characters":[{"name":"Имя Фамилия","age":"возраст","role":"роль в истории","brief":"суть персонажа — 1 предложение","secret":"главная тайна или скрытый мотив — конкретно","detail":"одна живая деталь: жест/привычка/черта внешности","motive":"чего хочет в этой истории — конкретно"}],"plotTurns":"3-5 конкретных поворотов сюжета (не общих фраз — именно что происходит)","tone":"тон и настроение"}. Только JSON. Персонажей 3-5, все с заполненными полями.';
   const usr=`Бриф: ${pr.brief||'не задан'}\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}`;
   if(!silent) toast('Генерирую замысел…');
   try{
@@ -2915,7 +2943,9 @@ async function generateConcept(silent){
     concept.plotTurns=String(data.plotTurns||'').trim();
     concept.tone=String(data.tone||'').trim();
     concept.characters=(Array.isArray(data.characters)?data.characters:[]).map(p=>({
-      name:String(p.name||'').trim(), role:String(p.role||'').trim(), brief:String(p.brief||'').trim()
+      name:String(p.name||'').trim(), age:String(p.age||'').trim(), role:String(p.role||'').trim(),
+      brief:String(p.brief||'').trim(), secret:String(p.secret||'').trim(),
+      detail:String(p.detail||'').trim(), motive:String(p.motive||'').trim()
     })).filter(p=>p.name||p.role||p.brief);
     save();
     if(!silent){ openConcept(); toast('Замысел сгенерирован','ok'); }
@@ -2925,6 +2955,35 @@ async function generateConcept(silent){
     if(!silent) toast('Не удалось разобрать ответ модели','err');
     throw err;
   }
+}
+// Углубляет существующие карточки персонажей — добавляет тайны, детали, мотивы
+async function deepenCharacters(collectFn){
+  if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }
+  if(collectFn) collectFn(); // сохранить текущие данные из полей перед LLM-вызовом
+  const c=state.project.concept; const pr=state.project;
+  if(!c||!(c.characters||[]).length){ toast('Сначала добавьте персонажей в замысел','warn'); return; }
+  toast('Углубляю персонажей…');
+  const existing=c.characters.map(p=>`${p.name||'?'} (${p.role||'?'}): ${p.brief||'нет описания'}`).join('\n');
+  const sys=`Ты — редактор-разработчик. Для каждого персонажа списка добавь недостающие поля. Верни СТРОГО JSON-массив с теми же персонажами но с заполненными полями: [{"name":"","age":"","role":"","brief":"","secret":"конкретная тайна или скрытый мотив — не банальность","detail":"одна живая деталь: специфический жест, привычка, вещь которую носит","motive":"чего хочет в этой конкретной истории"}]. Только JSON-массив.`;
+  const usr=`Книга: «${pr.title||'без названия'}», жанр: ${pr.genre||'?'}\nБриф: ${pr.brief||'?'}\n\nПерсонажи:\n${existing}`;
+  try{
+    const resp=await callLLM({baseURL:state.global.baseURL,apiKey:pickKey(),model:state.global.model,temperature:0.8},[{role:'system',content:sys},{role:'user',content:usr}]);
+    let txt=(resp||'').trim(); if(txt.startsWith('```')) txt=txt.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');
+    const arr=JSON.parse(txt);
+    if(!Array.isArray(arr)) throw new Error('ответ не массив');
+    // Мерж: обновляем поля, сохраняя вручную введённые имена
+    c.characters=arr.map((p,i)=>({
+      ...(c.characters[i]||{}),
+      name:String(p.name||c.characters[i]?.name||'').trim(),
+      age:String(p.age||c.characters[i]?.age||'').trim(),
+      role:String(p.role||c.characters[i]?.role||'').trim(),
+      brief:String(p.brief||c.characters[i]?.brief||'').trim(),
+      secret:String(p.secret||'').trim()||c.characters[i]?.secret||'',
+      detail:String(p.detail||'').trim()||c.characters[i]?.detail||'',
+      motive:String(p.motive||'').trim()||c.characters[i]?.motive||''
+    })).filter(p=>p.name||p.role||p.brief);
+    save(); openConcept(); toast('Персонажи углублены ✓','ok');
+  }catch(err){ toast('Ошибка: '+String(err.message||err).slice(0,80),'err'); }
 }
 async function autoBuildBible(){
   if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }

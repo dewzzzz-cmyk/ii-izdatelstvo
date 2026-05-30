@@ -1142,3 +1142,16 @@ body[data-view="reader"] .book-inspector{
   border-radius:8px;padding:7px 9px;font-size:12.5px;font-family:inherit;min-width:0}
 .concept-char-row input:focus{outline:none;border-color:var(--accent)}
 .concept-char-row .icon-btn{flex-shrink:0}
+
+/* ═══ Карточки персонажей в Замысле ═══ */
+.cc-card{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:0;margin-bottom:10px;overflow:hidden}
+.cc-card-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel3)}
+.cc-card-emoji{font-size:18px;flex:none}
+.cc-card-body{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
+.cc-field{display:flex;flex-direction:column;gap:3px}
+.cc-field label{font-size:10.5px;color:var(--faint);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.cc-field input{background:var(--panel);border:1px solid var(--line2);border-radius:7px;padding:6px 9px;color:var(--txt);font-size:12.5px;font-family:inherit}
+.cc-field input:focus{outline:none;border-color:var(--accent)}
+.cc-secret .cc-field label{color:#f87171}
+.cc-secret input{border-color:#3d1f1f}
+.cc-secret input:focus{border-color:#f87171}
