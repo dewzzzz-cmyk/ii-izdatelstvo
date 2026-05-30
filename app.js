@@ -812,11 +812,9 @@ async function buildMessages(n){
     styleSample=pr.styleRef.slice(0,3000);
     if(typeof typo==='function'){ try{ styleSample=typo(styleSample); }catch(e){} }
   }
-  const styleBlock = pr.styleRef
-    ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${styleSample}\n"""`
-    : '';
   // 🎓 Школа стиля: профиль(и) стиля инжектятся только в пишущие роли
-  const wr=['writer','line','logedit','fanout','beatsheet'].includes(roleKeyOf(n));
+  // passportBlock строим первым — он нужен для условия styleBlock
+  const wr=['writer','line','fanout','beatsheet'].includes(roleKeyOf(n));
   let passportBlock='';
   if(wr){
     const lib=Array.isArray(state.styleLibrary)?state.styleLibrary:[];
@@ -845,6 +843,10 @@ async function buildMessages(n){
       passportBlock='\n\nПАСПОРТ СТИЛЯ (пиши строго в этой манере, но СВОИМ сюжетом и словами — не копируй источник):\n'+pr.stylePassport + (pr.engagementPatterns?'\n\nПРИЁМЫ ВОВЛЕЧЕНИЯ (применяй):\n'+pr.engagementPatterns:'');
     }
   }
+  // styleBlock и passportBlock взаимоисключают: если задан паспорт из библиотеки — сырой образец не нужен
+  const styleBlock = pr.styleRef && !passportBlock
+    ? `\n\nСТИЛЬ АВТОРА (имитируй этот голос — ритм, лексику, длину предложений):\n"""\n${styleSample}\n"""`
+    : '';
   const preds=state.edges.filter(e=>e.to===n.id).map(e=>node(e.from)).filter(Boolean);
   const budget=(n.contextChars&&n.contextChars>0)?n.contextChars:(state.global.maxContextChars||8000);
   const predsWithOutput=preds.filter(p=>p.output);
@@ -874,10 +876,13 @@ async function buildMessages(n){
   };
   // Если автор использует {{prev}} — он сам управляет вставкой материалов предков, авто-блок не дублируем
   const usesPrevVar=/\{\{\s*prev(\.[\w.а-яА-ЯёЁ]+)?\s*\}\}/.test(n.prompt||'');
+  // rk нужен раньше (conceptBlock, toneHint) — поднимаем объявление
+  const rk=roleKeyOf(n);
   let user='';
   if(bible) user+=`Библия книги (канон, соблюдать строго):\n${bible}\n\n`;
-  const concept=conceptBlock();
-  if(concept) user+=concept+'\n\n';
+  // conceptBlock пропускаем для proof/logedit — экономим ~400-600 токенов
+  const useConceptBlock=!['proof','logedit'].includes(rk);
+  if(useConceptBlock){ const concept=conceptBlock(); if(concept) user+=concept+'\n\n'; }
   user+=`Книга: «${pr.title||'без названия'}»\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}\n`+
     `Режим: ${pr.mode==='write'?'пишем с нуля':'редактируем готовый текст'}\n`+(pr.brief?`Бриф: ${pr.brief}\n`:'');
   if(pr.mode==='edit'&&pr.input&&preds.length===0) user+=`\nИсходный текст:\n${pr.input}\n`;
@@ -890,9 +895,8 @@ async function buildMessages(n){
   const banBlock = state.global.banList
     ? `\n\nСТОП-СЛОВА — НЕЛЬЗЯ использовать в тексте (ни в каком виде): ${state.global.banList.replace(/\n/g,', ')}`
     : '';
-  // Жанровая подсказка по тону — автоматически для пишущих агентов
-  const rk=roleKeyOf(n);
-  const toneHint=(['writer','line','proof','fanout'].includes(rk)&&genreToneHint())
+  // Жанровая подсказка по тону — автоматически для пишущих агентов (не для корректора)
+  const toneHint=(['writer','line','fanout'].includes(rk)&&genreToneHint())
     ? `\n\nСТИЛЬ И ТОН ДЛЯ ЖАНРА «${state.project.genre||''}»: ${genreToneHint()}`
     : '';
   // #44: прогоняем промт через interpolate ПЕРЕД отправкой
@@ -2162,7 +2166,7 @@ async function runNode(id){
       n.lastRequest={ messages: msgs, model: c.model, temperature: c.temperature, ts: Date.now() };
       n.lastRawOutput=acc; // сырой ответ ДО postProcess
       n.output=acc; n.summary=acc.length>600?acc.slice(0,600)+'…':acc; n.cacheHash=hash;
-      if(state.global.autoSummarize&&acc.length>800){
+      if(state.global.autoSummarize && false && acc.length>800){ // v2: отключено (лишний LLM-вызов)
         try{ const sc=cfg(n);
           const sr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({baseURL:sc.baseURL,apiKey:sc.apiKey,model:sc.model,temperature:0.3,proxyToken:state.global.proxyToken,
@@ -2990,7 +2994,7 @@ function openSettings(){
       </div></div>
       <div class="field"><label>Ретраи при сбое</label><input id="g-retry" type="number" min="0" max="5" value="${g.maxRetries}"></div></div>
     <div class="field"><label>Токен прокси (если выложен в сеть)</label><input id="g-ptok" value="${esc(g.proxyToken)}" placeholder="не обязательно"></div>
-    <label class="check"><input type="checkbox" id="g-summ" ${g.autoSummarize?'checked':''}> Авто-саммари узлов (доп. вызов LLM после каждого агента)</label>
+    <label class="check" style="display:none"><input type="checkbox" id="g-summ" ${g.autoSummarize?'checked':''}> Авто-саммари узлов (доп. вызов LLM после каждого агента)</label>
     <label class="check"><input type="checkbox" id="g-bible-extract" ${g.autoBibleExtract?'checked':''}> Авто-Библия: извлекать персонажей и факты после каждой главы</label>
     <label class="check"><input type="checkbox" id="g-auto-distill" ${g.autoDistill?'checked':''}> Авто-сжатие: сжимать длинный контекст перед передачей агентам</label>
     <label class="check"><input type="checkbox" id="g-eval" ${g.autoEval?'checked':''}> Авто-оценка после пайплайна (LLM-judge: 4 критерия, запись в журнал)</label>
@@ -4066,23 +4070,27 @@ const LENGTHS = [
 // from = проверяющий агент, to = к кому возвращаем на доработку, base = базовый порог 1–10.
 const PROJECT_TPLS = {
   solo:{ label:'🤖 Соло-агент', icon:'🤖', roles:['writer'], loops:[], brief:'Один агент — задаёте промт, получаете результат' },
-  story:{ label:'📖 Рассказ', icon:'📖', roles:['scout','writer','logedit','proof'], loops:[], brief:'Короткий рассказ' },
-  nonfic:{ label:'📚 Нон-фикшн', icon:'📚', roles:['scout','dev','writer','factcheck','meta'], loops:[], brief:'Книга на основе экспертизы автора' },
-  novel:{ label:'✍️ Роман', icon:'✍️', roles:['scout','dev','writer','logedit','line','proof','continuity','art','layout','meta','mkt'], loops:[], brief:'Полный производственный цикл' },
-  chapters:{ label:'🗂 Роман по главам', icon:'🗂', roles:['scout','dev','fanout','proof'], loops:[], brief:'Роман с параллельной записью глав' },
-  beatsheet:{ label:'🎬 Save The Cat', icon:'🎬', roles:['scout','beatsheet','writer','proof'], loops:[], brief:'Структура Save The Cat — 15 битов' },
+  // scout убран из дефолтного пайплайна (можно добавить вручную через палитру)
+  story:{ label:'📖 Рассказ', icon:'📖', roles:['writer','logedit','proof'], loops:[], brief:'Короткий рассказ' },
+  nonfic:{ label:'📚 Нон-фикшн', icon:'📚', roles:['dev','writer','factcheck','meta'], loops:[], brief:'Книга на основе экспертизы автора' },
+  // novel: убраны scout, factcheck, art, layout, mkt; logedit перед line
+  novel:{ label:'✍️ Роман', icon:'✍️', roles:['dev','writer','logedit','line','proof','continuity','meta'], loops:[], brief:'Полный производственный цикл' },
+  chapters:{ label:'🗂 Роман по главам', icon:'🗂', roles:['dev','fanout','proof'], loops:[], brief:'Роман с параллельной записью глав' },
+  beatsheet:{ label:'🎬 Save The Cat', icon:'🎬', roles:['beatsheet','writer','proof'], loops:[], brief:'Структура Save The Cat — 15 битов' },
   // ── Издательские циклы с перепроверкой (петли авто-оценки) ──
   qualityloop:{ label:'🔁 Редактура до качества', icon:'🔁',
     roles:['dev','writer','logedit','proof'],
     loops:[ {from:2,to:1,base:8,name:'Литред → доработка'}, {from:3,to:2,base:9,name:'Корректор → доработка'} ],
     brief:'Литред и корректор возвращают текст на доработку, пока оценка не достигнет порога' },
+  // house: убраны scout и factcheck (художественный цикл); logedit перед line
+  // roles indices: 0=dev,1=writer,2=continuity,3=logedit,4=line,5=proof,6=meta
   house:{ label:'🏛 Издательство — полный цикл', icon:'🏛',
-    roles:['scout','dev','writer','continuity','line','proof','factcheck','meta'],
-    loops:[ {from:3,to:2,base:8,name:'Контроль логики → автор'}, {from:4,to:2,base:8,name:'Литред → автор'}, {from:5,to:4,base:9,name:'Корректор → литред'} ],
+    roles:['dev','writer','continuity','logedit','line','proof','meta'],
+    loops:[ {from:3,to:1,base:8,name:'Логред → автор'}, {from:4,to:1,base:8,name:'Литред → автор'}, {from:5,to:4,base:9,name:'Корректор → литред'} ],
     brief:'Производственный цикл как в издательстве: автор → проверки непротиворечивости, литредактуры и корректуры с возвратами на доработку' },
   nonficcheck:{ label:'📋 Нон-фикшн с фактчеком', icon:'📋',
-    roles:['scout','dev','writer','factcheck','proof'],
-    loops:[ {from:3,to:2,base:8,name:'Фактчек → автор'} ],
+    roles:['dev','writer','factcheck','proof'],
+    loops:[ {from:2,to:1,base:8,name:'Фактчек → автор'} ],
     brief:'Каждый раздел проходит проверку фактов: при ошибках возвращается автору' },
 };
 // Строит граф из шаблона + применяет настройки (жанр/аудитория/объём/строгость).
