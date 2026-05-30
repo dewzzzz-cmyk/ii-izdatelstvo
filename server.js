@@ -48,7 +48,8 @@ async function handleGenerate(req, res){
         method:'POST',
         headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
         body: JSON.stringify({ model, messages:b.messages||[], stream: wantStream,
-          temperature: typeof b.temperature==='number'? b.temperature : 1.0 }),
+          temperature: typeof b.temperature==='number'? b.temperature : 1.0,
+          ...(b.max_tokens ? {max_tokens: b.max_tokens} : {}) }),
       });
     }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
     if(!up.ok || !up.body){ const t=await up.text().catch(()=> ''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,400)); }
