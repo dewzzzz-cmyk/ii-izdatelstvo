@@ -1155,3 +1155,7 @@ body[data-view="reader"] .book-inspector{
 .cc-secret .cc-field label{color:#f87171}
 .cc-secret input{border-color:#3d1f1f}
 .cc-secret input:focus{border-color:#f87171}
+
+/* ═══ Context fill bar on node cards ═══ */
+.ctx-bar{height:2px;border-radius:1px;background:var(--line2);margin:0 12px 6px}
+.ctx-fill{height:100%;border-radius:1px;transition:.3s}
