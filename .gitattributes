@@ -1,5 +1,7 @@
-# Exclude dev/test files from deployment archive
+# Exclude from deployment archive (git archive)
 test/ export-ignore
-docs/superpowers/ export-ignore
-mockup.html export-ignore
+docs/ export-ignore
 .claude/ export-ignore
+mockup.html export-ignore
+backups/ export-ignore
+ROADMAP.md export-ignore
