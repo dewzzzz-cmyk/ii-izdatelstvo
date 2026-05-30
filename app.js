@@ -71,7 +71,10 @@ function evalCondition(cond,output){
 // Включать ли вывод этого агента в собранную книгу (по роли).
 // true для пишущих/редактирующих прозу ролей; false для служебных (скаут, арт, метаданные и т.п.)
 // Роли, чей OUTPUT идёт в книгу. beatsheet/dev — планировщики, их нет в книге.
-const BOOK_ROLES=new Set(['writer','line','logedit','proof','merge','fanout']);
+// logedit (Логред) исключён из книги: он возвращает АНАЛИЗ + текст вперемешку,
+// cleanProse не может надёжно вычленить только прозу. Логред остаётся в пайплайне
+// для улучшения качества, но в книгу идут только: writer/line/proof/merge/fanout.
+const BOOK_ROLES=new Set(['writer','line','proof','merge','fanout']);
 function defaultIncludeInBook(role){ return BOOK_ROLES.has(role); }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
@@ -753,6 +756,23 @@ function interpolate(tpl, ctx){
   });
 }
 // Замысел книги → блок канона для инжекции во ВСЕХ агентов. '' если пусто.
+// Тон и стиль по жанру — вшивается в промт Райтера автоматически.
+// Жанровая подсказка не блокирует, но направляет: детская книга = юмор, триллер = напряжение.
+const GENRE_TONE_HINTS={
+  'детск':   'Пиши с теплотой, юмором и иронией. Герои решают проблемы сами, взрослые чаще мешают. Диалоги живые и немного смешные.',
+  'фэнтези': 'Пиши с чувством wonder — удивления и восторга. Магия должна ощущаться как чудо. Не забывай про юмор в неожиданных местах.',
+  'сказ':    'Простой ясный язык. Тёплый тон. Повторяющиеся элементы, яркие образы. Добро побеждает — но путь интересный.',
+  'детектив':'Напряжение, недосказанность, короткие абзацы в момент открытия. Каждый персонаж что-то скрывает. Ни одной случайной детали.',
+  'триллер': 'Максимальный саспенс. Короткие предложения в кризисных моментах. Читатель всегда знает чуть меньше чем нужно.',
+  'ужас':    'Атмосфера важнее события. Страх — в деталях: звуках, запахах, ощущениях. Монстр страшнее пока не показан.',
+  'роман':   'Отношения между людьми — центр всего. Внутренний монолог, эмоциональные подтексты, показывай через поступки а не слова.',
+  'нон-фикш':'Ясно, структурировано, с конкретными примерами. Факты через истории людей. Никакой воды.',
+};
+function genreToneHint(){
+  const g=(state.project.genre||'').toLowerCase();
+  for(const [key,hint] of Object.entries(GENRE_TONE_HINTS)){ if(g.includes(key)) return hint; }
+  return '';
+}
 function conceptBlock(){
   const c=(state.project&&state.project.concept)||{};
   const setting=(c.setting||'').trim();
@@ -871,9 +891,14 @@ async function buildMessages(n){
   const banBlock = state.global.banList
     ? `\n\nСТОП-СЛОВА — НЕЛЬЗЯ использовать в тексте (ни в каком виде): ${state.global.banList.replace(/\n/g,', ')}`
     : '';
+  // Жанровая подсказка по тону — автоматически для пишущих агентов
+  const rk=roleKeyOf(n);
+  const toneHint=(['writer','line','proof','fanout'].includes(rk)&&genreToneHint())
+    ? `\n\nСТИЛЬ И ТОН ДЛЯ ЖАНРА «${state.project.genre||''}»: ${genreToneHint()}`
+    : '';
   // #44: прогоняем промт через interpolate ПЕРЕД отправкой
   const sysPrompt=interpolate(n.prompt||'', ctx);
-  return [ {role:'system',content:sysPrompt + styleBlock + passportBlock + banBlock}, {role:'user',content:user} ];
+  return [ {role:'system',content:sysPrompt + styleBlock + passportBlock + toneHint + banBlock}, {role:'user',content:user} ];
 }
 // #35: человеческие тексты ошибок. Сырой код прячем (в лог можно положить полный).
 function humanError(status, rawText){
@@ -5111,6 +5136,14 @@ function renderWorldView(){
       </div>
     </div>`).join('');
 
+  // Проверка «обычного мира» для художественных жанров — критичный пропуск
+  const setting=(state.project.world&&state.project.world.setting)||'';
+  const genre=(state.project.genre||'').toLowerCase();
+  const isFiction=['фэнтези','детект','роман','триллер','ужас','сказ','приключ','фантаст','фанта'].some(g=>genre.includes(g));
+  const hasOrdinaryWorld=/обычн|до|москв|школ|квартир|дом|город|двор|семь|детств|до\s+академи|до\s+магии|до\s+встреч/.test(setting.toLowerCase());
+  const ordinaryWorldWarn = (isFiction && setting && !hasOrdinaryWorld)
+    ? `<div class="world-warn-banner" style="margin-top:8px">📖 В «Место и время» не упомянут обычный мир героя до начала истории. Без этого Райтер начнёт прямо с магии/академии/приключения — пропустит подводку. Добавьте: откуда герой, где жил раньше, что было ДО.</div>`
+    : '';
   const approvedBanner=approved
     ? `<div class="world-approved-banner">✅ Замысел согласован — агенты пишут по канону.</div>`
     : `<div class="world-warn-banner">⚠ Замысел не согласован. Агенты будут писать без канона.</div>`;
@@ -5126,6 +5159,7 @@ function renderWorldView(){
       </div>
     </div>
     ${approvedBanner}
+    ${ordinaryWorldWarn}
 
     <div class="world-section">
       <div class="world-section-head">
