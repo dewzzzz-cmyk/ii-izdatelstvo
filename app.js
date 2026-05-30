@@ -189,9 +189,12 @@ function openBook(id){
   saveCurrentBook();
   const book=loadBooks().find(b=>b.id===id);
   if(!book){ toast('Книга не найдена','warn'); return; }
+  const savedGlobal={...state.global}; // сохраняем ключи/настройки текущей сессии
   state=Object.assign(defaultState(), book.data);
   state._bookId=id;
   if(state.project) state.project=Object.assign({},defaultState().project,state.project);
+  // Ключи не хранятся в библиотеке — восстанавливаем из текущей сессии
+  state.global=Object.assign(state.global, savedGlobal);
   rebuildBibleVecs();
   save(); render(); closeDrawer();
   toast('Открыта книга «'+(book.title||'Без названия')+'»');
@@ -199,7 +202,9 @@ function openBook(id){
 // Создать новую книгу (текущую сохраняем).
 function newBook(){
   saveCurrentBook();
+  const savedGlobal={...state.global}; // сохраняем ключи/настройки
   state=defaultState(); state._bookId=uid();
+  state.global=Object.assign(state.global, savedGlobal); // восстанавливаем настройки
   rebuildBibleVecs();
   save(); render(); closeDrawer();
   toast('Новая книга создана');
