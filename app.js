@@ -4237,6 +4237,21 @@ function buildTemplate(key, opts={}){
   if(opts.title) state.project.title=opts.title;
   const lenTxt = (LENGTHS.find(x=>x.v===opts.lengthWords)||{}).words || '';
   state.project.brief = opts.brief || [t.brief, g?('жанр: '+g.l+', тон '+g.tone):'', lenTxt?('объём: '+lenTxt):''].filter(Boolean).join('. ');
+  // Контекст зависит от объёма и шаблона: роман/повесть → 64K, рассказ → 24K
+  const CTX_BY_TEMPLATE = {
+    solo:24000, story:24000, beatsheet:24000,          // рассказ — 24K достаточно
+    nonfic:32000,                                       // нон-фикшн — чуть больше для фактов
+    novel:64000, chapters:64000, house:64000,           // роман — 64K полная глава
+    qualityloop:64000, nonficcheck:32000                // с перепроверкой — тоже 64K
+  };
+  const CTX_BY_LENGTH = { flash:24000, novella:48000, novel:64000 };
+  const templateCtx = CTX_BY_TEMPLATE[key] || 24000;
+  const lengthCtx = CTX_BY_LENGTH[opts.lengthWords] || 0;
+  state.global.maxContextChars = Math.max(templateCtx, lengthCtx);
+  // Обновляем contextChars Райтера/Fanout пропорционально
+  state.nodes.filter(n=>['writer','fanout'].includes(roleKeyOf(n)))
+    .forEach(n=>{ n.contextChars = state.global.maxContextChars * 1.33 | 0; }); // +33% от глобального
+  logRow('Шаблон','ok',`Контекст: ${Math.round(state.global.maxContextChars/1000)}K (шаблон: ${key}, объём: ${opts.lengthWords||'авто'})`);
   save(); render();
 }
 function applyTemplate(key){ buildTemplate(key, {}); } // для режима «Просто» — без диалога
