@@ -57,6 +57,7 @@ const KDP_CHECKLIST =
 
 /* ============ СОСТОЯНИЕ ============ */
 const KEY='izd_studio_v3';
+const SERIES_KEY='izd_series_v1';
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 // Replacer для безопасной сериализации: вырезает векторы и секреты (ключи, токены).
 const SECRET_KEYS=new Set(['apiKey','apiKeys','proxyToken','gdriveClientId']);
@@ -96,7 +97,7 @@ function defaultState(){
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { _bookId:'',
-    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''}},
+    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''},seriesId:'',bookNumber:1},
     styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
@@ -204,11 +205,20 @@ function openBook(id){
 function newBook(){
   saveCurrentBook();
   const savedGlobal={...state.global}; // сохраняем ключи/настройки
+  const prevSeries=getActiveSeries(); // запоминаем до сброса state
   state=defaultState(); state._bookId=uid();
   state.global=Object.assign(state.global, savedGlobal); // восстанавливаем настройки
   rebuildBibleVecs();
   save(); render(); closeDrawer();
   toast('Новая книга создана');
+  // Предлагаем продолжить серию, если была активная
+  if(prevSeries){
+    raiseAttention({ nodeId:null, kind:'series',
+      title:'Продолжить серию?',
+      detail:'Унаследовать персонажей и мир от серии «'+prevSeries.name+'»?',
+      options:[{label:'✅ Продолжить серию',value:'continue'},{label:'🆕 Новая независимая книга',value:'standalone'}],
+      _seriesId:prevSeries.id });
+  }
 }
 // Удалить книгу из библиотеки (без нативного confirm — перерисовываем drawer).
 function deleteBook(id){
@@ -280,6 +290,150 @@ function openBookLibrary(){
     b.querySelectorAll('[data-book-open]').forEach(el=>el.onclick=()=>openBook(el.dataset.bookOpen));
     b.querySelectorAll('[data-book-dup]').forEach(el=>el.onclick=()=>duplicateBook(el.dataset.bookDup));
     b.querySelectorAll('[data-book-del]').forEach(el=>el.onclick=()=>deleteBook(el.dataset.bookDel));
+  });
+}
+
+/* ════ СЕРИЯ КНИГ ════════════════════════════════════════════════════
+   SERIES_KEY хранит массив серий:
+   { id, name, description, world:{setting,characters[],rules,timeline}, books:[{id,title,order}] } */
+function loadSeries(){ try{ const a=JSON.parse(localStorage.getItem(SERIES_KEY)); return Array.isArray(a)?a:[]; }catch{ return []; } }
+function saveSeries(arr){ try{ localStorage.setItem(SERIES_KEY,JSON.stringify(arr)); }catch(e){ toast('⚠ Не удалось сохранить серию: '+String(e.message||e).slice(0,60),'warn'); } }
+function getActiveSeries(){ return loadSeries().find(s=>s.id===(state.project.seriesId||''))||null; }
+
+function createSeries(name,desc){
+  if(!name||!name.trim()){ toast('Укажите название серии','warn'); return null; }
+  const s={ id:uid(), name:name.trim(), description:(desc||'').trim(),
+    world:{setting:'',characters:[],rules:'',timeline:''}, books:[] };
+  const arr=loadSeries(); arr.push(s); saveSeries(arr);
+  toast('Серия «'+s.name+'» создана','ok');
+  return s;
+}
+
+function addBookToSeries(seriesId){
+  if(!seriesId){ toast('Выберите серию','warn'); return; }
+  const arr=loadSeries();
+  const s=arr.find(x=>x.id===seriesId);
+  if(!s){ toast('Серия не найдена','warn'); return; }
+  // убираем из предыдущей серии если была
+  if(state.project.seriesId && state.project.seriesId!==seriesId) removeBookFromSeries(false);
+  state.project.seriesId=seriesId;
+  const bid=state._bookId||uid();
+  if(!state._bookId) state._bookId=bid;
+  const already=s.books.find(b=>b.id===bid);
+  if(!already) s.books.push({id:bid, title:(state.project.title||'Без названия'), order:s.books.length+1});
+  saveSeries(arr); save();
+  toast('Книга добавлена в серию «'+s.name+'»','ok');
+}
+
+function removeBookFromSeries(doSave=true){
+  const sid=state.project.seriesId; if(!sid) return;
+  const arr=loadSeries();
+  const s=arr.find(x=>x.id===sid);
+  if(s){ s.books=s.books.filter(b=>b.id!==state._bookId); saveSeries(arr); }
+  state.project.seriesId='';
+  if(doSave) save();
+  toast('Книга убрана из серии','ok');
+}
+
+async function updateSeriesWorld(){
+  const s=getActiveSeries(); if(!s){ toast('Нет активной серии','warn'); return; }
+  const outputs=state.nodes.filter(n=>n.output&&(BOOK_ROLES.has(n.role)||['writer','line','logedit','proof'].some(r=>n.name&&n.name.toLowerCase().includes(r)))).slice(0,6).map(n=>n.output.slice(0,1200)).join('\n\n---\n\n');
+  if(!outputs.trim()){ toast('Нет текста для анализа','warn'); return; }
+  toast('Анализирую текст для Библии серии…');
+  try{
+    const c={baseURL:state.global.baseURL,apiKey:pickKey(),model:state.global.model,temperature:0.1};
+    const existing=JSON.stringify({characters:s.world.characters,setting:s.world.setting,timeline:s.world.timeline});
+    const resp=await callLLM(c,[
+      {role:'system',content:'Ты — архивариус серии книг. Анализируй текст и извлекай новые факты для Библии серии.'},
+      {role:'user',content:'Существующая Библия серии:\n'+existing+'\n\nНовый текст книги:\n'+outputs+'\n\nИзвлеки новые факты о персонажах и мире. Верни ТОЛЬКО JSON вида:\n{"newCharacters":[{"name":"","role":"","description":""}],"updatedWorld":{"setting":"","timeline":""},"newFacts":[]}'}
+    ]);
+    const m=resp.match(/```json\s*([\s\S]*?)```/i)||resp.match(/(\{[\s\S]*\})/);
+    if(!m){ toast('Не удалось извлечь JSON из ответа','warn'); return; }
+    const data=JSON.parse(m[1]);
+    const arr=loadSeries();
+    const si=arr.findIndex(x=>x.id===s.id); if(si<0) return;
+    const sw=arr[si].world;
+    if(Array.isArray(data.newCharacters)) data.newCharacters.forEach(c=>{ if(c.name&&!sw.characters.find(x=>x.name===c.name)) sw.characters.push(c); });
+    if(data.updatedWorld){
+      if(data.updatedWorld.setting&&data.updatedWorld.setting.trim()) sw.setting=(sw.setting?sw.setting+'\n':'')+data.updatedWorld.setting.trim();
+      if(data.updatedWorld.timeline&&data.updatedWorld.timeline.trim()) sw.timeline=(sw.timeline?sw.timeline+'\n':'')+data.updatedWorld.timeline.trim();
+    }
+    if(Array.isArray(data.newFacts)) data.newFacts.forEach(f=>{ if(f&&typeof f==='string') sw.timeline=(sw.timeline?sw.timeline+'\n':'')+f; });
+    saveSeries(arr);
+    toast('📚 Библия серии обновлена','ok');
+    openSeriesManager();
+  }catch(e){ toast('Ошибка обновления Библии: '+String(e.message||e).slice(0,80),'err'); }
+}
+
+function openSeriesManager(){
+  const arr=loadSeries();
+  const cur=state.project.seriesId||'';
+  const curSeries=arr.find(s=>s.id===cur)||null;
+  const curBook=cur?curSeries?.books.find(b=>b.id===state._bookId):null;
+
+  // секция текущей серии
+  let curSection='';
+  if(curSeries){
+    const charList=(curSeries.world.characters||[]).slice(0,8).map(c=>`<li>${esc(c.name||c.role||'—')}${c.description?': '+esc(c.description.slice(0,60)):''}</li>`).join('');
+    curSection=`
+    <div class="sm-cur-series">
+      <div class="sm-label">Текущая книга входит в серию</div>
+      <div class="sm-series-name">📚 ${esc(curSeries.name)}</div>
+      ${curBook?`<div class="sm-part">Часть ${curBook.order}</div>`:''}
+      <button class="btn ghost sm" id="sm-remove-btn">Убрать из серии</button>
+    </div>
+    <div class="sm-world">
+      <div class="sm-label">📖 Мир серии</div>
+      ${curSeries.world.setting?`<div class="sm-world-row"><b>Сеттинг:</b> ${esc(curSeries.world.setting.slice(0,200))}</div>`:''}
+      ${charList?`<div class="sm-world-row"><b>Персонажи:</b><ul class="sm-char-list">${charList}</ul></div>`:''}
+      ${curSeries.world.timeline?`<div class="sm-world-row"><b>Хронология:</b> ${esc(curSeries.world.timeline.slice(0,200))}</div>`:''}
+      <button class="btn ghost sm" id="sm-update-world-btn">🔄 Обновить Библию серии из текста книги</button>
+    </div>`;
+  } else {
+    const options=arr.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} (${s.books.length} кн.)</option>`).join('');
+    curSection=arr.length?`
+    <div class="sm-add-to">
+      <div class="sm-label">Добавить эту книгу в серию</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sm-series-sel" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--fg)"><option value="">— выберите серию —</option>${options}</select>
+        <button class="btn ok sm" id="sm-add-btn">Добавить</button>
+      </div>
+    </div>`:'';
+  }
+
+  // список всех серий
+  const seriesCards=arr.length?arr.map(s=>{
+    const isCur=(s.id===cur);
+    return `<div class="sm-card${isCur?' sm-card-active':''}">
+      <div class="sm-card-name">${esc(s.name)}${isCur?'<span class="bl-cur"> ● текущая</span>':''}</div>
+      <div class="sm-card-meta">${s.books.length} кн. ${s.description?'· '+esc(s.description.slice(0,60)):''}</div>
+    </div>`;
+  }).join(''):'<div class="bl-empty">Серий пока нет. Создайте первую ниже.</div>';
+
+  openDrawer('📚 Серия',`
+    ${curSection}
+    <div class="sm-series-list">
+      <div class="sm-label">Все серии</div>
+      ${seriesCards}
+    </div>
+    <div class="sm-create">
+      <div class="sm-label">➕ Создать новую серию</div>
+      <input id="sm-name" class="inp" placeholder="Название серии" style="width:100%;box-sizing:border-box;margin-bottom:6px"/>
+      <textarea id="sm-desc" class="inp" placeholder="Описание (необязательно)" style="width:100%;box-sizing:border-box;height:60px;resize:vertical"></textarea>
+      <button class="btn ok sm" id="sm-create-btn" style="margin-top:6px">Создать серию</button>
+    </div>`,
+  b=>{
+    b.querySelector('#sm-create-btn')?.addEventListener('click',()=>{
+      const nm=(b.querySelector('#sm-name').value||'').trim();
+      const dc=(b.querySelector('#sm-desc').value||'').trim();
+      if(createSeries(nm,dc)){ openSeriesManager(); }
+    });
+    b.querySelector('#sm-add-btn')?.addEventListener('click',()=>{
+      const sel=b.querySelector('#sm-series-sel'); if(!sel) return;
+      addBookToSeries(sel.value); openSeriesManager();
+    });
+    b.querySelector('#sm-remove-btn')?.addEventListener('click',()=>{ removeBookFromSeries(); openSeriesManager(); });
+    b.querySelector('#sm-update-world-btn')?.addEventListener('click',()=>updateSeriesWorld());
   });
 }
 
@@ -921,11 +1075,11 @@ function logRow(node,status,msg,extra={}){ state.log.unshift({t:Date.now(),node,
 /* ============ «ТРЕБУЕТ ВНИМАНИЯ» ============
    Решения для человека: агент находит нестыковку → пайплайн паузится →
    человек выбирает вариант в нижней панели → решение уходит в контекст узла. */
-function raiseAttention({nodeId,title,detail,options,kind}){
+function raiseAttention({nodeId,title,detail,options,kind,...extra}){
   if(!state.attention) state.attention=[];
   const item={ id:uid(), nodeId, kind:kind||'', title:String(title||'').slice(0,160), detail:String(detail||''),
     options:(options||[]).map(o=>({label:String(o.label||o.value||o),value:String(o.value||o.label||o)})),
-    status:'open', choice:'', ts:Date.now() };
+    status:'open', choice:'', ts:Date.now(), ...extra };
   state.attention.unshift(item);
   logRow(node(nodeId)?.name||'Согласование','warn','🔔 нужно решение: '+item.title);
   save(); renderAttention();
@@ -937,6 +1091,32 @@ function resolveAttention(id,choice){
   choice=String(choice||'').trim(); if(!choice) return;
   it.status='resolved'; it.choice=choice;
   const n=node(it.nodeId);
+  // === Серия: наследование мира при создании новой книги ===
+  if(it.kind==='series'){
+    logRow('Серия','ok','✔ '+choice.slice(0,60));
+    if(choice==='continue'){
+      const sid=it._seriesId||'';
+      const arr=loadSeries();
+      const s=arr.find(x=>x.id===sid);
+      if(s){
+        state.project.seriesId=sid;
+        const lastOrder=(s.books.length?Math.max(...s.books.map(b=>b.order||1)):0);
+        state.project.bookNumber=lastOrder+1;
+        // Унаследовать мир серии в concept
+        if(s.world.setting) state.project.concept.setting=s.world.setting;
+        if(s.world.characters&&s.world.characters.length) state.project.concept.characters=[...s.world.characters];
+        if(s.world.timeline) state.project.concept.plotTurns=s.world.timeline;
+        // Добавить книгу в список серии
+        const bid=state._bookId; if(!s.books.find(b=>b.id===bid)) s.books.push({id:bid,title:state.project.title||'Без названия',order:state.project.bookNumber});
+        saveSeries(arr);
+        toast('Мир серии «'+s.name+'» унаследован — часть '+state.project.bookNumber,'ok');
+      }
+    } else {
+      toast('Новая независимая книга','ok');
+    }
+    save(); renderAttention(); render();
+    return;
+  }
   // === Согласование «Замысел книги» на автостарте ===
   if(it.kind==='concept'){
     logRow('Замысел','ok','✔ '+choice.slice(0,60));
@@ -1126,6 +1306,7 @@ function renderLeftRail(){
     <div class="lr-nav">
       <button class="lr-nav-btn lr-nav-new" data-action="new-book"><span class="lr-nav-ic">➕</span> Новая книга</button>
       <button class="lr-nav-btn" data-action="book-library"><span class="lr-nav-ic">📚</span> Мои книги</button>
+      <button class="lr-nav-btn" data-action="series-manager"><span class="lr-nav-ic">📚</span> Серия</button>
       <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
       <button class="lr-nav-btn" data-action="concept"><span class="lr-nav-ic">🧭</span> Замысел</button>
       <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
@@ -3724,6 +3905,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='approve') approveNode(id); else if(a==='bible') openBible(); else if(a==='log') openLog(); else if(a==='export') openExport(); else if(a==='selfeval') runSelfEval();
   else if(a==='book-library') openBookLibrary();
   else if(a==='new-book'){ if(typeof newBook==='function') newBook(); }
+  else if(a==='series-manager') openSeriesManager();
   else if(a==='clear-style'){
     state.project.styleMix=[]; state.project.stylePassport=''; state.project.engagementPatterns=''; state.project.styleSourceName='';
     save(); render(); toast('Стиль снят — агенты пишут обычным голосом','ok');
@@ -4941,6 +5123,14 @@ function showCompletionBanner(){
   }
   const retryBtn=$('#cb-retry'); if(retryBtn) retryBtn.style.display=errCount?'':'none';
   cb.style.display='flex';
+  // Предложить обновить Библию серии после прогона
+  if(!errCount && state.project.seriesId){
+    const activeSer=getActiveSeries();
+    if(activeSer){
+      const serBtn=$('#cb-series-update');
+      if(serBtn){ serBtn.style.display=''; serBtn.textContent='💾 Обновить Библию серии «'+activeSer.name+'»'; }
+    }
+  }
 }
 function hideCompletionBanner(){ const b=$('#completion-banner'); if(b) b.style.display='none'; }
 // #40: краткий чеклист публикации человеческим языком
@@ -5094,6 +5284,7 @@ $('#cb-epub').onclick=exportEpub;
 $('#cb-dismiss').onclick=hideCompletionBanner;
 { const _cbNext=$('#cb-next'); if(_cbNext) _cbNext.onclick=openPublishGuide; }
 { const _cbRetry=$('#cb-retry'); if(_cbRetry) _cbRetry.onclick=retryFailedNodes; }
+{ const _cbSeries=$('#cb-series-update'); if(_cbSeries) _cbSeries.onclick=()=>updateSeriesWorld(); }
 showOnboardingIfNeeded();
 // Меню «⋯ Ещё»
 const moreBtn=$('#more-btn'), moreDrop=$('#more-dropdown');
