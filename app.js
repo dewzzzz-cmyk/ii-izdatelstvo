@@ -3299,32 +3299,31 @@ function nodeInBook(n){
 }
 // Узлы для книги в правильном порядке (топологическом).
 function bookNodes(){
-  const ordered=topoOrder().map(id=>node(id)).filter(nodeInBook);
-  // Из цепочки writer→line→proof брать ФИНАЛЬНЫЙ, но если редактор урезал >30% — взять предыдущий.
-  const inBookSet=new Set(ordered.map(n=>n.id));
-  function hasBookDescendant(startId){
-    const visited=new Set(), q=[startId];
+  // Для каждого «семейства» связанных контентных узлов (writer→line→proof и т.п.)
+  // берём узел с МАКСИМАЛЬНЫМ объёмом текста — чтобы редактор-конспектировщик не убивал главу.
+  // Но если редактор реально улучшил (объём ≥85% от writer), берём редактора.
+  const ordered=topoOrder().map(id=>node(id)).filter(n=>nodeInBook(n)&&n.output);
+  if(!ordered.length) return [];
+  // Группируем в связные цепочки по прямым (не петлевым) рёбрам
+  const visited=new Set();
+  const groups=[];
+  for(const n of ordered){
+    if(visited.has(n.id)) continue;
+    // BFS по прямым рёбрам среди контентных узлов
+    const grp=[], q=[n.id];
     while(q.length){ const cur=q.shift(); if(visited.has(cur)) continue; visited.add(cur);
-      for(const e of state.edges){ if(e.from===cur && !e.isLoop){
-        if(inBookSet.has(e.to) && e.to!==startId) return true;
-        q.push(e.to);
-      } } }
-    return false;
+      const nd=node(cur); if(nd&&nodeInBook(nd)&&nd.output){ grp.push(nd);
+        state.edges.filter(e=>!e.isLoop&&e.from===cur).forEach(e=>q.push(e.to));
+        state.edges.filter(e=>!e.isLoop&&e.to===cur).forEach(e=>q.push(e.from)); } }
+    if(grp.length) groups.push(grp);
   }
-  const terminal=ordered.filter(n=>!hasBookDescendant(n.id));
-  // Если финальный узел написал мало — берём самый объёмный из всей цепочки
-  return terminal.map(n=>{
-    const finalWords=(cleanProse(n).match(/\S+/g)||[]).length;
-    // Найти все книжные узлы в той же цепочке (предки через любые рёбра)
-    const chain=ordered.filter(a=>inBookSet.has(a.id));
-    const richest=chain.reduce((best,cur)=>{
+  // Из каждой группы берём узел с макс объёмом (защита от агрессивного сжатия)
+  return groups.map(grp=>{
+    return grp.reduce((best,cur)=>{
       const bw=(cleanProse(best).match(/\S+/g)||[]).length;
       const cw=(cleanProse(cur).match(/\S+/g)||[]).length;
       return cw>bw?cur:best;
-    }, n);
-    const richWords=(cleanProse(richest).match(/\S+/g)||[]).length;
-    // Если финальный урезал больше 40% от самого богатого — берём богатейший
-    return (richest.id!==n.id && finalWords < richWords*0.6) ? richest : n;
+    });
   });
 }
 // Заголовок главы: явный chapterTitle → первый H1/H2 из вывода → «Глава N».
