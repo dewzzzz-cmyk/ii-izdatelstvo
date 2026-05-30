@@ -2101,8 +2101,10 @@ async function runNode(id){
         let _cleanedAcc=acc;
         if(roleKeyOf(n)==='logedit' && /найденные\s+противоречия/i.test(acc)){
           _cleanedAcc=acc
-            .replace(/\n##\s*Найденные\s+противоречия[\s\S]*?(?=\n##\s*Исправленный\s+текст)/gi, '')
-            .replace(/\n##\s*Исправленный\s+текст[^\n]*/gi, '');
+            // Убираем блоки: [необязательный \n] ## Найденные противоречия ... до ## Исправленный текст
+            .replace(/\n?##\s*Найденные\s+противоречия[\s\S]*?(?=\n?##\s*Исправленный\s+текст)/gi, '')
+            // Убираем оставшиеся заголовки ## Исправленный текст
+            .replace(/\n?##\s*Исправленный\s+текст[^\n]*/gi, '');
           if(_cleanedAcc.length < 200) _cleanedAcc=acc; // fallback если что-то пошло не так
           logRow(n.name,'ok','Логред: анализ вырезан глобально, '+acc.length+'→'+_cleanedAcc.length+'ч');
         }
