@@ -2199,6 +2199,25 @@ async function runNode(id){
         const tot=n.banHits.reduce((s,h)=>s+h.count,0);
         logRow(n.name,'warn',`найдено ${tot} запрещённых слов: `+n.banHits.map(h=>`${h.word}×${h.count}`).join(', '));
       }
+      // Программная постобработка Логреда: вырезаем анализ, оставляем только прозу.
+      // DeepSeek ВСЕГДА пишет «## Найденные противоречия» независимо от промта.
+      // Это не баг промта — это поведение модели. Решаем на уровне кода.
+      if(roleKeyOf(n)==='logedit' && n.output){
+        const cleaned=cleanProse(n);  // cleanProse извлекает «## Исправленный текст» или стрипает преамбулы
+        if(cleaned && cleaned.length > n.output.length * 0.3){
+          // cleanProse дала достаточно контента — используем
+          n.output=cleaned;
+        } else {
+          // cleanProse не справилась — вырезаем всё до и включая раздел анализа
+          let prose=n.output;
+          // Берём текст ПОСЛЕ блока анализа (ищем ## Исправленный или просто конец анализа)
+          const afterFix=prose.match(/##\s*Исправленный\s+текст[:\s]*([\s\S]+)/i);
+          if(afterFix) prose=afterFix[1].trim();
+          else prose=prose.replace(/^[\s\S]*?(?=\n[А-ЯA-Z«—])/,'').trim()||prose; // fallback: с первой заглавной
+          if(prose.length > 200) n.output=prose;
+        }
+        logRow(n.name,'ok',`Логред: анализ вырезан автоматически, проза ${n.output.length}ч`);
+      }
       // ⚖ Вердикт-пауза: решающий агент рекомендует ОТКЛОНИТЬ → пауза, спросить человека.
       if(n.verdictGate && n.status==='done' && /отклон|reject|не\s+в\s+производств|вердикт[:\s]+отклон/i.test(acc)){
         let frag=''; const vm=acc.match(/.*(?:отклон|reject|не\s+в\s+производств).*/i);
