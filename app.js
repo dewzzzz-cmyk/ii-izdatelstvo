@@ -117,7 +117,9 @@ function load(){
       const def=defaultState();
       // Deep-merge global: новые поля из defaultState не затираются старым state
       if(s.global) s.global=Object.assign({},def.global,s.global);
-      // Deep-merge project: новые поля (stylePassport/engagementPatterns/…) подхватываются старыми проектами
+      // Миграция v1→v2: апгрейдим устаревшие дефолты при загрузке
+      if(s.global && s.global.maxContextChars <= 8000) s.global.maxContextChars=def.global.maxContextChars;
+      // Deep-merge project
       if(s.project) s.project=Object.assign({},def.project,s.project);
       return Object.assign(def,s);
     }
@@ -219,6 +221,9 @@ function newBook(){
   const prevSeries=getActiveSeries(); // запоминаем до сброса state
   state=defaultState(); state._bookId=uid();
   state.global=Object.assign(state.global, savedGlobal); // восстанавливаем настройки
+  // Миграция v1→v2: если пользователь хранит старый дефолт (8000) — апгрейдим до нового (24000)
+  if(state.global.maxContextChars <= 8000) state.global.maxContextChars = defaultState().global.maxContextChars;
+  if(!state.global.minAcceptScore) state.global.minAcceptScore = 7;
   rebuildBibleVecs();
   save(); render(); closeDrawer();
   toast('Новая книга создана');
