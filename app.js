@@ -2094,8 +2094,20 @@ async function runNode(id){
         if(!acc||!acc.trim()) throw new Error('пустой ответ от editInChunks');
         n.lastRequest={ messages: msgs, model: c.model, temperature: c.temperature, ts: Date.now() };
         n.lastRawOutput=acc;
-        n.output=acc; n.summary=acc.length>600?acc.slice(0,600)+'…':acc; n.cacheHash=hash;
-        n.tokensIn=tokEst(msgs.map(m=>m.content).join('')); n.tokensOut=tokEst(acc);
+        // Программная постобработка для logedit: вырезаем анализ независимо от поведения модели
+        let _cleanedAcc=acc;
+        if(roleKeyOf(n)==='logedit'){
+          const _fixed=acc.match(/##\s*Исправленный\s+текст[:\s]*([\s\S]+)/i);
+          if(_fixed && _fixed[1].trim().length > acc.length*0.2) _cleanedAcc=_fixed[1].trim();
+          else if(acc.toLowerCase().includes('найденные противоречия')){
+            // Убрать всё до и включая блок анализа, взять что осталось
+            const _prose=acc.replace(/[\s\S]*?(?=\n[А-ЯЁA-Z«—\*])/,'').trim();
+            if(_prose.length > 200) _cleanedAcc=_prose;
+          }
+          if(_cleanedAcc!==acc) logRow(n.name,'ok','Логред: анализ вырезан программно, осталось '+_cleanedAcc.length+'ч');
+        }
+        n.output=_cleanedAcc; n.summary=_cleanedAcc.length>600?_cleanedAcc.slice(0,600)+'…':_cleanedAcc; n.cacheHash=hash;
+        n.tokensIn=tokEst(msgs.map(m=>m.content).join('')); n.tokensOut=tokEst(_cleanedAcc);
         n.ms=Math.round(performance.now()-_t0);
         n.status= n.requireApproval && !n.approved ? 'review' : 'done'; n.error='';
         logRow(n.name,'ok',`чанковое редактирование: ${n.tokensIn+n.tokensOut} ток., ${(n.ms/1000).toFixed(1)}с`,{cost:nodeCost(n)});
