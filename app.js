@@ -74,7 +74,7 @@ function defaultIncludeInBook(role){ return BOOK_ROLES.has(role); }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
   output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'', outputVersions:[],
-  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'' }; }
+  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'', verdictGate:(t.role==='scout') }; }
 function checkSchema(n){
   if(!n.outputSchema||!n.outputSchema.trim()) return null; // нет схемы → всё ок
   try{
@@ -95,7 +95,7 @@ function defaultState(){
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { _bookId:'',
-    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:''},
+    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''}},
     styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
@@ -592,6 +592,25 @@ function interpolate(tpl, ctx){
     return m; // неизвестная переменная — оставляем как есть
   });
 }
+// Замысел книги → блок канона для инжекции во ВСЕХ агентов. '' если пусто.
+function conceptBlock(){
+  const c=(state.project&&state.project.concept)||{};
+  const setting=(c.setting||'').trim();
+  const plotTurns=(c.plotTurns||'').trim();
+  const tone=(c.tone||'').trim();
+  const chars=(Array.isArray(c.characters)?c.characters:[]).filter(p=>p&&((p.name||'').trim()||(p.role||'').trim()||(p.brief||'').trim()));
+  if(!setting&&!plotTurns&&!tone&&!chars.length) return '';
+  const charsStr=chars.map(p=>{
+    const nm=(p.name||'').trim(); const rl=(p.role||'').trim(); const br=(p.brief||'').trim();
+    return nm+(rl?` (${rl})`:'')+(br?` — ${br}`:'');
+  }).join('; ');
+  let out='ЗАМЫСЕЛ КНИГИ (канон — соблюдать строго):';
+  if(setting) out+=`\nМесто и время: ${setting}`;
+  if(charsStr) out+=`\nПерсонажи: ${charsStr}`;
+  if(plotTurns) out+=`\nКлючевые повороты: ${plotTurns}`;
+  if(tone) out+=`\nТон: ${tone}`;
+  return out;
+}
 async function buildMessages(n){
   const pr=state.project;
   // #21: образец стиля — берём начало целиком до 3000 симв (без вырезания середины), прогоняем через typo()
@@ -664,6 +683,8 @@ async function buildMessages(n){
   const usesPrevVar=/\{\{\s*prev(\.[\w.а-яА-ЯёЁ]+)?\s*\}\}/.test(n.prompt||'');
   let user='';
   if(bible) user+=`Библия книги (канон, соблюдать строго):\n${bible}\n\n`;
+  const concept=conceptBlock();
+  if(concept) user+=concept+'\n\n';
   user+=`Книга: «${pr.title||'без названия'}»\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}\n`+
     `Режим: ${pr.mode==='write'?'пишем с нуля':'редактируем готовый текст'}\n`+(pr.brief?`Бриф: ${pr.brief}\n`:'');
   if(pr.mode==='edit'&&pr.input&&preds.length===0) user+=`\nИсходный текст:\n${pr.input}\n`;
@@ -885,9 +906,9 @@ function logRow(node,status,msg,extra={}){ state.log.unshift({t:Date.now(),node,
 /* ============ «ТРЕБУЕТ ВНИМАНИЯ» ============
    Решения для человека: агент находит нестыковку → пайплайн паузится →
    человек выбирает вариант в нижней панели → решение уходит в контекст узла. */
-function raiseAttention({nodeId,title,detail,options}){
+function raiseAttention({nodeId,title,detail,options,kind}){
   if(!state.attention) state.attention=[];
-  const item={ id:uid(), nodeId, title:String(title||'').slice(0,160), detail:String(detail||''),
+  const item={ id:uid(), nodeId, kind:kind||'', title:String(title||'').slice(0,160), detail:String(detail||''),
     options:(options||[]).map(o=>({label:String(o.label||o.value||o),value:String(o.value||o.label||o)})),
     status:'open', choice:'', ts:Date.now() };
   state.attention.unshift(item);
@@ -901,6 +922,26 @@ function resolveAttention(id,choice){
   choice=String(choice||'').trim(); if(!choice) return;
   it.status='resolved'; it.choice=choice;
   const n=node(it.nodeId);
+  // === Согласование «Замысел книги» на автостарте ===
+  if(it.kind==='concept'){
+    logRow('Замысел','ok','✔ '+choice.slice(0,60));
+    save(); renderAttention(); render();
+    if(choice==='edit'){ openConcept(); }
+    else { toast('Замысел принят — нажмите ▶ Запустить','ok'); }
+    return;
+  }
+  // === Вердикт-пауза решающего агента ===
+  if(it.kind==='verdict'){
+    logRow(n?.name||'Вердикт','ok','✔ '+choice.slice(0,60));
+    if(n){
+      if(choice==='continue'){ n.status='done'; n.error=''; toast('Продолжаем несмотря на вердикт','ok'); }
+      else if(choice==='stop'){ n.status='review'; toast('Конвейер остановлен по вердикту','warn'); }
+      else if(choice==='revise'){ n.status='review'; openConcept(); toast('Поправьте замысел/бриф','warn'); }
+      else { n.status='review'; }
+    }
+    save(); renderAttention(); render();
+    return;
+  }
   if(n){
     n.attentionChoice=choice;
     // Дописываем решение в контекст узла, чтобы downstream его получил.
@@ -1071,6 +1112,7 @@ function renderLeftRail(){
       <button class="lr-nav-btn lr-nav-new" data-action="new-book"><span class="lr-nav-ic">➕</span> Новая книга</button>
       <button class="lr-nav-btn" data-action="book-library"><span class="lr-nav-ic">📚</span> Мои книги</button>
       <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
+      <button class="lr-nav-btn" data-action="concept"><span class="lr-nav-ic">🧭</span> Замысел</button>
       <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
       <button class="lr-nav-btn" data-action="style-school"><span class="lr-nav-ic">🎓</span> Школа стиля</button>
       <button class="lr-nav-btn" data-action="text-analysis"><span class="lr-nav-ic">📊</span> Анализ текста</button>
@@ -1889,6 +1931,16 @@ async function runNode(id){
         const tot=n.banHits.reduce((s,h)=>s+h.count,0);
         logRow(n.name,'warn',`найдено ${tot} запрещённых слов: `+n.banHits.map(h=>`${h.word}×${h.count}`).join(', '));
       }
+      // ⚖ Вердикт-пауза: решающий агент рекомендует ОТКЛОНИТЬ → пауза, спросить человека.
+      if(n.verdictGate && n.status==='done' && /отклон|reject|не\s+в\s+производств|вердикт[:\s]+отклон/i.test(acc)){
+        let frag=''; const vm=acc.match(/.*(?:отклон|reject|не\s+в\s+производств).*/i);
+        frag=(vm?vm[0]:acc).trim().slice(0,200);
+        if(state.attention) state.attention=state.attention.filter(a=>!(a.nodeId===n.id&&a.status==='open'));
+        raiseAttention({ nodeId:n.id, kind:'verdict', title:n.name+' рекомендует ОТКЛОНИТЬ', detail:frag,
+          options:[{label:'⏹ Остановить конвейер',value:'stop'},{label:'▶ Продолжить всё равно',value:'continue'},{label:'✏ Поправить бриф/замысел',value:'revise'}] });
+        n.status='review';
+        toast('🔔 Вердикт «отклонить» — нужно ваше решение','warn');
+      }
       save(); renderNodes(); renderEdges();
       // Auto-eval for outgoing loop edges (Item 25: regression-guard + best-output)
       const loopEdges=state.edges.filter(e=>e.from===n.id && e.isLoop && e.autoEval);
@@ -2033,6 +2085,20 @@ async function runPipeline(resume){
     if(estCost>0.001) toast('Расчётная стоимость: ~'+money(estCost)+(state.global.costCapUSD>0&&estCost>state.global.costCapUSD*0.8?' ⚠ близко к лимиту!':''),'');
     // Hard pre-check бюджета
     if(state.global.costCapUSD>0 && estCost>state.global.costCapUSD){ toast('Расчётная стоимость '+money(estCost)+' превышает лимит '+money(state.global.costCapUSD),'err'); return; }
+    // 🧭 Замысел книги — фундамент. Если есть бриф, но замысла нет — собираем его и просим утвердить ПЕРЕД писаниной.
+    if(!conceptBlock() && state.project.brief && state.project.brief.trim()){
+      toast('Сначала соберём замысел книги…');
+      try{ await generateConcept(true); }catch(e){ /* не блокируем старт при ошибке генерации */ }
+      const c=(state.project.concept)||{};
+      if(conceptBlock()){
+        const charsStr=(Array.isArray(c.characters)?c.characters:[]).map(p=>p.name||p.role).filter(Boolean).slice(0,6).join(', ');
+        const detail=[c.setting?('Место/время: '+c.setting):'', charsStr?('Персонажи: '+charsStr):''].filter(Boolean).join('\n').slice(0,400)||'Замысел подготовлен.';
+        const firstId=(state.nodes[0]&&state.nodes[0].id)||null;
+        raiseAttention({ nodeId:firstId, kind:'concept', title:'Замысел книги готов — проверьте', detail,
+          options:[{label:'✅ Принять и писать',value:'accept'},{label:'✏ Открыть и поправить',value:'edit'}] });
+        return; // ждём решения человека; повторный запуск пройдёт мимо (concept уже не пуст)
+      }
+    }
   }
   abortCtrl=new AbortController();
   running=true; $('#run-btn').disabled=true; $('#run-btn').textContent='⏳ Работает…'; render();
@@ -2381,6 +2447,7 @@ function openNode(id){
       <span style="font-size:11px;color:var(--dim)">0 = авто из списка (до 20)</span>
     </div>
     <label class="check"><input type="checkbox" id="f-appr" ${n.requireApproval?'checked':''}> Требовать мою приёмку (пауза конвейера)</label>
+    <label class="check"><input type="checkbox" id="f-verdict" ${n.verdictGate?'checked':''}> ⚖ Решающий: вердикт «отклонить» останавливает конвейер</label>
     <label class="check"><input type="checkbox" id="f-inbook" ${(typeof n.includeInBook==='boolean'?n.includeInBook:defaultIncludeInBook(roleKeyOf(n)))?'checked':''}> 📖 Включать в книгу</label>
     <div class="field"><label>Заголовок главы (для книги)</label>
       <input id="f-chtitle" value="${esc(n.chapterTitle||'')}" placeholder="авто — из первого заголовка вывода или «Глава N»">
@@ -2414,6 +2481,7 @@ function openNode(id){
       n.outputSchema=b.querySelector('#f-schema').value.trim();
       n.postProcess=b.querySelector('#f-post').value.trim();
       n.requireApproval=b.querySelector('#f-appr').checked; n.useGlobal=b.querySelector('#f-global').checked;
+      n.verdictGate=b.querySelector('#f-verdict').checked;
       n.includeInBook=b.querySelector('#f-inbook').checked; n.chapterTitle=b.querySelector('#f-chtitle').value.trim();
       n.baseURL=b.querySelector('#f-base').value.trim(); n.model=b.querySelector('#f-model').value.trim();
       n.apiKey=b.querySelector('#f-key').value.trim(); const tv=parseFloat(b.querySelector('#f-temp').value); n.temperature=isNaN(tv)?1:tv;
@@ -2708,6 +2776,80 @@ function openBible(){
     b.querySelector('#b-auto').onclick=autoBuildBible;
     b.querySelectorAll('[data-delbible]').forEach(x=>x.onclick=()=>{ state.bible=state.bible.filter(e=>e.id!==x.dataset.delbible); save(); openBible(); });
     b.querySelector('#b-save').onclick=()=>{ b.querySelectorAll('.bible-row').forEach(r=>{ const e=state.bible.find(x=>x.id===r.dataset.bid); if(e){ e.keys=r.querySelector('.bk').value.trim(); e.text=r.querySelector('.bt').value.trim(); } }); rebuildBibleVecs(); save(); toast('Библия сохранена','ok'); closeDrawer(); }; });
+}
+/* ============ ЗАМЫСЕЛ КНИГИ ============
+   Фундамент: мир, персонажи, повороты, тон. Уходит каноном во ВСЕХ агентов (conceptBlock). */
+function openConcept(){
+  const c=(state.project.concept)||(state.project.concept={setting:'',characters:[],plotTurns:'',tone:''});
+  if(!Array.isArray(c.characters)) c.characters=[];
+  const charRows=c.characters.map((p,i)=>`<div class="concept-char-row" data-ci="${i}">
+    <input class="cc-name" value="${esc(p.name||'')}" placeholder="Имя">
+    <input class="cc-role" value="${esc(p.role||'')}" placeholder="Роль">
+    <input class="cc-brief" value="${esc(p.brief||'')}" placeholder="Краткая характеристика">
+    <button class="icon-btn" data-delchar="${i}">✕</button></div>`).join('');
+  openDrawer('🧭 Замысел книги',`
+    <p class="hint" style="margin-top:0">Фундамент книги: мир, персонажи, ключевые повороты. Заполните сами или сгенерируйте ИИ из брифа — он уйдёт каноном во всех агентов.</p>
+    <div class="actions" style="margin:0 0 12px"><button class="btn ghost" id="cn-gen">🪄 Сгенерировать из брифа</button></div>
+    <label class="fld-label">Место и время действия</label>
+    <textarea id="cn-setting" rows="2" placeholder="Где и когда происходит действие">${esc(c.setting||'')}</textarea>
+    <label class="fld-label" style="margin-top:12px">Персонажи</label>
+    <div id="concept-chars">${charRows||'<div class="hint" style="color:var(--faint)">Пока никого. Добавьте персонажа.</div>'}</div>
+    <button class="btn ghost" id="cn-addchar" style="margin-top:8px">＋ персонаж</button>
+    <label class="fld-label" style="margin-top:12px">Ключевые повороты сюжета</label>
+    <textarea id="cn-plot" rows="3" placeholder="3-5 ключевых поворотов">${esc(c.plotTurns||'')}</textarea>
+    <label class="fld-label" style="margin-top:12px">Тон / настроение</label>
+    <input id="cn-tone" value="${esc(c.tone||'')}" placeholder="Например: мрачный, ироничный, тёплый">
+    <div class="actions" style="margin-top:16px">
+      <button class="btn ok" id="cn-save">💾 Сохранить</button>
+      <button class="btn ghost" id="cn-clear">🗑 Очистить</button></div>
+  `,b=>{
+    const collect=()=>{
+      c.setting=b.querySelector('#cn-setting').value.trim();
+      c.plotTurns=b.querySelector('#cn-plot').value.trim();
+      c.tone=b.querySelector('#cn-tone').value.trim();
+      c.characters=[...b.querySelectorAll('.concept-char-row')].map(r=>({
+        name:r.querySelector('.cc-name').value.trim(),
+        role:r.querySelector('.cc-role').value.trim(),
+        brief:r.querySelector('.cc-brief').value.trim()
+      })).filter(p=>p.name||p.role||p.brief);
+    };
+    b.querySelector('#cn-addchar').onclick=()=>{ collect(); c.characters.push({name:'',role:'',brief:''}); save(); openConcept(); };
+    b.querySelectorAll('[data-delchar]').forEach(x=>x.onclick=()=>{ collect(); c.characters.splice(+x.dataset.delchar,1); save(); openConcept(); });
+    b.querySelector('#cn-gen').onclick=()=>generateConcept();
+    b.querySelector('#cn-save').onclick=()=>{ collect(); save(); toast('Замысел сохранён','ok'); closeDrawer(); };
+    b.querySelector('#cn-clear').onclick=()=>{ c.setting='';c.characters=[];c.plotTurns='';c.tone=''; save(); openConcept(); toast('Замысел очищен'); };
+  });
+}
+// Генерация замысла из брифа. silent=true — без перерисовки drawer (для автостарта).
+async function generateConcept(silent){
+  if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }
+  const pr=state.project;
+  const c=cfg({useGlobal:true});
+  c.temperature=0.7;
+  const sys='Ты — редактор-разработчик. На основе брифа, жанра и аудитории создай ЗАМЫСЕЛ книги. Верни СТРОГО JSON: {"setting":"место и время","characters":[{"name":"","role":"","brief":"кратко 1 предложение"}],"plotTurns":"3-5 ключевых поворотов списком","tone":"тон/настроение"}. Только JSON.';
+  const usr=`Бриф: ${pr.brief||'не задан'}\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}`;
+  if(!silent) toast('Генерирую замысел…');
+  try{
+    const resp=await callLLM(c,[{role:'system',content:sys},{role:'user',content:usr}]);
+    let txt=String(resp||'').trim();
+    const m=txt.match(/```(?:json)?\s*([\s\S]*?)```/i); if(m) txt=m[1].trim();
+    const j0=txt.indexOf('{'), j1=txt.lastIndexOf('}'); if(j0>=0&&j1>j0) txt=txt.slice(j0,j1+1);
+    const data=JSON.parse(txt);
+    const concept=state.project.concept||(state.project.concept={setting:'',characters:[],plotTurns:'',tone:''});
+    concept.setting=String(data.setting||'').trim();
+    concept.plotTurns=String(data.plotTurns||'').trim();
+    concept.tone=String(data.tone||'').trim();
+    concept.characters=(Array.isArray(data.characters)?data.characters:[]).map(p=>({
+      name:String(p.name||'').trim(), role:String(p.role||'').trim(), brief:String(p.brief||'').trim()
+    })).filter(p=>p.name||p.role||p.brief);
+    save();
+    if(!silent){ openConcept(); toast('Замысел сгенерирован','ok'); }
+    return concept;
+  }catch(err){
+    logRow('Замысел','error',String(err.message||err));
+    if(!silent) toast('Не удалось разобрать ответ модели','err');
+    throw err;
+  }
 }
 async function autoBuildBible(){
   if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }
@@ -3364,6 +3506,7 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
   else if(a==='att-expand'){ _attentionCollapsed=false; renderAttention(); }
   else if(a==='settings') openSettings(); else if(a==='add-node') addNodePicker(); else if(a==='auto-layout') autoLayout(); else if(a==='templates') openTemplates(); else if(a==='group') openGroupCreator(); else if(a==='chapters') openChapters(); else if(a==='guide') openGuide(); else if(a==='entities') openEntities();
   else if(a==='text-analysis') openTextAnalysis();
+  else if(a==='concept') openConcept();
   else if(a==='style-school') openStyleSchool();
   else if(a==='publish-guide') openPublishGuide();
   else if(a==='switch-view') switchView(t.dataset.view);

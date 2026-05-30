@@ -1129,3 +1129,16 @@ body[data-view="reader"] .book-inspector{
 .lr-nav-new{background:linear-gradient(135deg,#7c6cff,#5247e6)!important;color:#fff!important;border-color:#5247e6!important;font-weight:700}
 .lr-nav-new:hover{filter:brightness(1.08)}
 .lr-nav-new .lr-nav-ic{color:#fff}
+
+/* ====== Замысел книги ====== */
+.fld-label{display:block;font-size:11.5px;font-weight:700;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px}
+#drawer-body textarea#cn-setting,#drawer-body textarea#cn-plot,#drawer-body input#cn-tone{
+  width:100%;background:var(--panel2);border:1px solid var(--line2);color:var(--txt);
+  border-radius:9px;padding:10px 12px;font-size:13.5px;font-family:inherit;resize:vertical}
+#drawer-body textarea#cn-setting:focus,#drawer-body textarea#cn-plot:focus,#drawer-body input#cn-tone:focus{outline:none;border-color:var(--accent)}
+#concept-chars{display:flex;flex-direction:column;gap:8px}
+.concept-char-row{display:grid;grid-template-columns:1fr 1fr 1.6fr auto;gap:6px;align-items:center}
+.concept-char-row input{background:var(--panel2);border:1px solid var(--line2);color:var(--txt);
+  border-radius:8px;padding:7px 9px;font-size:12.5px;font-family:inherit;min-width:0}
+.concept-char-row input:focus{outline:none;border-color:var(--accent)}
+.concept-char-row .icon-btn{flex-shrink:0}
