@@ -106,7 +106,7 @@ function defaultState(){
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:24000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
       backupDir:'', autoBackup:true, backupIntervalMin:10, lastBackupTs:0, gdriveClientId:'', gdriveLastBackup:null, banList:'',
-      maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'' },
+      maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'', minAcceptScore:7 },
     nodes, edges };
 }
 let state=load(); rebuildBibleVecs();
@@ -962,6 +962,24 @@ async function runAutoEval(output, n){
   else reason=(resp||'').replace(/^\D*\d+\D*/,'').trim().slice(0,160);
   return {score, reason};
 }
+async function qualityAutoRerun(n){
+  if(!state.global.autoEval) return;
+  if(!['writer','fanout'].includes(roleKeyOf(n))) return;
+  if((n.output.match(/\S+/g)||[]).length < 500) return; // слишком мало чтобы оценивать
+  const {score, reason} = await runAutoEval(n.output, n);
+  n._qualityScore = score;
+  logRow(n.name, score >= (state.global.minAcceptScore||7) ? 'ok' : 'warn',
+    `качество: ${score}/10${reason?' — '+reason:''}`);
+  if(score < (state.global.minAcceptScore||7) && !n._qualityRetries){
+    n._qualityRetries = 1;
+    n.output = ''; n.cacheHash = '';
+    // Добавить причину в _loopPrev чтобы следующий прогон учёл её
+    n._loopPrev = `[Предыдущая версия оценена на ${score}/10. Причина: ${reason}. Улучши именно это.]`;
+    logRow(n.name, 'retry', `авто-перезапуск: оценка ${score} < ${state.global.minAcceptScore||7}`);
+    save();
+    await runNode(n.id); // один рекурсивный перезапуск
+  }
+}
 async function autoBibleUpdate(output, role){
   if(!['writer','logedit','line'].includes(role)) return;
   if(!output || output.length < 200) return;
@@ -1152,6 +1170,16 @@ function resolveAttention(id,choice){
     save(); renderAttention(); render();
     if(choice==='edit'){ openConcept(); }
     else { toast('Замысел принят — нажмите ▶ Запустить','ok'); }
+    return;
+  }
+  // === Контроль объёма Литреда/Корректора ===
+  if(it.kind==='volume'){
+    logRow(n?.name||'Контроль объёма','ok','✔ '+choice.slice(0,60));
+    if(n){
+      if(choice==='retry'){ n.output=''; n.cacheHash=''; n.status='idle'; runFromNode(n.id); }
+      else { toast('Результат принят как есть','ok'); }
+    }
+    save(); renderAttention(); render();
     return;
   }
   // === Вердикт-пауза решающего агента ===
@@ -2213,6 +2241,21 @@ async function runNode(id){
         const tot=n.banHits.reduce((s,h)=>s+h.count,0);
         logRow(n.name,'warn',`найдено ${tot} запрещённых слов: `+n.banHits.map(h=>`${h.word}×${h.count}`).join(', '));
       }
+      // Программный контроль объёма: если Литред/Корректор срезал >20% — предупредить
+      if(['line','proof'].includes(roleKeyOf(n)) && n.output){
+        const _preds = state.edges.filter(e=>e.to===n.id&&!e.isLoop).map(e=>node(e.from)).filter(p=>p?.output);
+        if(_preds.length){
+          const _srcLen = _preds.reduce((s,p)=>s+(p.output||'').length, 0);
+          const _outLen = n.output.length;
+          const _ratio = _srcLen > 0 ? _outLen/_srcLen : 1;
+          if(_ratio < 0.80 && _srcLen > 1000){
+            logRow(n.name,'warn',`агрессивное сокращение: вход ${_srcLen}ч → выход ${_outLen}ч (${Math.round(_ratio*100)}%). Проверьте результат.`);
+            raiseAttention({nodeId:n.id, kind:'volume', title:n.name+': агрессивное сокращение',
+              detail:`Агент срезал ${Math.round((1-_ratio)*100)}% текста (${_srcLen}→${_outLen} симв). Возможно потеряно содержание.`,
+              options:[{label:'✅ Принять как есть',value:'accept'},{label:'🔄 Перезапустить строже',value:'retry'}]});
+          }
+        }
+      }
       // Программная постобработка Логреда: вырезаем анализ, оставляем только прозу.
       // DeepSeek ВСЕГДА пишет «## Найденные противоречия» независимо от промта.
       // Это не баг промта — это поведение модели. Решаем на уровне кода.
@@ -2233,6 +2276,7 @@ async function runNode(id){
         toast('🔔 Вердикт «отклонить» — нужно ваше решение','warn');
       }
       save(); renderNodes(); renderEdges();
+      if(state.global.autoEval) await qualityAutoRerun(n).catch(e=>console.warn('quality rerun error',e));
       // Авто-продолжение для пишущих агентов (writer/fanout): если написано < 2500 слов —
       // DeepSeek-chat останавливается самостоятельно, досылаем «продолжи» до 3 раз.
       const _writerRole=TEMPLATES.find(t=>t.name===n.name)?.role||'';
@@ -2997,6 +3041,10 @@ function openSettings(){
     <label class="check"><input type="checkbox" id="g-bible-extract" ${g.autoBibleExtract?'checked':''}> Авто-Библия: извлекать персонажей и факты после каждой главы</label>
     <label class="check"><input type="checkbox" id="g-auto-distill" ${g.autoDistill?'checked':''}> Авто-сжатие: сжимать длинный контекст перед передачей агентам</label>
     <label class="check"><input type="checkbox" id="g-eval" ${g.autoEval?'checked':''}> Авто-оценка после пайплайна (LLM-judge: 4 критерия, запись в журнал)</label>
+    <div class="field"><label>Минимальная оценка авто-перезапуска (1-10)</label>
+      <input type="number" min="1" max="10" id="g-minscore" value="${g.minAcceptScore||7}" style="width:60px">
+      <div class="hint">Если Райтер набрал ниже этой оценки — автоматически перезапускается с объяснением причины</div>
+    </div>
     <div class="field"><label>Таймаут приёмки, мин (0 = без)</label><input id="g-aptout" type="number" min="0" value="${g.approvalTimeoutMin||0}">
       <div class="hint">Если агент ждёт одобрения дольше — пайплайн прерывается автоматически.</div></div>
     <div class="row2">
@@ -3058,6 +3106,7 @@ function openSettings(){
       g.autoBibleExtract=b.querySelector('#g-bible-extract').checked;
       g.autoDistill=b.querySelector('#g-auto-distill')?.checked ?? false;
       g.autoEval=b.querySelector('#g-eval').checked;
+      g.minAcceptScore=parseInt(b.querySelector('#g-minscore')?.value)||7;
       g.fallbackURL=b.querySelector('#g-fallback').value.trim();
       g.approvalTimeoutMin=parseInt(b.querySelector('#g-aptout').value)||0;
       g.maxConcurrent=Math.max(1,parseInt(b.querySelector('#g-maxconc')?.value)||3);
