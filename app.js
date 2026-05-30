@@ -2094,24 +2094,17 @@ async function runNode(id){
         if(!acc||!acc.trim()) throw new Error('пустой ответ от editInChunks');
         n.lastRequest={ messages: msgs, model: c.model, temperature: c.temperature, ts: Date.now() };
         n.lastRawOutput=acc;
-        // Программная постобработка для logedit: вырезаем анализ независимо от поведения модели.
-        // DeepSeek ВСЕГДА вставляет «## Найденные противоречия» вне зависимости от промта.
-        // Паттерны: (A) вся проза → анализ → ## Исправленный текст → продолжение прозы
-        //           (B) анализ в начале → ## Исправленный текст → полная проза
+        // Программная постобработка для logedit: вырезаем ВСЕ блоки анализа независимо от промта.
+        // editInChunks обрабатывает текст по частям → каждая часть получает свой анализ.
+        // Итог: чередование «анализ N» + «## Исправленный текст N» по всему тексту.
+        // Глобальный стрип убирает ВСЕ пары за один проход.
         let _cleanedAcc=acc;
-        if(roleKeyOf(n)==='logedit' && acc.toLowerCase().includes('найденные противоречия')){
-          const _analysisIdx=acc.search(/\n##\s*Найденные\s+противоречия/i);
-          const _fixedM=acc.match(/##\s*Исправленный\s+текст[:\s]*([\s\S]+)/i);
-          if(_fixedM){
-            const _before=(_analysisIdx>100)?acc.slice(0,_analysisIdx).trim():'';
-            const _after=_fixedM[1].trim();
-            // Если до анализа была проза — склеиваем; иначе берём только после
-            _cleanedAcc=_before ? _before+'\n\n'+_after : _after;
-          } else if(_analysisIdx>100){
-            // Нет «## Исправленный текст» — берём только часть ДО анализа
-            _cleanedAcc=acc.slice(0,_analysisIdx).trim();
-          }
-          if(_cleanedAcc!==acc) logRow(n.name,'ok','Логред: анализ вырезан, проза склеена, '+_cleanedAcc.length+'ч');
+        if(roleKeyOf(n)==='logedit' && /найденные\s+противоречия/i.test(acc)){
+          _cleanedAcc=acc
+            .replace(/\n##\s*Найденные\s+противоречия[\s\S]*?(?=\n##\s*Исправленный\s+текст)/gi, '')
+            .replace(/\n##\s*Исправленный\s+текст[^\n]*/gi, '');
+          if(_cleanedAcc.length < 200) _cleanedAcc=acc; // fallback если что-то пошло не так
+          logRow(n.name,'ok','Логред: анализ вырезан глобально, '+acc.length+'→'+_cleanedAcc.length+'ч');
         }
         n.output=_cleanedAcc; n.summary=_cleanedAcc.length>600?_cleanedAcc.slice(0,600)+'…':_cleanedAcc; n.cacheHash=hash;
         n.tokensIn=tokEst(msgs.map(m=>m.content).join('')); n.tokensOut=tokEst(_cleanedAcc);
