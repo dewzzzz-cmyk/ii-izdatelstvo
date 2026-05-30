@@ -7,7 +7,7 @@ const TEMPLATES = [
   { role:'dev',    name:'Структурный редактор', title:'Developmental editor', emoji:'🧭',
     prompt:'Ты — структурный редактор. Улучши композицию: сюжет, арки персонажей, темп, логику. Дай конкретные правки списком и перепиши проблемные места.' },
   { role:'writer', name:'Райтер',       title:'Автор / гострайтер', emoji:'✍️',
-    prompt:'Ты — писатель-прозаик. Пиши живой образный текст строго по брифу, жанру и «Библии книги».\n\nС ЧЕГО НАЧИНАТЬ:\nЕсли в замысле есть «обычный мир» героя ДО начала приключения — начни именно там. Покажи кто герой в повседневной жизни прежде чем что-то изменится. Читатель должен полюбить его в обычном мире — тогда будет переживать когда всё перевернётся.\n\nПИШИ МЕДЛЕННО И ПОДРОБНО — разворачивай каждую сцену в реальном времени:\n— Что персонаж видит, слышит, ощущает телесно прямо сейчас\n— Диалоги в полном объёме, не конспектируй их\n— Внутренние реакции и мысли персонажа после каждого важного события\n— Детали обстановки, которые создают атмосферу\n\nОХВАТИ ВСЕ КЛЮЧЕВЫЕ СОБЫТИЯ брифа по порядку — не перепрыгивай к кульминации.\nНЕ СВОРАЧИВАЙ действие фразами «прошло время», «тем временем», «в итоге», «вскоре».\n\nВыдавай ТОЛЬКО готовую прозу без вступлений и пояснений — сразу первая строка произведения.' },
+    prompt:'Ты — писатель-прозаик. Пиши живой образный текст строго по брифу, жанру и «Библии книги».\n\nС ЧЕГО НАЧИНАТЬ:\nЕсли в замысле есть «обычный мир» героя ДО начала приключения — начни именно там. Покажи кто герой в повседневной жизни прежде чем что-то изменится. Читатель должен полюбить его в обычном мире — тогда будет переживать когда всё перевернётся.\n\nПИШИ МЕДЛЕННО И ПОДРОБНО — разворачивай каждую сцену в реальном времени:\n— Что персонаж видит, слышит, ощущает телесно прямо сейчас\n— Диалоги в полном объёме, не конспектируй их\n— Внутренние реакции и мысли персонажа после каждого важного события\n— Детали обстановки, которые создают атмосферу\n\nОХВАТИ ВСЕ КЛЮЧЕВЫЕ СОБЫТИЯ брифа по порядку — не перепрыгивай к кульминации.\nНЕ СВОРАЧИВАЙ действие фразами «прошло время», «тем временем», «в итоге», «вскоре».\n\nВыдавай ТОЛЬКО готовую прозу без вступлений и пояснений — сразу первая строка произведения.\n— Цель: не менее 2500 слов готовой прозы. Пиши все сцены подробно.' },
   { role:'line',   name:'Литред',       title:'Литературный редактор', emoji:'🔧',
     prompt:'Ты — литературный редактор. Твоя ЕДИНСТВЕННАЯ задача — улучшить стиль каждого абзаца, НЕ ИЗМЕНЯЯ объём.\n\nМЕТОД: Пройди по каждому абзацу оригинала и улучши его формулировки. Возвращай КАЖДЫЙ абзац оригинала в улучшенном виде — пропускать абзацы НЕЛЬЗЯ. Итоговый объём должен быть не менее 85% от оригинала.\n\nПРАВИЛА:\n— Каждый абзац входа = соответствующий абзац в выходе. Порядок абзацев сохранить.\n— ЗАПРЕЩЕНО пропускать, объединять или резюмировать абзацы и сцены.\n— Исправляй: ритм, штампы, воду, образность. Сохраняй: все события, всех персонажей, авторский голос.\n— Объём каждого абзаца на выходе — не менее 85% от объёма того же абзаца на входе.\n\nПЕРЕД ОТВЕТОМ УБЕДИСЬ: ты включил все абзацы оригинала?\n\nВерни ТОЛЬКО исправленный полный текст без вступлений и пояснений — сразу первая строка.' },
   { role:'proof',  name:'Корректор',    title:'Proofreader', emoji:'🔍',
@@ -78,7 +78,7 @@ function defaultIncludeInBook(role){ return BOOK_ROLES.has(role); }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
   output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'', outputVersions:[],
-  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'', verdictGate:(t.role==='scout'), contextChars:0 }; }
+  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'', verdictGate:(t.role==='scout'), contextChars:(['writer','fanout'].includes(t.role)) ? 32000 : 0 }; }
 function checkSchema(n){
   if(!n.outputSchema||!n.outputSchema.trim()) return null; // нет схемы → всё ок
   try{
@@ -104,7 +104,7 @@ function defaultState(){
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
-      maxContextChars:8000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
+      maxContextChars:24000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
       backupDir:'', autoBackup:true, backupIntervalMin:10, lastBackupTs:0, gdriveClientId:'', gdriveLastBackup:null, banList:'',
       maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'' },
     nodes, edges };
@@ -990,7 +990,7 @@ async function autoBibleUpdate(output, role){
     console.warn('autoBibleUpdate error', e);
   }
 }
-const tokEst=s=>{ s=s||''; const cyr=(s.match(/[а-яёА-ЯЁ]/g)||[]).length; return Math.max(1,Math.round(s.length/(cyr/s.length>.5?2:4))); };
+function tokEst(s){ s=s||''; const cyr=(s.match(/[а-яёА-ЯЁ]/g)||[]).length; return Math.round((s.length-cyr)/4 + cyr/2.5); }
 // #47: единый учёт скрытых (служебных) LLM-вызовов, которые идут мимо узлов.
 // label — что это за вызов (для журнала), model — модель для расценок.
 function trackAux(inText,outText,model,label){
@@ -2233,22 +2233,25 @@ async function runNode(id){
         toast('🔔 Вердикт «отклонить» — нужно ваше решение','warn');
       }
       save(); renderNodes(); renderEdges();
-      // Авто-продолжение для пишущих агентов (writer/line/logedit): если вышло < 3500 символов —
-      // DeepSeek-chat останавливается самостоятельно, досылаем «продолжи» до 2 раз.
+      // Авто-продолжение для пишущих агентов (writer/fanout): если написано < 2500 слов —
+      // DeepSeek-chat останавливается самостоятельно, досылаем «продолжи» до 3 раз.
       const _writerRole=TEMPLATES.find(t=>t.name===n.name)?.role||'';
-      if(['writer','fanout'].includes(_writerRole) && n.output.length < 3500 && hasKey()){
+      const _targetWords=2500; // целевой объём главы в словах
+      const _currentWords=()=>(n.output.match(/\S+/g)||[]).length;
+      if(['writer','fanout'].includes(_writerRole) && _currentWords() < _targetWords && hasKey()){
         let _ext=''; let _attempts=0;
-        while(n.output.length + _ext.length < 4000 && _attempts < 2){
+        while(_currentWords()+((_ext.match(/\S+/g)||[]).length) < _targetWords && _attempts < 3){
           try{
+            const _cw=_currentWords()+((_ext.match(/\S+/g)||[]).length);
             const _contMsgs=[
               {role:'system',content:n.prompt||'Ты — писатель-прозаик.'},
-              {role:'user',content:'Продолжи прозу с того места где остановился. Пиши медленно и подробно, не торопись к концу. Продолжай до исчерпания сцены.'},
+              {role:'user',content:`Продолжи прозу с того места где остановился. Уже написано ${_cw} слов, нужно минимум ${_targetWords}. Пиши подробно, не торопись к концу.`},
               {role:'assistant',content:n.output+(_ext||'')},
               {role:'user',content:'Продолжи:'}
             ];
             const _contResp=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},
               signal:abortCtrl?.signal,
-              body:JSON.stringify({baseURL:c.baseURL,apiKey:c.apiKey,model:c.model,temperature:c.temperature,proxyToken:state.global.proxyToken,messages:_contMsgs,max_tokens:4000})});
+              body:JSON.stringify({baseURL:c.baseURL,apiKey:c.apiKey,model:c.model,temperature:c.temperature,proxyToken:state.global.proxyToken,messages:_contMsgs,max_tokens:6000})});
             if(!_contResp.ok) break;
             const _rd=_contResp.body.getReader(),_dc=new TextDecoder(); let _ch='';
             while(true){const{value:_v,done:_d}=await _rd.read();if(_d)break;const _chunk=_dc.decode(_v,{stream:true});_ch+=_chunk;
