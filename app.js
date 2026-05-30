@@ -7,11 +7,11 @@ const TEMPLATES = [
   { role:'dev',    name:'Структурный редактор', title:'Developmental editor', emoji:'🧭',
     prompt:'Ты — структурный редактор. Улучши композицию: сюжет, арки персонажей, темп, логику. Дай конкретные правки списком и перепиши проблемные места.' },
   { role:'writer', name:'Райтер',       title:'Автор / гострайтер', emoji:'✍️',
-    prompt:'Ты — писатель-прозаик. Пиши живой образный текст строго по брифу, жанру и «Библии книги», держи единый голос. Пиши ПОЛНУЮ главу (не меньше 1000 слов) — с завязкой, развитием и кульминацией этой сцены. Охвати все ключевые события, заявленные в брифе. Выдавай ТОЛЬКО готовую прозу — без вступлений, без пояснений, без фраз «вот текст» или «как просили». Сразу первая строка произведения.' },
+    prompt:'Ты — писатель-прозаик. Пиши живой образный текст строго по брифу, жанру и «Библии книги», держи единый голос.\n\nСТРУКТУРА (пиши все абзацы подряд не останавливаясь — продолжай пока не завершишь все 10 абзацев):\n[Абзац 1-2] Завязка сцены: место, время, персонаж — конкретные детали окружения\n[Абзац 3-7] Развитие и нарастание: действие в реальном времени, диалоги, внутренние реакции\n[Абзац 8-9] Кульминация или клиффхэнгер: пик напряжения, поворот\n[Абзац 10] Спад / переход к следующей сцене\n\nПРАВИЛА:\n— Выход не менее 4000 символов (это минимум, не цель). Пиши медленно и подробно.\n— НЕ ПЕРЕСКАЗЫВАЙ события — ПРОЖИВИ их. Для каждой сцены: что персонаж видит, слышит, чувствует телесно; его внутренняя реакция; диалог или действие в реальном времени.\n— ЗАПРЕЩЕНО использовать «прошло время», «тем временем», «в итоге» как способ пропустить сцену.\n— Каждый ключевой момент — минимум 2 абзаца с деталями или диалогом.\n— Выдавай ТОЛЬКО готовую прозу — без вступлений, без пояснений. Сразу первая строка произведения.' },
   { role:'line',   name:'Литред',       title:'Литературный редактор', emoji:'🔧',
-    prompt:'Ты — литературный редактор. Убирай воду и штампы, усиливай ритм и образность, сохраняй авторский голос и ВСЕ СОБЫТИЯ СЮЖЕТА. СОХРАНИ ВЕСЬ ОБЪЁМ (не сокращай текст больше чем на 15% — только чистка, не конспект). Верни ТОЛЬКО исправленный полный текст без вступлений, без фраз «вот отредактированный текст» и любых пояснений — сразу первая строка.' },
+    prompt:'Ты — литературный редактор. Твоя ЕДИНСТВЕННАЯ задача — улучшить стиль каждого абзаца, НЕ ИЗМЕНЯЯ объём.\n\nМЕТОД: Пройди по каждому абзацу оригинала и улучши его формулировки. Возвращай КАЖДЫЙ абзац оригинала в улучшенном виде — пропускать абзацы НЕЛЬЗЯ. Итоговый объём должен быть не менее 85% от оригинала.\n\nПРАВИЛА:\n— Каждый абзац входа = соответствующий абзац в выходе. Порядок абзацев сохранить.\n— ЗАПРЕЩЕНО пропускать, объединять или резюмировать абзацы и сцены.\n— Исправляй: ритм, штампы, воду, образность. Сохраняй: все события, всех персонажей, авторский голос.\n— Объём каждого абзаца на выходе — не менее 85% от объёма того же абзаца на входе.\n\nПЕРЕД ОТВЕТОМ УБЕДИСЬ: ты включил все абзацы оригинала?\n\nВерни ТОЛЬКО исправленный полный текст без вступлений и пояснений — сразу первая строка.' },
   { role:'proof',  name:'Корректор',    title:'Proofreader', emoji:'🔍',
-    prompt:'Ты — корректор. Исправь орфографию, пунктуацию, грамматику, единообразие оформления. СОХРАНИ ВЕСЬ ТЕКСТ ПОЛНОСТЬЮ (не сокращай, не пересказывай). Верни ТОЛЬКО вычитанный полный текст без вступлений и пояснений — сразу первая строка.' },
+    prompt:'Ты — корректор. Твоя задача — вычитать каждый абзац и исправить ошибки, НЕ ИЗМЕНЯЯ содержание.\n\nМЕТОД: Пройди по каждому абзацу оригинала и исправь в нём орфографию, пунктуацию, грамматику, единообразие оформления. Возвращай КАЖДЫЙ абзац — пропускать абзацы НЕЛЬЗЯ. Итоговый объём должен быть не менее 95% от оригинала.\n\nПРАВИЛА:\n— Каждый абзац входа = соответствующий абзац в выходе. Порядок абзацев сохранить.\n— ЗАПРЕЩЕНО сокращать, пересказывать или объединять абзацы.\n— Исправляй ТОЛЬКО языковые ошибки. Не меняй стиль, порядок слов, авторские решения.\n\nПЕРЕД ОТВЕТОМ УБЕДИСЬ: ты включил все абзацы оригинала?\n\nВерни ТОЛЬКО вычитанный полный текст без вступлений и пояснений — сразу первая строка.' },
   { role:'continuity', name:'Континуитет', title:'Хранитель канона', emoji:'🧩',
     prompt:'Ты — агент-континуитета. Сверь текст с «Библией книги» (персонажи, мир, таймлайн) и материалами коллег. Найди противоречия в именах, деталях, хронологии и логике. Верни список расхождений и исправленный фрагмент.' },
   { role:'factcheck', name:'Фактчек',   title:'Проверка фактов', emoji:'✅',
@@ -1856,6 +1856,43 @@ async function runNode(id){
 
   n.status='running'; n.output=''; n.error=''; save(); renderNodes(); renderEdges();
   if(!abortCtrl) abortCtrl=new AbortController(); // fallback для одиночного прогона узла
+
+  // ── Chunked editing для line/logedit/proof при длинном входящем тексте ────
+  const _editRoles = ['line','logedit','proof'];
+  if(_editRoles.includes(roleKeyOf(n))){
+    // Собираем суммарный текст от предшественников
+    const _predText = state.edges.filter(e=>e.to===n.id)
+      .map(e=>node(e.from)).filter(p=>p&&p.output).map(p=>p.output).join('\n\n');
+    if(_predText.length > 3000){
+      const _t0=performance.now();
+      try{
+        const _sysMsg = (msgs[0]&&msgs[0].role==='system') ? msgs[0].content : (n.prompt||'');
+        const acc = await editInChunks(_predText, c, _sysMsg);
+        if(!acc||!acc.trim()) throw new Error('пустой ответ от editInChunks');
+        n.lastRequest={ messages: msgs, model: c.model, temperature: c.temperature, ts: Date.now() };
+        n.lastRawOutput=acc;
+        n.output=acc; n.summary=acc.length>600?acc.slice(0,600)+'…':acc; n.cacheHash=hash;
+        n.tokensIn=tokEst(msgs.map(m=>m.content).join('')); n.tokensOut=tokEst(acc);
+        n.ms=Math.round(performance.now()-_t0);
+        n.status= n.requireApproval && !n.approved ? 'review' : 'done'; n.error='';
+        logRow(n.name,'ok',`чанковое редактирование: ${n.tokensIn+n.tokensOut} ток., ${(n.ms/1000).toFixed(1)}с`,{cost:nodeCost(n)});
+        if(!n.outputVersions) n.outputVersions=[];
+        n.outputVersions.unshift({ts:Date.now(),output:n.output,tokensIn:n.tokensIn||0,tokensOut:n.tokensOut||0});
+        if(n.outputVersions.length>5) n.outputVersions=n.outputVersions.slice(0,5);
+        n.banHits=scanBanList(n.output);
+        save(); renderNodes(); renderEdges();
+        const _b=document.getElementById('body-'+id); if(_b){ _b.classList.remove('empty'); _b.textContent=acc; }
+        return true;
+      } catch(e){
+        n.status='error'; n.error=String(e.message||e);
+        logRow(n.name,'error','editInChunks: '+String(e.message||e).slice(0,120));
+        save(); renderNodes();
+        return false;
+      }
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const maxR=state.global.maxRetries|0, t0=performance.now();
   for(let attempt=0; attempt<=maxR; attempt++){
     let acc='';
@@ -4161,26 +4198,97 @@ function openTextAnalysis(){
 
 /* ============ 🎓 ШКОЛА СТИЛЯ ============ */
 // Разбивает текст на куски ~maxLen по границам абзацев.
-function chunkByParagraphs(text, maxLen){
+// Если overlapChars > 0 — каждый чанк (кроме первого) получает поле .prefix
+// с последними overlapChars символов предыдущего чанка (только для контекста редактора).
+function chunkByParagraphs(text, maxLen, overlapChars){
   const paras=String(text||'').split(/\n{2,}/);
-  const chunks=[]; let cur='';
+  const rawChunks=[]; let cur='';
   for(const p of paras){
-    if(cur && (cur.length+p.length+2)>maxLen){ chunks.push(cur); cur=''; }
+    if(cur && (cur.length+p.length+2)>maxLen){ rawChunks.push(cur); cur=''; }
     // абзац-гигант сам по себе больше лимита — режем по предложениям
     if(p.length>maxLen){
-      if(cur){ chunks.push(cur); cur=''; }
+      if(cur){ rawChunks.push(cur); cur=''; }
       let rest=p;
       while(rest.length>maxLen){
         let cut=rest.lastIndexOf('. ',maxLen); if(cut<maxLen*0.5) cut=maxLen;
-        chunks.push(rest.slice(0,cut)); rest=rest.slice(cut);
+        rawChunks.push(rest.slice(0,cut)); rest=rest.slice(cut);
       }
       if(rest.trim()) cur=rest;
     } else {
       cur=cur?cur+'\n\n'+p:p;
     }
   }
-  if(cur.trim()) chunks.push(cur);
-  return chunks.filter(c=>c.trim());
+  if(cur.trim()) rawChunks.push(cur);
+  const filtered=rawChunks.filter(c=>c.trim());
+  if(!overlapChars) return filtered;
+  // Добавляем .prefix — хвост предыдущего чанка для контекста (не редактируется)
+  return filtered.map((text,i)=>{
+    const obj={text};
+    if(i>0) obj.prefix=filtered[i-1].slice(-overlapChars).trim();
+    return obj;
+  });
+}
+
+// Редактирует длинный текст чанками с overlap-контекстом через callLLM.
+// systemPrompt — промт агента; maxChunk — макс. размер куска (символы).
+// Возвращает строку — склеенный результат.
+async function chunkEdit(text, systemPrompt, cfgObj, maxChunk){
+  maxChunk=maxChunk||3000;
+  const chunks=chunkByParagraphs(text, maxChunk, 300);
+  if(chunks.length<=1 || typeof chunks[0]==='string'){
+    // Текст маленький или overlap не нужен — один вызов
+    return callLLM(cfgObj,[{role:'system',content:systemPrompt},{role:'user',content:text}]);
+  }
+  const results=[];
+  for(let i=0;i<chunks.length;i++){
+    const ch=chunks[i];
+    let userMsg='';
+    if(ch.prefix){
+      userMsg=`[ТОЛЬКО ДЛЯ КОНТЕКСТА — НЕ РЕДАКТИРОВАТЬ:\n«...${ch.prefix}»]\n\n<input>\n${ch.text}\n</input>`;
+    } else {
+      userMsg=`<input>\n${ch.text}\n</input>`;
+    }
+    const out=await callLLM(cfgObj,[
+      {role:'system',content:systemPrompt+'\n\nРедактируй ТОЛЬКО содержимое тега <input>. Контекст в квадратных скобках — только для понимания связи, его не трогай и не включай в ответ.'},
+      {role:'user',content:userMsg}
+    ]);
+    results.push(out.trim());
+  }
+  return results.join('\n\n');
+}
+// Редактирует длинный текст чанками ~1500 символов с overlap 300 по границам абзацев.
+// Используется для line/logedit/proof узлов при входящем тексте > 3000 символов.
+// cfgObj — объект конфигурации LLM; systemPrompt — системный промт агента.
+// Возвращает промис строки — склеенный результат редактирования.
+async function editInChunks(inputText, cfgObj, systemPrompt){
+  const CHUNK_SIZE = 1500;
+  const OVERLAP    = 300;
+  const chunks = chunkByParagraphs(inputText, CHUNK_SIZE, OVERLAP);
+  // Если текст поместился в 1 чанк — обычный вызов без накладных расходов
+  if(chunks.length <= 1 || typeof chunks[0] === 'string'){
+    return callLLM(cfgObj, [
+      {role:'system', content: systemPrompt},
+      {role:'user',   content: inputText}
+    ]);
+  }
+  const results = [];
+  for(let i = 0; i < chunks.length; i++){
+    const ch = chunks[i];
+    let userMsg = '';
+    if(ch.prefix){
+      userMsg = `[ТОЛЬКО ДЛЯ КОНТЕКСТА — НЕ РЕДАКТИРОВАТЬ:\n«...${ch.prefix}»]\n\n<input>\n${ch.text}\n</input>`;
+    } else {
+      userMsg = `<input>\n${ch.text}\n</input>`;
+    }
+    const sysWithHint = systemPrompt +
+      '\n\nРедактируй ТОЛЬКО содержимое тега <input>. Контекст в квадратных скобках — только для понимания связи, его не включай в ответ. Верни ТОЛЬКО текст из <input> в улучшенном виде.';
+    const out = await callLLM(cfgObj, [
+      {role:'system', content: sysWithHint},
+      {role:'user',   content: userMsg}
+    ]);
+    results.push(out.trim());
+  }
+  return results.join('\n\n');
 }
 // Равномерная выборка <=max элементов из начала/середины/конца (сохраняет порядок).
 function evenSample(arr, max){
