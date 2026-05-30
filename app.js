@@ -3300,8 +3300,7 @@ function nodeInBook(n){
 // Узлы для книги в правильном порядке (топологическом).
 function bookNodes(){
   const ordered=topoOrder().map(id=>node(id)).filter(nodeInBook);
-  // Из цепочки writer→[continuity/logedit/…]→line→proof брать только ФИНАЛЬНЫЙ:
-  // Если через прямые (не петлевые) рёбра можно достичь другого узла-книги — узел промежуточный.
+  // Из цепочки writer→line→proof брать ФИНАЛЬНЫЙ, но если редактор урезал >30% — взять предыдущий.
   const inBookSet=new Set(ordered.map(n=>n.id));
   function hasBookDescendant(startId){
     const visited=new Set(), q=[startId];
@@ -3312,7 +3311,26 @@ function bookNodes(){
       } } }
     return false;
   }
-  return ordered.filter(n=>!hasBookDescendant(n.id));
+  const terminal=ordered.filter(n=>!hasBookDescendant(n.id));
+  // Если терминальный узел написал ≤70% слов от своего upstream-книжного предка — взять предка
+  return terminal.map(n=>{
+    const prose=cleanProse(n); const words=(prose.match(/\S+/g)||[]).length;
+    if(words<100) return n; // слишком мало — возможно он не контентный, оставить как есть
+    // Найти ближайшего книжного предка
+    const ancestors=ordered.filter(a=>a.id!==n.id&&!hasBookDescendant(a.id)===false||
+      (inBookSet.has(a.id)&&a.id!==n.id));
+    // Простой подход: взять узел с максимальным объёмом из книжных
+    const best=ordered.reduce((b,c)=>{
+      const cw=(cleanProse(c).match(/\S+/g)||[]).length;
+      const bw=(cleanProse(b).match(/\S+/g)||[]).length;
+      return cw>bw?c:b;
+    }, n);
+    if(best.id!==n.id){
+      const bestWords=(cleanProse(best).match(/\S+/g)||[]).length;
+      if(words < bestWords*0.7) return best; // редактор срезал >30% — берём богатейший вариант
+    }
+    return n;
+  });
 }
 // Заголовок главы: явный chapterTitle → первый H1/H2 из вывода → «Глава N».
 function chapterTitleOf(n,index){
