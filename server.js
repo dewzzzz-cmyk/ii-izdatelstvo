@@ -159,12 +159,30 @@ function handleReadBackup(req,res){
 }
 /* ═════════════════════════════════════════════════════════════════════ */
 
+// Сохранить готовую книгу как читаемый .md файл рядом с бэкапами
+function handleSaveBook(req,res){
+  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>10e6) req.destroy(); });
+  req.on('end',()=>{
+    let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
+    const dir=safeDir(b.backupDir);
+    ensureDir(dir);
+    const title=(b.title||'book').replace(/[\\/:*?"<>|]/g,'-').slice(0,60);
+    const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,10);
+    const filename=`${title}_${ts}.md`;
+    const fp=path.join(dir,filename);
+    try{
+      fs.writeFileSync(fp, b.content||'','utf8');
+      send(res,200,JSON.stringify({ok:true,file:filename,path:fp}),'application/json; charset=utf-8');
+    }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
+  });
+}
 http.createServer((req,res)=>{
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
   if(req.method==='OPTIONS') return send(res,204,'');
   if(req.method==='POST' && req.url==='/api/generate') return handleGenerate(req,res);
   if(req.method==='POST' && req.url==='/api/backup')   return handleBackup(req,res);
+  if(req.method==='POST' && req.url==='/api/save-book') return handleSaveBook(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/backups')) return handleListBackups(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/backup?')) return handleReadBackup(req,res);
   if(req.method==='GET') return serveStatic(req,res);

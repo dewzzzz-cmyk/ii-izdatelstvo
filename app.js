@@ -543,7 +543,32 @@ async function autoBackupNow(silent=false){
     if(!silent) toast('💾 Копия сохранена: '+j.file,'ok');
     else        logRow('Бэкап','ok',j.file);
     updateBackupState();
+    // Авто-сохранение читаемой книги рядом с бэкапом (если есть контент)
+    autoSaveBook(state.global.backupDir||'').catch(()=>{});
   }catch(e){ _onBackupFail(silent,'Бэкап недоступен: '+e.message); }
+}
+// Авто-сохранение читаемой книги (.md) на диск рядом с JSON-бэкапами
+async function autoSaveBook(backupDir){
+  const chapters=bookNodes().filter(n=>n.output);
+  if(!chapters.length) return; // нечего сохранять
+  const pr=state.project;
+  const title=pr.title||'книга';
+  const lines=[`# ${typo(title)}`,'',`Жанр: ${pr.genre||'—'} · Аудитория: ${pr.audience||'—'}`,
+    pr.author?`Автор: ${pr.author}`:'','','---',''];
+  chapters.forEach((n,i)=>{
+    const ct=chapterTitleOf(n,i);
+    const prose=cleanProse(n);
+    lines.push(`## ${ct}`,prose,'','---','');
+  });
+  const content=typo(lines.join('\n'));
+  try{
+    const res=await fetch('/api/save-book',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({backupDir,title,content})});
+    if(res.ok){
+      const j=await res.json();
+      logRow('Книга','ok','📄 '+j.file);
+    }
+  }catch(e){ /* silent — книга в браузере, бэкап в JSON уже есть */ }
 }
 // #50: при ошибке (в т.ч. silent) НЕ молчим — журнал + одноразовый тост + индикатор
 function _onBackupFail(silent,msg){
