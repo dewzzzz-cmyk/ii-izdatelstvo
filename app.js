@@ -3295,13 +3295,19 @@ function nodeInBook(n){
 // Узлы для книги в правильном порядке (топологическом).
 function bookNodes(){
   const ordered=topoOrder().map(id=>node(id)).filter(nodeInBook);
-  // Из цепочки «контентных» узлов (writer→line→proof) брать только ФИНАЛЬНЫЙ:
-  // Если у узла есть downstream-потомок, который тоже входит в книгу — узел промежуточный, не включать.
+  // Из цепочки writer→[continuity/logedit/…]→line→proof брать только ФИНАЛЬНЫЙ:
+  // Если через прямые (не петлевые) рёбра можно достичь другого узла-книги — узел промежуточный.
   const inBookSet=new Set(ordered.map(n=>n.id));
-  return ordered.filter(n=>{
-    const hasBookDescendant=state.edges.some(e=>e.from===n.id && !e.isLoop && inBookSet.has(e.to));
-    return !hasBookDescendant;
-  });
+  function hasBookDescendant(startId){
+    const visited=new Set(), q=[startId];
+    while(q.length){ const cur=q.shift(); if(visited.has(cur)) continue; visited.add(cur);
+      for(const e of state.edges){ if(e.from===cur && !e.isLoop){
+        if(inBookSet.has(e.to) && e.to!==startId) return true;
+        q.push(e.to);
+      } } }
+    return false;
+  }
+  return ordered.filter(n=>!hasBookDescendant(n.id));
 }
 // Заголовок главы: явный chapterTitle → первый H1/H2 из вывода → «Глава N».
 function chapterTitleOf(n,index){
