@@ -1987,6 +1987,36 @@ async function runNode(id){
         toast('🔔 Вердикт «отклонить» — нужно ваше решение','warn');
       }
       save(); renderNodes(); renderEdges();
+      // Авто-продолжение для пишущих агентов (writer/line/logedit): если вышло < 3500 символов —
+      // DeepSeek-chat останавливается самостоятельно, досылаем «продолжи» до 2 раз.
+      const _writerRole=TEMPLATES.find(t=>t.name===n.name)?.role||'';
+      if(['writer','fanout'].includes(_writerRole) && n.output.length < 3500 && hasKey()){
+        let _ext=''; let _attempts=0;
+        while(n.output.length + _ext.length < 4000 && _attempts < 2){
+          try{
+            const _contMsgs=[
+              {role:'system',content:n.prompt||'Ты — писатель-прозаик.'},
+              {role:'user',content:'Продолжи прозу с того места где остановился. Пиши медленно и подробно, не торопись к концу. Продолжай до исчерпания сцены.'},
+              {role:'assistant',content:n.output+(_ext||'')},
+              {role:'user',content:'Продолжи:'}
+            ];
+            const _contResp=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+              signal:abortCtrl?.signal,
+              body:JSON.stringify({baseURL:c.baseURL,apiKey:c.apiKey,model:c.model,temperature:c.temperature,proxyToken:state.global.proxyToken,messages:_contMsgs,max_tokens:4000})});
+            if(!_contResp.ok) break;
+            const _rd=_contResp.body.getReader(),_dc=new TextDecoder(); let _ch='';
+            while(true){const{value:_v,done:_d}=await _rd.read();if(_d)break;const _chunk=_dc.decode(_v,{stream:true});_ch+=_chunk;
+              const _b2=document.getElementById('body-'+n.id); if(_b2){_b2.textContent=(n.output+_ext+_ch).slice(-800); _b2.scrollTop=_b2.scrollHeight;} }
+            if(_ch.trim()) _ext+=_ch; else break;
+          }catch(_e){ break; }
+          _attempts++;
+        }
+        if(_ext.trim()){
+          n.output=n.output+_ext;
+          logRow(n.name,'ok',`авто-продолжение +${_ext.length}ч → итого ${n.output.length}ч`);
+          save(); renderNodes();
+        }
+      }
       // Auto-eval for outgoing loop edges (Item 25: regression-guard + best-output)
       const loopEdges=state.edges.filter(e=>e.from===n.id && e.isLoop && e.autoEval);
       for(const le of loopEdges){
