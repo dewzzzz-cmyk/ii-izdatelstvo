@@ -25,7 +25,7 @@ const TEMPLATES = [
   { role:'mkt',    name:'Маркетолог',   title:'SMM / промо', emoji:'📣',
     prompt:'Ты — книжный маркетолог. Спланируй запуск как систему: ниша, идея серии, план первых 7 дней и 3 готовых поста (тизер / цитата / релиз) под целевую аудиторию.' },
   { role:'logedit', name:'Логред',      title:'Редактор логики', emoji:'🔎',
-    prompt:'Ты — редактор логики. Молча найди и исправь в тексте логические нестыковки: пространство, время, последовательность действий. Верни ТОЛЬКО прозу — ни одного слова от себя, никакого анализа, никаких заголовков, никаких пояснений. Первое слово ответа — первое слово исправленного текста. Объём — не менее 95% от оригинала.' },
+    prompt:'Ты — редактор логики. Найди и молча исправь нестыковки (пространство, время, действия персонажей). Верни ответ СТРОГО в формате:\n===ТЕКСТ===\n[исправленный полный текст]\n===КОНЕЦ===\nНИЧЕГО кроме блока ===ТЕКСТ===...===КОНЕЦ===. Объём — не менее 95% от оригинала.' },
   { role:'distill', name:'Дистиллятор', title:'Context compressor', emoji:'🗜️',
     prompt:'Сожми предыдущий текст до 200-300 слов: главные события, ключевые факты о персонажах, открытые сюжетные линии. Формат: маркированный список. Это резюме будет передано следующим агентам.' },
   { role:'fanout', name:'Параллельные главы', title:'Fanout writer', emoji:'🔀',
@@ -2118,7 +2118,7 @@ async function runNode(id){
         if(n.outputVersions.length>5) n.outputVersions=n.outputVersions.slice(0,5);
         n.banHits=scanBanList(n.output);
         save(); renderNodes(); renderEdges();
-        const _b=document.getElementById('body-'+id); if(_b){ _b.classList.remove('empty'); _b.textContent=acc; }
+        const _b=document.getElementById('body-'+id); if(_b){ _b.classList.remove('empty'); _b.textContent=_cleanedAcc; } // fix: показываем cleanedAcc а не сырой acc
         return true;
       } catch(e){
         n.status='error'; n.error=String(e.message||e);
@@ -2216,21 +2216,11 @@ async function runNode(id){
       // Программная постобработка Логреда: вырезаем анализ, оставляем только прозу.
       // DeepSeek ВСЕГДА пишет «## Найденные противоречия» независимо от промта.
       // Это не баг промта — это поведение модели. Решаем на уровне кода.
+      // Обычная ветка: cleanProse обрабатывает ===ТЕКСТ===...===КОНЕЦ=== и все преамбулы.
+      // Дублирующий ручной стрип убран — единый путь через cleanProse (рекомендация совещания).
       if(roleKeyOf(n)==='logedit' && n.output){
-        const cleaned=cleanProse(n);  // cleanProse извлекает «## Исправленный текст» или стрипает преамбулы
-        if(cleaned && cleaned.length > n.output.length * 0.3){
-          // cleanProse дала достаточно контента — используем
-          n.output=cleaned;
-        } else {
-          // cleanProse не справилась — вырезаем всё до и включая раздел анализа
-          let prose=n.output;
-          // Берём текст ПОСЛЕ блока анализа (ищем ## Исправленный или просто конец анализа)
-          const afterFix=prose.match(/##\s*Исправленный\s+текст[:\s]*([\s\S]+)/i);
-          if(afterFix) prose=afterFix[1].trim();
-          else prose=prose.replace(/^[\s\S]*?(?=\n[А-ЯA-Z«—])/,'').trim()||prose; // fallback: с первой заглавной
-          if(prose.length > 200) n.output=prose;
-        }
-        logRow(n.name,'ok',`Логред: анализ вырезан автоматически, проза ${n.output.length}ч`);
+        const cleaned=cleanProse(n);
+        if(cleaned && cleaned.length > n.output.length * 0.2){ n.output=cleaned; }
       }
       // ⚖ Вердикт-пауза: решающий агент рекомендует ОТКЛОНИТЬ → пауза, спросить человека.
       if(n.verdictGate && n.status==='done' && /отклон|reject|не\s+в\s+производств|вердикт[:\s]+отклон/i.test(acc)){
