@@ -75,7 +75,7 @@ function defaultIncludeInBook(role){ return BOOK_ROLES.has(role); }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
   output:'', summary:'', status:'idle', error:'', cacheHash:'', tokensIn:0, tokensOut:0, ms:0, outputSchema:'', postProcess:'', outputVersions:[],
-  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'', verdictGate:(t.role==='scout') }; }
+  variants:1, fanoutCount:0, fanoutOutputs:[], collapsed:false, includeInBook:defaultIncludeInBook(t.role), chapterTitle:'', verdictGate:(t.role==='scout'), contextChars:0 }; }
 function checkSchema(n){
   if(!n.outputSchema||!n.outputSchema.trim()) return null; // нет схемы → всё ок
   try{
@@ -668,7 +668,7 @@ async function buildMessages(n){
     }
   }
   const preds=state.edges.filter(e=>e.to===n.id).map(e=>node(e.from)).filter(Boolean);
-  const budget=state.global.maxContextChars||8000;
+  const budget=(n.contextChars&&n.contextChars>0)?n.contextChars:(state.global.maxContextChars||8000);
   const predsWithOutput=preds.filter(p=>p.output);
   const perNode=Math.floor(budget/Math.max(1,predsWithOutput.length));
   // #44: словарь вывода предков по имени для {{prev.Имя}}
@@ -1117,6 +1117,7 @@ function renderLeftRail(){
     <div class="lr-head">
       <div class="lr-title">📖 ${esc(pr.title||'Без названия')}</div>
       ${chapters.length?`<div class="lr-sub">${chapters.length} ${chapters.length===1?'глава':'глав'}</div>`:''}
+      ${(()=>{ const ctxK=Math.round((state.global.maxContextChars||8000)/1000); return `<div class="lr-sub" style="cursor:pointer" data-action="settings" title="Изменить в Настройках">📐 Контекст: ${ctxK}К — нажмите ⚙ чтобы изменить</div>`; })()}
       ${styleLbl?`<div class="lr-style-badge" data-action="style-school" title="Активный стиль письма подмешивается во всех агентов. Нажмите чтобы изменить/снять.">✍️ Стиль: ${esc(styleLbl)} <span class="lr-style-x" data-action="clear-style" title="Снять стиль">✕</span></div>`:''}
     </div>
     <div class="lr-chapters">
@@ -1262,6 +1263,7 @@ function renderNodes(){
     // Standard + special nodes
     const out=n.error?`⚠ ${esc(n.error)}`:n.status==='running'&&!n.output?'<span class="thinking"><span></span><span></span><span></span></span>':(n.output?md2html(n.output):'нет результата');
     const meta=(n.tokensIn||n.tokensOut)?`<span>${(n.tokensIn+n.tokensOut)} ток.</span><span>${money(nodeCost(n))}</span>${n.ms?`<span>${(n.ms/1000).toFixed(1)}с</span>`:''}`:'';
+    const ctxBar=(()=>{ if(n.status!=='done'||!(n.summary||n.output)) return ''; const used=(n.summary||n.output||'').length; const bdgt=n.contextChars&&n.contextChars>0?n.contextChars:(state.global.maxContextChars||8000); const pct=Math.min(100,Math.round(used/bdgt*100)); const col=pct>=90?'#ef4444':pct>=70?'#f59e0b':'#22c55e'; return `<div class="ctx-bar" title="${used}/${bdgt} символов (${pct}%)"><div class="ctx-fill" style="width:${pct}%;background:${col}"></div></div>`; })();
     const appr=n.status==='review'?`<div class="node-foot"><button class="btn ok sm" data-action="approve" data-id="${n.id}">✅ Принять</button><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">✍ Правка</button></div>`:
       n.status==='variants'?`<div class="node-foot"><button class="btn ok sm" data-action="open-variants" data-id="${n.id}">🔀 Выбрать вариант</button></div>`:
       `<div class="node-foot"><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">⚙ Настроить</button><button class="btn ghost sm" data-action="run-node" data-id="${n.id}">▶ Прогнать</button></div>`;
@@ -1278,7 +1280,8 @@ function renderNodes(){
         <div class="node-status"></div>
       </div>
       ${n.collapsed?'':`<div class="node-body ${n.output||n.error?'':'empty'}" id="body-${n.id}">${out}</div>
-      ${meta?`<div class="node-meta">${meta}</div>`:''}`}
+      ${meta?`<div class="node-meta">${meta}</div>`:''}
+      ${ctxBar}`}
       ${appr}
     </div>`;
   }).join('');
@@ -2544,6 +2547,12 @@ function openNode(id){
         <div class="field"><label>Температура</label><input id="f-temp" type="number" step="0.1" min="0" max="2" value="${n.temperature}"></div></div>
       <div class="field"><label>API-ключ агента</label><input id="f-key" type="password" value="${esc(n.apiKey)}" placeholder="пусто — глобальный"></div>
     </div>
+    <div class="row2">
+      <div class="field"><label>Контекст (симв.)</label>
+        <input type="number" id="f-ctx" value="${n.contextChars||''}" placeholder="глобальный (${state.global.maxContextChars||8000})">
+        <div class="hint">Оставьте пустым — использует глобальное. Для Райтера рекомендуется 16000+</div>
+      </div>
+    </div>
     <div class="actions"><button class="btn ok" id="f-save">Сохранить</button>
       <button class="btn ghost" id="f-diff">± Diff промта</button>
       <button class="btn ghost" id="f-run">▶ Прогнать</button>
@@ -2570,7 +2579,8 @@ function openNode(id){
       n.baseURL=b.querySelector('#f-base').value.trim(); n.model=b.querySelector('#f-model').value.trim();
       n.apiKey=b.querySelector('#f-key').value.trim(); const tv=parseFloat(b.querySelector('#f-temp').value); n.temperature=isNaN(tv)?1:tv;
       n.variants = parseInt(b.querySelector('#f-variants')?.value) || 1;
-      n.fanoutCount = parseInt(b.querySelector('#f-fanout-count')?.value) || 0; };
+      n.fanoutCount = parseInt(b.querySelector('#f-fanout-count')?.value) || 0;
+      n.contextChars = parseInt(b.querySelector('#f-ctx')?.value) || 0; };
     b.querySelector('#f-save').onclick=()=>{ collect(); n.cacheHash=''; save(); render(); toast('Сохранено','ok'); };
     b.querySelector('#f-diff').onclick=()=>{
       const newP=b.querySelector('#f-prompt').value;
@@ -2736,7 +2746,14 @@ function openSettings(){
       <textarea id="g-keys" rows="3" placeholder="sk-key-1&#10;sk-key-2&#10;sk-key-3">${esc(g.apiKeys||'')}</textarea>
       <div class="hint">Если заполнено — ключи чередуются по кругу между агентами. «API-ключ» из «Основное» используется как резервный.</div></div>
     <div class="section-label">Лимиты и надёжность</div>
-    <div class="row2"><div class="field"><label>Бюджет контекста (символов)</label><input id="g-ctx" type="number" value="${g.maxContextChars}"></div>
+    <div class="row2"><div class="field"><label>Контекст на агента (символов)</label><input id="g-ctx" type="number" value="${g.maxContextChars}">
+      <div class="hint">Сколько символов предыдущих агентов видит каждый следующий. Больше = лучше связность, но дороже. 8000 → ~2 стр., 16000 → ~4 стр., 32000 → ~8 стр.</div>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <button type="button" class="btn ghost sm" data-ctxpreset="4000">4К</button>
+        <button type="button" class="btn ghost sm" data-ctxpreset="8000">8К</button>
+        <button type="button" class="btn ghost sm" data-ctxpreset="16000">16К</button>
+        <button type="button" class="btn ghost sm" data-ctxpreset="32000">32К</button>
+      </div></div>
       <div class="field"><label>Ретраи при сбое</label><input id="g-retry" type="number" min="0" max="5" value="${g.maxRetries}"></div></div>
     <div class="field"><label>Токен прокси (если выложен в сеть)</label><input id="g-ptok" value="${esc(g.proxyToken)}" placeholder="не обязательно"></div>
     <label class="check"><input type="checkbox" id="g-summ" ${g.autoSummarize?'checked':''}> Авто-саммари узлов (доп. вызов LLM после каждого агента)</label>
@@ -2794,6 +2811,7 @@ function openSettings(){
       b.querySelectorAll('.set-pane').forEach(p=>p.style.display=p.dataset.pane===tab.dataset.settab?'':'none');
     });
     b.querySelector('#g-preset').onchange=ev=>{ if(!ev.target.value) return; const [u,m]=ev.target.value.split('|'); b.querySelector('#g-base').value=u; b.querySelector('#g-model').value=m; };
+    b.querySelectorAll('[data-ctxpreset]').forEach(btn=>btn.onclick=()=>{ b.querySelector('#g-ctx').value=btn.dataset.ctxpreset; });
     b.querySelector('#g-bkopen').onclick=()=>{ closeDrawer(); setTimeout(openBackupRestore,120); };
     b.querySelector('#g-save').onclick=()=>{ g.baseURL=b.querySelector('#g-base').value.trim()||g.baseURL; g.model=b.querySelector('#g-model').value.trim()||g.model;
       g.apiKey=b.querySelector('#g-key').value.trim(); const t=parseFloat(b.querySelector('#g-temp').value); g.temperature=isNaN(t)?1:t;
