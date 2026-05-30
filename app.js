@@ -69,7 +69,8 @@ function evalCondition(cond,output){
 }
 // Включать ли вывод этого агента в собранную книгу (по роли).
 // true для пишущих/редактирующих прозу ролей; false для служебных (скаут, арт, метаданные и т.п.)
-const BOOK_ROLES=new Set(['writer','line','logedit','proof','merge','beatsheet','fanout']);
+// Роли, чей OUTPUT идёт в книгу. beatsheet/dev — планировщики, их нет в книге.
+const BOOK_ROLES=new Set(['writer','line','logedit','proof','merge','fanout']);
 function defaultIncludeInBook(role){ return BOOK_ROLES.has(role); }
 function freshNode(t,x,y){ return { id:uid(), name:t.name, role:t.title, emoji:t.emoji, prompt:t.prompt, promptHistory:[],
   x,y, useGlobal:true, baseURL:'',apiKey:'',model:'',temperature:ROLE_TEMPS[t.role]??1.0, requireApproval:false, approved:false,
