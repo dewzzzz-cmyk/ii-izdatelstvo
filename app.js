@@ -3295,8 +3295,13 @@ function roleKeyOf(n){
 // Должен ли узел попасть в книгу. Учитывает явный флаг; иначе считает по роли.
 function nodeInBook(n){
   if(!n||!n.output) return false;
+  const rk=roleKeyOf(n);
+  // Если роль известна — BOOK_ROLES авторитетен (перекрывает сохранённый флаг).
+  // Так старые узлы с неверным includeInBook не ломают книгу.
+  if(rk){ return BOOK_ROLES.has(rk) && (typeof n.includeInBook!=='boolean' || n.includeInBook); }
+  // Кастомный узел без известной роли — доверяем флагу
   if(typeof n.includeInBook==='boolean') return n.includeInBook;
-  return defaultIncludeInBook(roleKeyOf(n));
+  return false;
 }
 // Узлы для книги в правильном порядке (топологическом).
 function bookNodes(){
