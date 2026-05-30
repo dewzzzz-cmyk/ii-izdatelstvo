@@ -96,7 +96,7 @@ function defaultState(){
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { _bookId:'',
-    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''}},
+    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''},conceptApproved:false,world:{setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''}},
     styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
@@ -619,11 +619,16 @@ function conceptBlock(){
     if(mot) parts.push('Хочет: '+mot);
     return line+(parts.length?'\n    '+parts.join(' | '):'');
   }).join('\n  ');
+  const w=(state.project&&state.project.world)||{};
+  const rules=(w.rules||'').trim();
+  const secrets=(w.secrets||'').trim();
   let out='ЗАМЫСЕЛ КНИГИ (канон — соблюдать строго):\n';
   if(setting) out+=`Место и время: ${setting}\n`;
   if(charsStr) out+=`Персонажи:\n  ${charsStr}\n`;
   if(plotTurns) out+=`Ключевые повороты: ${plotTurns}\n`;
-  if(tone) out+=`Тон: ${tone}`;
+  if(tone) out+=`Тон: ${tone}\n`;
+  if(rules) out+=`Правила мира: ${rules}\n`;
+  if(secrets) out+=`Известные тайны: ${secrets}`;
   return out.trim();
 }
 async function buildMessages(n){
@@ -1019,7 +1024,7 @@ function renderAttention(){
 }
 
 /* ============ РЕНДЕР ============ */
-const _VIEWS=['canvas','reader','simple'];
+const _VIEWS=['canvas','reader','simple','world'];
 let _currentView=(()=>{ const h=location.hash.slice(1); if(_VIEWS.includes(h)) return h;
   const hasOutput=(state.nodes||[]).some(n=>n.output&&n.output.trim());
   return hasOutput?'reader':'simple'; })();
@@ -1128,6 +1133,7 @@ function renderLeftRail(){
       <button class="lr-nav-btn" data-action="book-library"><span class="lr-nav-ic">📚</span> Мои книги</button>
       <button class="lr-nav-btn" data-action="templates"><span class="lr-nav-ic">🗂</span> Шаблоны</button>
       <button class="lr-nav-btn" data-action="concept"><span class="lr-nav-ic">🧭</span> Замысел</button>
+      <button class="lr-nav-btn" data-action="switch-view" data-view="world"><span class="lr-nav-ic">🌍</span> Мир</button>
       <button class="lr-nav-btn" data-action="bible"><span class="lr-nav-ic">📖</span> Библия</button>
       <button class="lr-nav-btn" data-action="style-school"><span class="lr-nav-ic">🎓</span> Школа стиля</button>
       <button class="lr-nav-btn" data-action="text-analysis"><span class="lr-nav-ic">📊</span> Анализ текста</button>
@@ -4838,20 +4844,241 @@ function openBaselineCompare(){
 }
 
 /* ============ ПЕРЕКЛЮЧЕНИЕ ВИДА (Холст / Книга / Просто) ============ */
+/* ============ МИР КНИГИ — 4-й экран ============ */
+let _worldSaveTimer=null;
+function _worldDebounce(){ clearTimeout(_worldSaveTimer); _worldSaveTimer=setTimeout(()=>save(),800); }
+
+function _worldSectionGenBtn(sectionId, label){
+  return `<button class="ws-gen-btn" data-ws-gen="${sectionId}" title="Сгенерировать с помощью ИИ">🪄 ${label||'Сгенерировать'}</button>`;
+}
+
+async function _genWorldSection(key){
+  if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }
+  const pr=state.project||{};
+  const w=pr.world||(pr.world={setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''});
+  const c=cfg({useGlobal:true}); c.temperature=0.7;
+  const brief=pr.brief||'не задан'; const genre=pr.genre||'не задан';
+  const setting=w.setting||pr.concept?.setting||'';
+  const chars=(pr.concept?.characters||[]).map(p=>(p.name||'')+(p.role?' ('+p.role+')':'')).filter(Boolean).join(', ');
+  const SYS={
+    setting:'Ты — редактор-разработчик. На основе жанра и брифа книги опиши место и время действия — 2-3 предложения. Конкретика: страна/город/эпоха, особенности среды.',
+    atmosphere:'Ты — редактор-разработчик. Опиши атмосферу и настроение мира книги в 2-3 предложениях. Чувства, которые он вызывает; цвет, ритм, напряжение.',
+    rules:'Ты — редактор-разработчик. Опиши правила этого мира в 3-5 пунктах (список через \n-). Что тут возможно, что невозможно — физические/социальные/магические/технологические законы.',
+    timeline:'Ты — редактор-разработчик. Составь хронологию ключевых событий книги (до событий сюжета + во время сюжета) в 4-7 пунктах. Формат: «Дата/период — событие».',
+    secrets:'Ты — редактор-разработчик. Выпиши 3-5 нераскрытых тайн и открытых сюжетных линий, которые держат читателя в напряжении. Конкретно, без спойлеров в самих формулировках.',
+    relations:'Ты — редактор-разработчик. Опиши ключевые отношения между персонажами: кто с кем, в чём напряжение или союз. Формат: «Имя ↔ Имя — суть связи».'
+  };
+  const usr=`Название: «${pr.title||'без названия'}», жанр: ${genre}\nБриф: ${brief}`+
+    (setting?`\nМесто/время: ${setting}`:'')+(chars?`\nПерсонажи: ${chars}`:'');
+  const sys=SYS[key]||'Опиши этот аспект книги.';
+  const btn=document.querySelector(`[data-ws-gen="${key}"]`);
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Генерирую…'; }
+  try{
+    const resp=await callLLM(c,[{role:'system',content:sys},{role:'user',content:usr}]);
+    w[key]=String(resp||'').trim();
+    save();
+    // обновляем textarea без полного перерендера
+    const ta=document.querySelector(`[data-ws-field="${key}"]`);
+    if(ta) ta.value=w[key];
+    toast('Готово','ok');
+  }catch(err){ toast('Ошибка: '+String(err.message||err).slice(0,80),'err'); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='🪄 Сгенерировать'; } }
+}
+
+function renderWorldView(){
+  const el=$('#world-inner'); if(!el) return;
+  const pr=state.project||{};
+  const w=pr.world||(pr.world={setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''});
+  const c=pr.concept||(pr.concept={setting:'',characters:[],plotTurns:'',tone:''});
+  if(!Array.isArray(c.characters)) c.characters=[];
+  const approved=!!pr.conceptApproved;
+
+  // --- персонажи ---
+  const charRows=c.characters.map((p,i)=>`
+    <div class="cc-card" data-wci="${i}">
+      <div class="cc-card-head">
+        <span class="cc-card-emoji">🎭</span>
+        <input class="cc-name wc-char-field" data-wchar="${i}" data-wcf="name" value="${esc(p.name||'')}" placeholder="Имя персонажа" style="font-weight:700;flex:1">
+        <input class="cc-age wc-char-field" data-wchar="${i}" data-wcf="age" value="${esc(p.age||'')}" placeholder="Возраст" style="width:80px">
+        <button class="icon-btn wc-del-char" data-wdelchar="${i}" style="flex:none" title="Удалить персонажа">✕</button>
+      </div>
+      <div class="cc-card-body">
+        <div class="cc-field"><label>Роль в истории</label><input class="cc-role wc-char-field" data-wchar="${i}" data-wcf="role" value="${esc(p.role||'')}" placeholder="Протагонист / антагонист…"></div>
+        <div class="cc-field"><label>Характер и суть</label><input class="cc-brief wc-char-field" data-wchar="${i}" data-wcf="brief" value="${esc(p.brief||'')}" placeholder="1 предложение — кто этот человек"></div>
+        <div class="cc-field cc-secret"><label>🔒 Что скрывает</label><input class="cc-hide wc-char-field" data-wchar="${i}" data-wcf="secret" value="${esc(p.secret||'')}" placeholder="Главная тайна персонажа"></div>
+        <div class="cc-field"><label>✨ Живая деталь</label><input class="cc-det wc-char-field" data-wchar="${i}" data-wcf="detail" value="${esc(p.detail||'')}" placeholder="Жест, привычка, деталь внешности"></div>
+        <div class="cc-field"><label>🎯 Чего хочет</label><input class="cc-mot wc-char-field" data-wchar="${i}" data-wcf="motive" value="${esc(p.motive||'')}" placeholder="Главная цель в этой истории"></div>
+      </div>
+    </div>`).join('');
+
+  const approvedBanner=approved
+    ? `<div class="world-approved-banner">✅ Замысел согласован — агенты пишут по канону.</div>`
+    : `<div class="world-warn-banner">⚠ Замысел не согласован. Агенты будут писать без канона.</div>`;
+
+  el.innerHTML=`
+    <div class="world-toolbar">
+      <div class="world-toolbar-title">🌍 Мир книги</div>
+      <div class="world-toolbar-btns">
+        <button class="btn ghost sm" id="wv-gen-all">🪄 Сгенерировать весь замысел</button>
+        ${approved
+          ? `<button class="btn ghost sm" id="wv-unapprove">↩ Снять согласование</button>`
+          : `<button class="btn ok sm" id="wv-approve">✅ Согласовать замысел</button>`}
+      </div>
+    </div>
+    ${approvedBanner}
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>📍 Место и время</span>
+        ${_worldSectionGenBtn('setting')}
+      </div>
+      <textarea class="world-ta" data-ws-field="setting" rows="3" placeholder="Где и когда происходит действие. Страна, город, эпоха, особенности среды.">${esc(w.setting||c.setting||'')}</textarea>
+    </div>
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>🎭 Персонажи</span>
+        <button class="ws-gen-btn" id="wv-deepen-chars" title="Углубить всех персонажей с помощью ИИ">🪄 Углубить всех</button>
+        <button class="btn ghost xs" id="wv-add-char" style="margin-left:4px">＋ Добавить</button>
+      </div>
+      <div id="wv-chars">${charRows||'<div class="lr-empty" style="margin:8px 0">Персонажей пока нет. Сгенерируйте или добавьте вручную.</div>'}</div>
+    </div>
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>📖 Правила мира</span>
+        ${_worldSectionGenBtn('rules')}
+      </div>
+      <textarea class="world-ta" data-ws-field="rules" rows="4" placeholder="Что возможно/невозможно в этом мире. Физические, социальные, магические или технологические законы.">${esc(w.rules||'')}</textarea>
+    </div>
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>📅 Хронология</span>
+        ${_worldSectionGenBtn('timeline')}
+      </div>
+      <textarea class="world-ta" data-ws-field="timeline" rows="4" placeholder="Ключевые события до и во время сюжета. Формат: дата/период — событие.">${esc(w.timeline||'')}</textarea>
+    </div>
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>🔒 Тайны и открытые линии</span>
+        ${_worldSectionGenBtn('secrets')}
+      </div>
+      <textarea class="world-ta" data-ws-field="secrets" rows="3" placeholder="Нераскрытые тайны, незавершённые линии, вопросы без ответа.">${esc(w.secrets||'')}</textarea>
+    </div>
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>🎭 Атмосфера и тон</span>
+        ${_worldSectionGenBtn('atmosphere')}
+      </div>
+      <textarea class="world-ta" data-ws-field="atmosphere" rows="3" placeholder="Настроение мира, чувства которые он вызывает, цвет, ритм, напряжение.">${esc(w.atmosphere||c.tone||'')}</textarea>
+    </div>
+
+    <div class="world-section">
+      <div class="world-section-head">
+        <span>🤝 Связи персонажей</span>
+        ${_worldSectionGenBtn('relations')}
+      </div>
+      <textarea class="world-ta" data-ws-field="relations" rows="3" placeholder="Кто с кем, в чём напряжение или союз. Формат: Имя ↔ Имя — суть связи.">${esc(w.relations||'')}</textarea>
+    </div>
+  `;
+
+  // --- события ---
+  // textarea автосохранение
+  el.querySelectorAll('.world-ta').forEach(ta=>{
+    ta.addEventListener('input',()=>{
+      const key=ta.dataset.wsField;
+      if(key){
+        // Обновляем world или concept.setting/concept.tone зеркально
+        if(key==='setting'){ w.setting=ta.value; c.setting=ta.value; }
+        else if(key==='atmosphere'){ w.atmosphere=ta.value; c.tone=ta.value; }
+        else w[key]=ta.value;
+        _worldDebounce();
+      }
+    });
+  });
+
+  // карточки персонажей — инпуты
+  el.querySelectorAll('.wc-char-field').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      const i=+inp.dataset.wchar; const f=inp.dataset.wcf;
+      if(c.characters[i] && f) { c.characters[i][f]=inp.value; _worldDebounce(); }
+    });
+  });
+
+  // удалить персонажа
+  el.querySelectorAll('[data-wdelchar]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const i=+btn.dataset.wdelchar;
+      c.characters.splice(i,1); save(); renderWorldView();
+    });
+  });
+
+  // добавить персонажа
+  el.querySelector('#wv-add-char')?.addEventListener('click',()=>{
+    c.characters.push({name:'',age:'',role:'',brief:'',secret:'',detail:'',motive:''});
+    save(); renderWorldView();
+  });
+
+  // углубить персонажей
+  el.querySelector('#wv-deepen-chars')?.addEventListener('click',()=>{
+    deepenCharacters(null);
+    // после deepenCharacters перерисуем (deepenCharacters сам вызывает openConcept в drawer, но мы обновляем world-view отдельно)
+    setTimeout(()=>renderWorldView(),3000);
+  });
+
+  // генерация секций
+  el.querySelectorAll('[data-ws-gen]').forEach(btn=>{
+    btn.addEventListener('click',()=>_genWorldSection(btn.dataset.wsGen));
+  });
+
+  // Сгенерировать весь замысел
+  el.querySelector('#wv-gen-all')?.addEventListener('click',async()=>{
+    if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }
+    toast('Генерирую замысел…');
+    try{
+      await generateConcept(true);
+      toast('Углубляю персонажей…');
+      await deepenCharacters(null);
+    }catch(e){}
+    // Синхронизируем world.setting и world.atmosphere из concept
+    const newC=state.project.concept||{};
+    if(newC.setting) w.setting=newC.setting;
+    if(newC.tone) w.atmosphere=newC.tone;
+    save(); renderWorldView(); toast('Замысел готов ✓','ok');
+  });
+
+  // Согласовать
+  el.querySelector('#wv-approve')?.addEventListener('click',()=>{
+    pr.conceptApproved=true; save(); renderWorldView();
+    toast('Замысел согласован — агенты готовы писать','ok');
+  });
+
+  // Снять согласование
+  el.querySelector('#wv-unapprove')?.addEventListener('click',()=>{
+    pr.conceptApproved=false; save(); renderWorldView();
+    toast('Согласование снято');
+  });
+}
+
 function switchView(view){
   if(!_VIEWS.includes(view)) view='canvas';
   _currentView=view;
   // Явное управление display — надёжнее CSS-каскада
-  const canvas=$('#canvas'), reader=$('#reader'), simp=$('#simplified');
+  const canvas=$('#canvas'), reader=$('#reader'), simp=$('#simplified'), world=$('#world-view');
   if(canvas) canvas.style.display = view==='canvas' ? '' : 'none';
   if(reader) reader.style.display = view==='reader' ? 'block' : 'none';
   if(simp)   simp.style.display   = view==='simple'  ? ''     : 'none';
+  if(world)  world.style.display  = view==='world'   ? ''     : 'none';
   // data-view на body — для CSS-тем/хуков снаружи
   document.body.dataset.view=view;
   // Табы
-  [$('#tab-canvas'),$('#tab-reader'),$('#tab-simple')].forEach(t=>t?.classList.remove('active'));
+  [$('#tab-canvas'),$('#tab-reader'),$('#tab-simple'),$('#tab-world')].forEach(t=>t?.classList.remove('active'));
   if(view==='reader') $('#tab-reader')?.classList.add('active');
   else if(view==='simple') $('#tab-simple')?.classList.add('active');
+  else if(view==='world'){ $('#tab-world')?.classList.add('active'); renderWorldView(); }
   else $('#tab-canvas')?.classList.add('active');
   // Сайд-эффекты экранов
   if(view==='reader'){ renderReader(); renderBookInspector(); }

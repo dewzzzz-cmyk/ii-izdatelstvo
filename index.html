@@ -50,6 +50,7 @@
   <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader">📖 Книга</button>
   <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas">🗺 Схема</button>
   <button class="view-tab" id="tab-simple" data-action="switch-view" data-view="simple">✨ Просто</button>
+  <button class="view-tab" id="tab-world" data-action="switch-view" data-view="world">🌍 Мир</button>
 </div>
 <div class="canvas" id="canvas">
   <svg class="edges" id="edges"></svg>
@@ -58,6 +59,9 @@
 </div>
 
 <div class="reader" id="reader"><div class="reader-inner" id="reader-inner"></div></div>
+<div class="world-view" id="world-view" style="display:none">
+  <div class="world-inner" id="world-inner"></div>
+</div>
 <div class="simplified" id="simplified" style="display:none">
   <div class="simplified-inner">
     <h2 class="simp-title">Расскажите о вашей книге</h2>
