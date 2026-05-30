@@ -129,6 +129,15 @@ let _saveTimer=null;
 function save(){
   // Автоочистка: если лог > 100 записей — обрезаем
   if(state.log.length>100) state.log=state.log.slice(0,100);
+  // Лимит истории прогонов: не более 3 снэпшотов и не более 1MB суммарно
+  if(state.runs && state.runs.length > 3) state.runs = state.runs.slice(0,3);
+  if(state.runs){
+    let runsSize = JSON.stringify(state.runs).length;
+    while(runsSize > 1024*1024 && state.runs.length > 1){
+      state.runs.pop();
+      runsSize = JSON.stringify(state.runs).length;
+    }
+  }
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Транзиентные поля не сериализуем: _vec (TF-IDF), служебные поля петли (Item 25/29),
@@ -282,6 +291,8 @@ function openBookLibrary(){
     <div class="bl-top">
       <button class="btn ok" data-book-new>➕ Новая книга</button>
       <button class="btn ghost" data-book-save>💾 Сохранить текущую в библиотеку</button>
+      <button class="btn ghost" id="bl-export-all">⬇ Скачать библиотеку</button>
+      <label class="btn ghost">📥 Импорт<input type="file" id="bl-import-all" accept=".json" hidden></label>
     </div>
     ${books.length?`<div class="bl-filters">${chips}</div>`:''}
     <div class="bl-list">${cards}</div>`,
@@ -292,6 +303,29 @@ function openBookLibrary(){
     b.querySelectorAll('[data-book-open]').forEach(el=>el.onclick=()=>openBook(el.dataset.bookOpen));
     b.querySelectorAll('[data-book-dup]').forEach(el=>el.onclick=()=>duplicateBook(el.dataset.bookDup));
     b.querySelectorAll('[data-book-del]').forEach(el=>el.onclick=()=>deleteBook(el.dataset.bookDel));
+    b.querySelector('#bl-export-all').onclick = () => {
+      const books = loadBooks();
+      download('издательство-библиотека-'+new Date().toISOString().slice(0,10)+'.json',
+        JSON.stringify({version:'2.0', books, ts:Date.now()}, null, 2));
+      toast('Библиотека сохранена','ok');
+    };
+    b.querySelector('#bl-import-all').onchange = ev => {
+      const f = ev.target.files[0]; if(!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        try{
+          const data = JSON.parse(r.result);
+          const imported = data.books || (Array.isArray(data)?data:[]);
+          const existing = loadBooks();
+          const existIds = new Set(existing.map(b=>b.id));
+          const newBooks = imported.filter(b=>b.id&&!existIds.has(b.id));
+          saveBooks([...existing, ...newBooks]);
+          toast('Импортировано: '+newBooks.length+' книг','ok');
+          openBookLibrary();
+        }catch{ toast('Ошибка формата файла','err'); }
+      };
+      r.readAsText(f);
+    };
   });
 }
 

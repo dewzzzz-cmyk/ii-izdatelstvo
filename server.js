@@ -110,7 +110,16 @@ function pruneBackups(dir, keep=20){
   }catch{}
 }
 
-function safeDir(raw){ return path.resolve((raw||'').trim() || DEFAULT_BACKUP_DIR); }
+function safeDir(raw){
+  const ROOT_BACKUP = DEFAULT_BACKUP_DIR;
+  if(!raw||!raw.trim()) return ROOT_BACKUP;
+  const resolved = path.resolve(raw.trim());
+  // Не позволяем выйти за пределы диска пользователя (простая защита)
+  if(resolved.includes('..') || resolved.startsWith('/etc') || resolved.startsWith('/root')){
+    return ROOT_BACKUP;
+  }
+  return resolved;
+}
 
 function handleBackup(req,res){
   let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>15e6) req.destroy(); });
