@@ -4148,8 +4148,39 @@ document.addEventListener('click',e=>{ const t=e.target.closest('[data-action]')
     if(n && n.variantOutputs) openVariantPicker(n);
   }
 });
-function bindProj(sel,key){ const el=$(sel); el.addEventListener('change',()=>{ state.project[key]=el.value; save(); render(); }); }
-['title','genre','audience','brief'].forEach(k=>bindProj('#proj-'+(k==='audience'?'aud':k),k));
+function bindProj(sel,key){ const el=$(sel); if(!el) return; el.addEventListener('change',()=>{ state.project[key]=el.value; save(); render(); }); }
+['title','brief'].forEach(k=>bindProj('#proj-'+k,k));
+bindProj('#proj-aud','audience');
+
+// Жанр: выпадающий список из GENRES + авто-подстановка аудитории
+function initGenreSelect(){
+  const sel=$('#proj-genre'); if(!sel||sel.tagName!=='SELECT') return;
+  // Заполнить опции из GENRES (только один раз)
+  if(sel.options.length <= 1){
+    GENRES.forEach(g=>{
+      const opt=document.createElement('option');
+      opt.value=g.l; opt.dataset.aud=g.aud; opt.textContent=g.l;
+      sel.appendChild(opt);
+    });
+  }
+  // Выставить текущее значение
+  const cur=state.project.genre||'';
+  sel.value=cur; // если совпадает — выберет; иначе останется «— выбрать —»
+  if(!sel.value && cur) { // жанр задан текстом которого нет в списке — добавить
+    const opt=document.createElement('option'); opt.value=cur; opt.textContent=cur; sel.appendChild(opt); sel.value=cur;
+  }
+  sel.onchange=()=>{
+    state.project.genre=sel.value;
+    // авто-подстановка аудитории если поле пустое
+    const audEl=$('#proj-aud');
+    const g=GENRES.find(x=>x.l===sel.value);
+    if(g && audEl && !audEl.value.trim()) audEl.value=g.aud;
+    if(g && audEl && !state.project.audience) state.project.audience=g.aud;
+    save(); render();
+  };
+}
+// Откладываем до момента когда GENRES уже объявлен
+setTimeout(initGenreSelect, 0);
 // Чекбокс режима редактирования (заменяет select#proj-mode)
 (function(){
   const editModeCb = document.querySelector('#proj-edit-mode');
