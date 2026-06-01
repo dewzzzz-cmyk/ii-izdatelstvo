@@ -66,32 +66,62 @@
 </div>
 <div class="simplified" id="simplified" style="display:none">
   <div class="simplified-inner">
-    <h2 class="simp-title">Расскажите о вашей книге</h2>
-    <div class="simp-field">
-      <label>📖 Название книги</label>
-      <input id="simp-title" placeholder="Например: «Тени над городом»" />
+    <!-- Шаги мастера -->
+    <div class="wiz-steps" id="wiz-steps">
+      <div class="wiz-step active" data-step="1"><span class="wiz-num">1</span><span class="wiz-lbl">О книге</span></div>
+      <div class="wiz-arrow">→</div>
+      <div class="wiz-step" data-step="2"><span class="wiz-num">2</span><span class="wiz-lbl">Замысел</span></div>
+      <div class="wiz-arrow">→</div>
+      <div class="wiz-step" data-step="3"><span class="wiz-num">3</span><span class="wiz-lbl">Написать</span></div>
     </div>
-    <div class="simp-field">
-      <label>🎭 О чём книга <span class="required">*</span></label>
-      <textarea id="simp-brief" rows="4"
-        placeholder="Главный герой — детектив в ретро-Питере. Расследует исчезновение художника. Конфликт — между долгом и совестью. Финал — неожиданный поворот с заказчиком."></textarea>
-    </div>
-    <div class="simp-row">
+
+    <!-- Шаг 1: О книге -->
+    <div class="wiz-panel" id="wiz-step-1">
+      <h2 class="simp-title">Расскажите о своей книге</h2>
       <div class="simp-field">
-        <label>📚 Жанр</label>
-        <input id="simp-genre" placeholder="Детектив, фэнтези…" />
+        <label>📖 Название</label>
+        <input id="simp-title" placeholder="Например: «Последний вагон»" />
       </div>
       <div class="simp-field">
-        <label>👥 Аудитория</label>
-        <input id="simp-aud" placeholder="Взрослые 25-45" />
+        <label>🎭 О чём книга <span class="required">*</span></label>
+        <textarea id="simp-brief" rows="4" placeholder="Кто главный герой, в чём конфликт, что происходит. Чем подробнее — тем лучше получится книга."></textarea>
+      </div>
+      <div class="simp-row">
+        <div class="simp-field">
+          <label>📚 Жанр</label>
+          <select id="simp-genre"><option value="">— выбрать —</option></select>
+        </div>
+        <div class="simp-field">
+          <label>👥 Аудитория</label>
+          <input id="simp-aud" placeholder="взрослые 25-45" />
+        </div>
+      </div>
+      <div class="simp-field">
+        <label>📏 Объём</label>
+        <div class="simp-tpl-row" id="simp-tpl-row"><!-- шаблоны --></div>
+      </div>
+      <button class="btn primary lg" id="wiz-next-1">Далее: создать замысел →</button>
+      <button class="btn ghost sm simp-expert" id="simp-to-expert">Перейти в режим эксперта</button>
+    </div>
+
+    <!-- Шаг 2: Замысел (персонажи, мир, повороты) -->
+    <div class="wiz-panel" id="wiz-step-2" style="display:none">
+      <h2 class="simp-title">Замысел книги</h2>
+      <p class="simp-hint-text">ИИ предложил персонажей и сюжетные повороты. Проверьте и подправьте — это уйдёт канон всем агентам.</p>
+      <div id="wiz-concept-body"><!-- заполняется JS --></div>
+      <div class="wiz-step2-btns">
+        <button class="btn ghost" id="wiz-back-1">← Назад</button>
+        <button class="btn ghost" id="wiz-regen">🔄 Перегенерировать</button>
+        <button class="btn primary lg" id="wiz-next-2">Всё верно — писать книгу! →</button>
       </div>
     </div>
-    <div class="simp-field">
-      <label>🎨 Шаблон</label>
-      <div class="simp-tpl-row" id="simp-tpl-row"><!-- заполняется JS --></div>
+
+    <!-- Шаг 3: Прогресс написания -->
+    <div class="wiz-panel" id="wiz-step-3" style="display:none">
+      <h2 class="simp-title" id="wiz-running-title">Команда агентов пишет книгу…</h2>
+      <div class="simp-progress" id="simp-progress"></div>
+      <button class="btn ghost sm" id="simp-to-expert" style="margin-top:16px">Посмотреть процесс на схеме</button>
     </div>
-    <button class="btn primary lg" id="simp-run">▶ Написать книгу</button>
-    <button class="btn ghost sm simp-expert" id="simp-to-expert">⚙ Перейти в режим эксперта →</button>
     <div class="simp-progress" id="simp-progress" style="display:none"></div>
   </div>
 </div>

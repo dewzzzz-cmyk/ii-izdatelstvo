@@ -4288,47 +4288,128 @@ function buildTemplate(key, opts={}){
 function applyTemplate(key){ buildTemplate(key, {}); } // для режима «Просто» — без диалога
 
 let _simpTpl = 'story';
-function initSimplifiedMode(){
-  const row = document.querySelector('#simp-tpl-row');
-  if(!row) return;
-  row.innerHTML = '';
-  [{key:'solo',label:'⚡ Соло',desc:'1 агент, быстро'},
-   {key:'story',label:'📖 Рассказ',desc:'3 агента'},
-   {key:'novel',label:'✍️ Роман',desc:'полный цикл'}
-  ].forEach(t => {
-    const btn = document.createElement('button');
-    btn.className = 'simp-tpl-btn' + (t.key === _simpTpl ? ' selected' : '');
-    btn.textContent = t.label;
-    btn.title = t.desc;
-    btn.onclick = () => {
-      _simpTpl = t.key;
-      row.querySelectorAll('.simp-tpl-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-    };
-    row.appendChild(btn);
+let _wizStep = 1; // текущий шаг мастера
+
+function wizGoStep(step){
+  _wizStep = step;
+  [1,2,3].forEach(s=>{
+    const panel=document.querySelector('#wiz-step-'+s); if(panel) panel.style.display=s===step?'':'none';
+    const dot=document.querySelector('.wiz-step[data-step="'+s+'"]');
+    if(dot){ dot.classList.toggle('active',s===step); dot.classList.toggle('done',s<step); }
   });
-  const sti=document.querySelector('#simp-title'), sb=document.querySelector('#simp-brief');
-  const sg=document.querySelector('#simp-genre'), sa=document.querySelector('#simp-aud');
-  if(sti) sti.value = state.project.title || '';
-  if(sb)  sb.value  = state.project.brief || '';
-  if(sg)  sg.value  = state.project.genre || '';
-  if(sa)  sa.value  = state.project.audience || '';
-  const runBtn = document.querySelector('#simp-run');
-  if(runBtn) runBtn.onclick = () => {
-    const brief = document.querySelector('#simp-brief')?.value.trim();
+}
+
+function initSimplifiedMode(){
+  // Если прогон идёт или есть результаты — сразу шаг 3
+  const anyDone=state.nodes.some(n=>n.status==='done'||n.status==='error');
+  if(running||anyDone){ wizGoStep(3); renderSimpleProgress(); return; }
+
+  // ── Шаг 1: Жанр (select) ──────────────────────
+  const sg=document.querySelector('#simp-genre');
+  if(sg && sg.tagName==='SELECT' && sg.options.length<=1){
+    GENRES.forEach(g=>{ const o=document.createElement('option'); o.value=g.l; o.dataset.aud=g.aud; o.textContent=g.l; sg.appendChild(o); });
+    sg.onchange=()=>{ const g=GENRES.find(x=>x.l===sg.value); const sa=document.querySelector('#simp-aud'); if(g&&sa&&!sa.value.trim()) sa.value=g.aud; };
+  }
+  // Шаблон — тип объёма
+  const row=document.querySelector('#simp-tpl-row');
+  if(row){ row.innerHTML='';
+    [{key:'story',label:'📖 Рассказ'},{key:'novel',label:'✍️ Роман'},{key:'chapters',label:'🗂 Главами'}].forEach(t=>{
+      const btn=document.createElement('button');
+      btn.className='simp-tpl-btn'+(t.key===_simpTpl?' selected':'');
+      btn.textContent=t.label;
+      btn.onclick=()=>{ _simpTpl=t.key; row.querySelectorAll('.simp-tpl-btn').forEach(b=>b.classList.remove('selected')); btn.classList.add('selected'); };
+      row.appendChild(btn);
+    });
+  }
+  // Заполнить поля текущими значениями
+  const fill=(id,v)=>{ const el=document.querySelector('#'+id); if(el) el.value=v||''; };
+  fill('simp-title',state.project.title); fill('simp-brief',state.project.brief);
+  fill('simp-genre',state.project.genre); fill('simp-aud',state.project.audience);
+
+  // ── Кнопка «Далее» шаг 1 ──────────────────────
+  const next1=document.querySelector('#wiz-next-1');
+  if(next1) next1.onclick=async()=>{
+    const brief=document.querySelector('#simp-brief')?.value.trim();
     if(!brief){ toast('Опишите книгу — хотя бы в двух словах','warn'); return; }
     state.project.title    = document.querySelector('#simp-title')?.value.trim() || state.project.title;
     state.project.brief    = brief;
-    state.project.genre    = document.querySelector('#simp-genre')?.value.trim() || '';
-    state.project.audience = document.querySelector('#simp-aud')?.value.trim()   || '';
+    state.project.genre    = document.querySelector('#simp-genre')?.value||'';
+    state.project.audience = document.querySelector('#simp-aud')?.value.trim()||'';
+    state.project.concept  = {setting:'',characters:[],plotTurns:'',tone:''};
+    applyTemplate(_simpTpl,{genreCode: GENRES.find(g=>g.l===state.project.genre)?.v||'', strictness:1});
     save();
-    applyTemplate(_simpTpl);
-    // #33: остаёмся в «Просто» — прогресс показываем здесь, а не кидаем на холст
-    runPipeline();
+    wizGoStep(2);
+    // Генерация замысла
+    const body=document.querySelector('#wiz-concept-body');
+    if(body) body.innerHTML='<div class="lr-empty">⏳ Генерирую замысел…</div>';
+    try{
+      await generateConcept(true);
+      await deepenCharacters(null);
+    }catch(e){ toast('Не удалось создать замысел автоматически — заполните вручную','warn'); }
+    renderWizConcept();
   };
-  const expertBtn = document.querySelector('#simp-to-expert');
-  if(expertBtn) expertBtn.onclick = () => switchView('canvas');
+
+  // ── Шаг 2: показ и редактирование замысла ──────
+  document.querySelector('#wiz-back-1')?.addEventListener('click',()=>wizGoStep(1));
+  document.querySelector('#wiz-regen')?.addEventListener('click',async()=>{
+    const body=document.querySelector('#wiz-concept-body');
+    if(body) body.innerHTML='<div class="lr-empty">⏳ Перегенерирую…</div>';
+    state.project.concept={setting:'',characters:[],plotTurns:'',tone:''};
+    try{ await generateConcept(true); await deepenCharacters(null); }catch{}
+    renderWizConcept();
+  });
+  const next2=document.querySelector('#wiz-next-2');
+  if(next2) next2.onclick=()=>{
+    collectWizConcept();
+    state.project.conceptApproved=true;
+    save();
+    wizGoStep(3);
+    runPipeline(false);
+  };
+
+  document.querySelectorAll('#simp-to-expert').forEach(b=>{ b.onclick=()=>switchView('canvas'); });
+  wizGoStep(1);
   renderSimpleProgress();
+}
+
+function renderWizConcept(){
+  const body=document.querySelector('#wiz-concept-body'); if(!body) return;
+  const c=state.project.concept||{};
+  const chars=(c.characters||[]).map((p,i)=>`
+    <div class="cc-card" data-wci="${i}">
+      <div class="cc-card-head"><div class="cc-card-emoji">🎭</div>
+        <input class="wcc-name" value="${esc(p.name||'')}" placeholder="Имя" style="font-weight:700;flex:1">
+        <input class="wcc-age" value="${esc(p.age||'')}" placeholder="Возраст" style="width:70px">
+      </div>
+      <div class="cc-card-body">
+        <div class="cc-field"><label>Роль</label><input class="wcc-role" value="${esc(p.role||'')}"></div>
+        <div class="cc-field"><label>Суть</label><input class="wcc-brief" value="${esc(p.brief||'')}"></div>
+        <div class="cc-field cc-secret"><label>🔒 Тайна</label><input class="wcc-secret" value="${esc(p.secret||'')}"></div>
+        <div class="cc-field"><label>✨ Живая деталь</label><input class="wcc-detail" value="${esc(p.detail||'')}"></div>
+      </div>
+    </div>`).join('');
+  body.innerHTML=`
+    <div class="field"><label>📍 Место и время</label><textarea id="wiz-setting" rows="2">${esc(c.setting||'')}</textarea></div>
+    <div style="margin:12px 0 6px;font-size:12px;font-weight:700;color:var(--dim);text-transform:uppercase">Персонажи</div>
+    <div id="wiz-chars">${chars||'<div class="lr-empty">Нет персонажей</div>'}</div>
+    <div class="field" style="margin-top:10px"><label>🎬 Ключевые повороты</label><textarea id="wiz-turns" rows="3">${esc(c.plotTurns||'')}</textarea></div>
+    <div class="field"><label>🎨 Тон</label><input id="wiz-tone" value="${esc(c.tone||'')}"></div>`;
+}
+
+function collectWizConcept(){
+  const c=state.project.concept||(state.project.concept={setting:'',characters:[],plotTurns:'',tone:''});
+  const q=s=>document.querySelector(s);
+  if(q('#wiz-setting')) c.setting=q('#wiz-setting').value.trim();
+  if(q('#wiz-turns'))  c.plotTurns=q('#wiz-turns').value.trim();
+  if(q('#wiz-tone'))   c.tone=q('#wiz-tone').value.trim();
+  c.characters=[...document.querySelectorAll('[data-wci]')].map(r=>({
+    name:(r.querySelector('.wcc-name')?.value||'').trim(),
+    age:(r.querySelector('.wcc-age')?.value||'').trim(),
+    role:(r.querySelector('.wcc-role')?.value||'').trim(),
+    brief:(r.querySelector('.wcc-brief')?.value||'').trim(),
+    secret:(r.querySelector('.wcc-secret')?.value||'').trim(),
+    detail:(r.querySelector('.wcc-detail')?.value||'').trim(),
+  })).filter(p=>p.name||p.role);
 }
 // #33: прогресс создания книги внутри режима «Просто»
 function renderSimpleProgress(){
