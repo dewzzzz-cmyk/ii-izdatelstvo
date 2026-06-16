@@ -135,7 +135,7 @@ function defaultState(){
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { _bookId:'',
-    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''},conceptApproved:false,world:{setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''},seriesId:'',bookNumber:1},
+    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''},conceptApproved:false,world:{setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''},seriesId:'',bookNumber:1,charMin:3,charMax:5},
     styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
@@ -3593,7 +3593,8 @@ async function generateConcept(silent){
     ? '"setting":"ОБЯЗАТЕЛЬНО две части: (1) обычный мир героя ДО начала истории — где живёт, чем занимается; (2) волшебный/особый мир куда попадает. Пример: «Москва, панельная пятиэтажка → замок Академии над северным озером»"'
     : '"setting":"место, время, атмосфера — 1-2 предложения"';
   const detailRule=`"detail":"ОДНА неожиданная деталь — черта речи / реакция на стресс / отличие внешности / специфическая привычка в конкретных ситуациях. ЗАПРЕЩЕНО: 'всегда крутит/теребит/держит в руках предмет' — это клише. ВМЕСТО ЭТОГО: как говорит (например 'никогда не заканчивает фразу'), как выглядит (например 'шрам через бровь'), что делает в неловкой тишине, как реагирует на ложь."`;
-  const sys=`Ты — редактор-разработчик. Создай детальный ЗАМЫСЕЛ книги СТРОГО на основе названия и брифа автора — НЕ придумывай свою историю, РАЗВИВАЙ то что написал автор. Верни СТРОГО JSON:\n{${settingInstruction},"characters":[{"name":"Имя Фамилия","age":"возраст","role":"роль в истории","brief":"суть персонажа — 1 предложение","secret":"главная тайна или скрытый мотив — конкретно",${detailRule},"motive":"чего хочет в этой истории — конкретно"}],"plotTurns":"3-5 конкретных поворотов прямо из брифа автора. ПЕРВЫЙ поворот — момент когда обычный мир разрушается. Повороты должны СООТВЕТСТВОВАТЬ названию и брифу.","tone":"тон и настроение — согласно жанру и брифу"}. Только JSON. Персонажей 3-5, все с заполненными полями.`;
+  const charMin=state.project.charMin||3; const charMax=state.project.charMax||5;
+  const sys=`Ты — редактор-разработчик. Создай детальный ЗАМЫСЕЛ книги СТРОГО на основе названия и брифа автора — НЕ придумывай свою историю, РАЗВИВАЙ то что написал автор. Верни СТРОГО JSON:\n{${settingInstruction},"characters":[{"name":"Имя Фамилия","age":"возраст","role":"роль в истории","brief":"суть персонажа — 1 предложение","secret":"главная тайна или скрытый мотив — конкретно",${detailRule},"motive":"чего хочет в этой истории — конкретно"}],"plotTurns":"3-5 конкретных поворотов прямо из брифа автора. ПЕРВЫЙ поворот — момент когда обычный мир разрушается. Повороты должны СООТВЕТСТВОВАТЬ названию и брифу.","tone":"тон и настроение — согласно жанру и брифу"}. Только JSON. Персонажей от ${charMin} до ${charMax}, все с заполненными полями.`;
   const titleLine=pr.title?`Название книги: «${pr.title}»\n`:'';
   const usr=`${titleLine}Бриф (задумка автора): ${pr.brief||'не задан'}\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}\n\nВАЖНО: замысел должен точно соответствовать названию «${pr.title||''}» и брифу. Не меняй жанр, не придумывай не связанных с брифом событий.`;
   if(!silent) toast('Генерирую замысел…');
@@ -3649,6 +3650,77 @@ async function deepenCharacters(collectFn){
     })).filter(p=>p.name||p.role||p.brief);
     save(); openConcept(); toast('Персонажи углублены ✓','ok');
   }catch(err){ toast('Ошибка: '+String(err.message||err).slice(0,80),'err'); }
+}
+async function evalConcept(){
+  const c=state.project.concept||{};
+  const pr=state.project;
+  if(!(c.plotTurns||(c.characters||[]).length)) return null;
+  const conf=cfg({useGlobal:true}); conf.temperature=0.2;
+  const sys=`Ты — литературный редактор. Оцени замысел книги по 4 осям. Верни СТРОГО JSON:\n{"axes":[{"key":"conflict","label":"Конфликт","score":3,"comment":"1 предл.","tip":"1 конкретный совет"},{"key":"chars","label":"Персонажи","score":3,"comment":"1 предл.","tip":"1 конкретный совет"},{"key":"world","label":"Мир","score":3,"comment":"1 предл.","tip":"1 конкретный совет"},{"key":"orig","label":"Оригинальность","score":3,"comment":"1 предл.","tip":"1 конкретный совет"}],"summary":"2-3 предложения общей оценки"}\nШкала: 5=отлично 4=хорошо 3=средне 2=слабо 1=нужна доработка. Только JSON.`;
+  const charList=(c.characters||[]).map(p=>`${p.name||p.role||'?'} (${p.role||'?'}): ${p.brief||''}`).join('; ')||'нет';
+  const usr=`Название: «${pr.title||''}» | Жанр: ${pr.genre||'?'} | Аудитория: ${pr.audience||'?'}\nМесто/время: ${c.setting||'не задано'}\nПовороты: ${c.plotTurns||'нет'}\nПерсонажи: ${charList}\nТон: ${c.tone||'?'}`;
+  try{
+    const resp=await callLLM(conf,[{role:'system',content:sys},{role:'user',content:usr}]);
+    let txt=String(resp||'').trim();
+    const m=txt.match(/```(?:json)?\s*([\s\S]*?)```/i); if(m) txt=m[1].trim();
+    const j0=txt.indexOf('{'),j1=txt.lastIndexOf('}'); if(j0>=0&&j1>j0) txt=txt.slice(j0,j1+1);
+    return JSON.parse(txt);
+  }catch(e){ return null; }
+}
+async function improveConceptAxis(axis){
+  const c=state.project.concept; const pr=state.project; if(!c) return;
+  const instructions={
+    conflict:'Улучши сюжетные повороты (plotTurns). Конфликт острее, ставки реальные. Верни JSON: {"plotTurns":"..."}',
+    chars:'Улучши персонажей (characters) — глубже, без клише, с противоречиями. Верни JSON: {"characters":[{"name":"","age":"","role":"","brief":"","secret":"","detail":"","motive":""},...]}',
+    world:'Улучши место/время (setting) — конкретнее, атмосфернее. Верни JSON: {"setting":"..."}',
+    orig:'Сделай оригинальнее — неожиданный угол, нестандартный поворот. Улучши plotTurns и tone. Верни JSON: {"plotTurns":"...","tone":"..."}'
+  };
+  if(!instructions[axis]) return;
+  const conf=cfg({useGlobal:true}); conf.temperature=0.85;
+  const sys=`Ты — редактор. ${instructions[axis]}. Только JSON. Не меняй другие поля.`;
+  const charList=(c.characters||[]).map(p=>`${p.name} (${p.role}): ${p.brief}`).join('; ')||'нет';
+  const usr=`Книга: «${pr.title||'?'}», жанр: ${pr.genre||'?'}\nМесто: ${c.setting||'?'}\nПовороты: ${c.plotTurns||'?'}\nПерсонажи: ${charList}\nТон: ${c.tone||'?'}`;
+  toast('Улучшаю…');
+  try{
+    const resp=await callLLM(conf,[{role:'system',content:sys},{role:'user',content:usr}]);
+    let txt=String(resp||'').trim();
+    const m=txt.match(/```(?:json)?\s*([\s\S]*?)```/i); if(m) txt=m[1].trim();
+    const j0=txt.indexOf('{'),j1=txt.lastIndexOf('}'); if(j0>=0&&j1>j0) txt=txt.slice(j0,j1+1);
+    const data=JSON.parse(txt);
+    if(data.plotTurns!=null) c.plotTurns=String(data.plotTurns);
+    if(data.tone!=null) c.tone=String(data.tone);
+    if(data.setting!=null) c.setting=String(data.setting);
+    if(Array.isArray(data.characters)&&data.characters.length) c.characters=data.characters.map(p=>({
+      name:String(p.name||'').trim(),age:String(p.age||'').trim(),role:String(p.role||'').trim(),
+      brief:String(p.brief||'').trim(),secret:String(p.secret||'').trim(),
+      detail:String(p.detail||'').trim(),motive:String(p.motive||'').trim()
+    })).filter(p=>p.name||p.role||p.brief);
+    save(); toast('Улучшено ✓','ok');
+    renderWizConcept();
+  }catch(e){ toast('Ошибка: '+String(e.message||e).slice(0,60),'err'); }
+}
+function renderConceptEval(result,container){
+  if(!result||!Array.isArray(result.axes)) return;
+  const COL={1:'#ef4444',2:'#f97316',3:'#f59e0b',4:'#22c55e',5:'#3b82f6'};
+  const stars=s=>'★'.repeat(s)+'☆'.repeat(5-s);
+  container.innerHTML=`<div class="concept-eval">
+    <div class="ce-header">Оценка ИИ-редактора</div>
+    <div class="ce-axes">${result.axes.map(a=>`
+      <div class="ce-axis">
+        <div class="ce-ax-top">
+          <span class="ce-ax-label">${esc(a.label)}</span>
+          <span class="ce-ax-stars" style="color:${COL[a.score]||'var(--dim)'}">${stars(Math.max(1,Math.min(5,a.score||3)))}</span>
+        </div>
+        <div class="ce-bar"><div class="ce-bar-fill" style="width:${Math.max(1,Math.min(5,a.score||3))*20}%;background:${COL[a.score]||'var(--accent)'}"></div></div>
+        <div class="ce-ax-comment">${esc(a.comment||'')}</div>
+        ${(a.score||5)<4?`<button class="btn ghost xs ce-improve" data-axis="${a.key}">✦ ${esc(a.tip||'Улучшить')}</button>`:''}
+      </div>`).join('')}
+    </div>
+    ${result.summary?`<div class="ce-summary">${esc(result.summary)}</div>`:''}
+  </div>`;
+  container.querySelectorAll('.ce-improve').forEach(btn=>{
+    btn.addEventListener('click',async()=>{ btn.disabled=true; btn.textContent='⏳…'; await improveConceptAxis(btn.dataset.axis); });
+  });
 }
 async function autoBuildBible(){
   if(!hasKey()){ toast('Задайте API-ключ','err'); return openSettings(); }
@@ -4684,6 +4756,7 @@ function initSimplifiedMode(){
   const fill=(id,v)=>{ const el=document.querySelector('#'+id); if(el) el.value=v||''; };
   fill('simp-title',state.project.title); fill('simp-brief',state.project.brief);
   fill('simp-genre',state.project.genre); fill('simp-aud',state.project.audience);
+  fill('simp-char-min',state.project.charMin||3); fill('simp-char-max',state.project.charMax||5);
 
   // ── Кнопка «Далее» шаг 1 ──────────────────────
   const next1=document.querySelector('#wiz-next-1');
@@ -4695,6 +4768,10 @@ function initSimplifiedMode(){
     state.project.genre    = document.querySelector('#simp-genre')?.value||'';
     state.project.audience = document.querySelector('#simp-aud')?.value.trim()||'';
     state.project.sourceText=(document.querySelector('#simp-source')?.value||'').trim();
+    const _cmin=parseInt(document.querySelector('#simp-char-min')?.value||'3',10);
+    const _cmax=parseInt(document.querySelector('#simp-char-max')?.value||'5',10);
+    state.project.charMin=Math.max(1,Math.min(10,_cmin||3));
+    state.project.charMax=Math.max(state.project.charMin,Math.min(15,_cmax||5));
     if(state.project.sourceText) state.project.mode='edit';
     state.project.concept  = {setting:'',characters:[],plotTurns:'',tone:''};
     applyTemplate(_simpTpl,{genreCode: GENRES.find(g=>g.l===state.project.genre)?.v||'', strictness:1});
@@ -4761,10 +4838,19 @@ function renderWizConcept(){
         ${plotTurns?`<div class="wcs-row"><span class="wcs-label">📍 Повороты</span><div class="wcs-turns">${plotPreview}</div></div>`:''}
         ${tone?`<div class="wcs-row"><span class="wcs-label">🎭 Тон</span><span class="wcs-val">${esc(tone)}</span></div>`:''}
       </div>
-      <button class="btn ghost sm wiz-edit-concept-btn" id="wiz-edit-concept">✏️ Редактировать замысел</button>`;
+      <button class="btn ghost sm wiz-edit-concept-btn" id="wiz-edit-concept">✏️ Редактировать замысел</button>
+      <div id="concept-eval-wrap"><div class="ce-loading">🔍 Анализирую замысел…</div></div>`;
+    body.querySelector('#wiz-edit-concept')?.addEventListener('click',()=>openConcept());
+    // Асинхронная оценка замысла
+    ;(async()=>{
+      const wrap=document.getElementById('concept-eval-wrap');
+      if(!wrap) return;
+      const result=await evalConcept();
+      if(!wrap.isConnected) return;
+      if(result) renderConceptEval(result,wrap);
+      else wrap.innerHTML='';
+    })();
   }
-  // Кнопка открывает полный дровер
-  body.querySelector('#wiz-edit-concept')?.addEventListener('click',()=>openConcept());
 }
 
 function collectWizConcept(){

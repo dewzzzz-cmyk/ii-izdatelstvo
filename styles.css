@@ -1715,3 +1715,24 @@ body.zen-mode[data-view="reader"] .studio{grid-template-columns:0 1fr 0}
 body.zen-mode[data-view="reader"] #left-rail{display:none!important}
 body.zen-mode[data-view="reader"] #right-panel{display:none!important}
 body.zen-mode[data-view="reader"] .reader-inner{max-width:680px;margin:0 auto;padding:48px 24px}
+
+/* ── Персонажей мин/макс (wizard шаг 1) ─────────── */
+.simp-char-range{display:flex;align-items:center;gap:6px}
+.scr-label{font-size:.8rem;color:var(--dim)}
+.simp-char-inp{width:56px;text-align:center;padding:6px 8px}
+
+/* ── Оценка замысла ИИ (wizard шаг 2) ──────────── */
+.concept-eval{margin-top:14px;padding:14px 16px;background:var(--panel2);border:1px solid var(--line);border-radius:10px}
+.ce-header{font-size:.75rem;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px}
+.ce-axes{display:flex;flex-direction:column;gap:11px}
+.ce-axis{display:flex;flex-direction:column;gap:3px}
+.ce-ax-top{display:flex;justify-content:space-between;align-items:baseline}
+.ce-ax-label{font-size:.85rem;font-weight:600;color:var(--txt)}
+.ce-ax-stars{font-size:.78rem;letter-spacing:1px;font-family:monospace}
+.ce-bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:2px 0}
+.ce-bar-fill{height:100%;border-radius:2px;transition:width .5s ease}
+.ce-ax-comment{font-size:.78rem;color:var(--dim);line-height:1.45}
+.ce-improve{margin-top:5px;font-size:.75rem!important;padding:3px 10px!important;opacity:.85}
+.ce-improve:hover{opacity:1}
+.ce-summary{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:.8rem;color:var(--dim);line-height:1.55;font-style:italic}
+.ce-loading{font-size:.8rem;color:var(--faint);padding:12px 0;text-align:center}
