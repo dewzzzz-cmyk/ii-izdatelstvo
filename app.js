@@ -4664,9 +4664,11 @@ function initSimplifiedMode(){
     wizGoStep(2);
     // Генерация замысла
     const body=document.querySelector('#wiz-concept-body');
-    if(body) body.innerHTML='<div class="lr-empty">⏳ Генерирую замысел…</div>';
+    if(body) body.innerHTML='<div class="lr-empty" style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px 0"><span class="thinking"><span></span><span></span><span></span></span><span id="wiz-gen-status" style="color:var(--dim);font-size:.9rem">Генерирую замысел…</span></div>';
     try{
       await generateConcept(true);
+      const _gs=document.querySelector('#wiz-gen-status');
+      if(_gs) _gs.textContent='Углубляю персонажей…';
       await deepenCharacters(null);
     }catch(e){ toast('Не удалось создать замысел автоматически — заполните вручную','warn'); }
     renderWizConcept();
@@ -4676,9 +4678,14 @@ function initSimplifiedMode(){
   document.querySelector('#wiz-back-1')?.addEventListener('click',()=>wizGoStep(1));
   document.querySelector('#wiz-regen')?.addEventListener('click',async()=>{
     const body=document.querySelector('#wiz-concept-body');
-    if(body) body.innerHTML='<div class="lr-empty">⏳ Перегенерирую…</div>';
+    if(body) body.innerHTML='<div class="lr-empty" style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px 0"><span class="thinking"><span></span><span></span><span></span></span><span id="wiz-gen-status" style="color:var(--dim);font-size:.9rem">Генерирую замысел…</span></div>';
     state.project.concept={setting:'',characters:[],plotTurns:'',tone:''};
-    try{ await generateConcept(true); await deepenCharacters(null); }catch{}
+    try{
+      await generateConcept(true);
+      const _gs=document.querySelector('#wiz-gen-status');
+      if(_gs) _gs.textContent='Углубляю персонажей…';
+      await deepenCharacters(null);
+    }catch{}
     renderWizConcept();
   });
   const next2=document.querySelector('#wiz-next-2');
