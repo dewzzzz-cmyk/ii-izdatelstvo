@@ -2,5 +2,6 @@ backups/
 docs/
 .claude/
 node_modules/
+data/
 *.log
 .env

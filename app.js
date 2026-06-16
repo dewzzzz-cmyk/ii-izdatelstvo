@@ -58,8 +58,14 @@ const KDP_CHECKLIST =
 - [ ] План запуска и посты готовы`;
 
 /* ============ СОСТОЯНИЕ ============ */
-const KEY='izd_studio_v3';
+let KEY='izd_studio_v3';
 const SERIES_KEY='izd_series_v1';
+let _currentUserId = null;
+// Синхронно читаем userId ДО того, как state загрузится — чтобы KEY был правильным
+(function(){
+  const stored=localStorage.getItem('izd_auth_user');
+  if(stored){ _currentUserId=stored; KEY='izd_studio_v3_'+stored; }
+})();
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 // Детерминированный хэш строки → число (для стабильного выбора техники открытия)
 function strHash(s){ let h=0; for(let i=0;i<s.length;i++) h=(Math.imul(31,h)+s.charCodeAt(i))|0; return Math.abs(h); }
@@ -1489,6 +1495,14 @@ function render(){
   const sb=$('#stop-btn'); if(sb){ sb.style.display=running?'':'none'; }
   const _noKeyRP=!hasKey();
   document.querySelectorAll('.rp-act').forEach(b=>{ b.disabled=_noKeyRP; b.title=_noKeyRP?'Сначала добавьте API-ключ (⚙)':''; });
+  // #wiz-key-warn синхронизируем с hasKey() здесь, чтобы он обновлялся при вводе ключа на онбординге
+  const _wkwEl=document.querySelector('#wiz-key-warn'); if(_wkwEl) _wkwEl.style.display=_noKey?'':'none';
+  // Пилюля пользователя (auth)
+  let _pill=document.getElementById('auth-user-pill');
+  if(_currentUserId){
+    if(!_pill){ _pill=document.createElement('span'); _pill.id='auth-user-pill'; _pill.className='hint-pill'; _pill.style.cssText='cursor:pointer;user-select:none;'; _pill.title='Выйти'; _pill.onclick=authLogout; const _tbr=document.querySelector('.tb-right'); if(_tbr) _tbr.prepend(_pill); }
+    _pill.textContent='👤 '+_currentUserId;
+  } else if(_pill){ _pill.remove(); }
   // #38: скрываем технический хинт, пока холст пуст
   const hintEl=$('#canvas-hint');
   if(hintEl){
@@ -4588,7 +4602,7 @@ function wizGoStep(step){
     if(dot){ dot.classList.toggle('active',s===step); dot.classList.toggle('done',s<step); }
   });
   const _wkw=document.querySelector('#wiz-key-warn');
-  if(_wkw) _wkw.style.display=state.global.apiKey?'none':'';
+  if(_wkw) _wkw.style.display=hasKey()?'none':'';
 }
 
 function initSimplifiedMode(){
@@ -6512,6 +6526,7 @@ if(!state.global.apiKey && state.nodes.length===0){ switchView('simple'); }
 { const _cbNewBook=$('#cb-new-book'); if(_cbNewBook) _cbNewBook.onclick=()=>{ hideCompletionBanner(); newBook(); }; }
 { const _cbAP=$('#cb-antiplagiat'); if(_cbAP) _cbAP.onclick=()=>openAntiplagiat(); }
 showOnboardingIfNeeded();
+authInit();
 // Пилюля «нет ключа» открывает настройки по клику
 { const _ap=$('#api-state'); if(_ap) _ap.onclick=()=>openSettings(); }
 // Меню «⋯ Ещё»
@@ -6911,3 +6926,92 @@ switchView(_currentView);
 scheduleBackup();
 // #50: предложить восстановление из IndexedDB, если localStorage пуст/повреждён
 checkIdbRecovery();
+
+/* ════ AUTH UI ════════════════════════════════════════════════════════
+   Проверяем сессию после первого рендера. Если /api/auth/me возвращает
+   authEnabled=true и нет валидного токена — показываем оверлей входа.
+════════════════════════════════════════════════════════════════════= */
+async function authInit(){
+  try{
+    const r=await fetch('/api/auth/me');
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){
+      _currentUserId=d.userId; render();
+    } else if(r.status===401 && d.authEnabled){
+      _currentUserId=null; localStorage.removeItem('izd_auth_user');
+      KEY='izd_studio_v3';
+      showAuthOverlay(d.hasUsers?'login':'reg');
+    }
+  }catch{}
+}
+
+async function authLogout(){
+  await fetch('/api/auth/logout',{method:'POST'}).catch(()=>{});
+  localStorage.removeItem('izd_auth_user');
+  location.reload();
+}
+
+async function _authSubmit(mode,username,password){
+  const url=mode==='login'?'/api/auth/login':'/api/auth/register';
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok&&d.userId){ localStorage.setItem('izd_auth_user',d.userId); location.reload(); }
+  return {ok:r.ok,err:d.error||'unknown'};
+}
+
+let _authMode='login';
+
+function showAuthOverlay(defaultMode){
+  if(document.getElementById('auth-overlay')) return;
+  if(defaultMode) _authMode=defaultMode;
+  const el=document.createElement('div');
+  el.id='auth-overlay';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:9999;font-family:inherit;';
+  el.innerHTML=`<div style="background:var(--bg-card,#1e1e2e);border-radius:16px;padding:32px 36px;min-width:340px;max-width:94vw;box-shadow:0 8px 40px rgba(0,0,0,.6);">
+  <h2 style="margin:0 0 4px;font-size:1.25rem;color:var(--fg,#cdd6f4);">ИИ-Издательство</h2>
+  <p style="margin:0 0 20px;color:var(--muted,#6c7086);font-size:.85rem;">Войдите или создайте аккаунт</p>
+  <div style="display:flex;gap:8px;margin-bottom:20px;">
+    <button id="auth-tab-login" class="btn sm primary" onclick="authTabSwitch('login')">Войти</button>
+    <button id="auth-tab-reg" class="btn sm ghost" onclick="authTabSwitch('reg')">Регистрация</button>
+  </div>
+  <div id="auth-err" style="display:none;color:#f38ba8;font-size:.82rem;margin-bottom:12px;padding:8px 12px;background:rgba(243,139,168,.1);border-radius:8px;"></div>
+  <label style="display:block;margin-bottom:12px;">
+    <span style="font-size:.82rem;color:var(--muted,#6c7086);display:block;margin-bottom:4px;">Логин</span>
+    <input id="auth-username" class="input" type="text" placeholder="a-z 0-9 _-" autocomplete="username" style="width:100%;box-sizing:border-box;">
+  </label>
+  <label style="display:block;margin-bottom:20px;">
+    <span style="font-size:.82rem;color:var(--muted,#6c7086);display:block;margin-bottom:4px;">Пароль</span>
+    <input id="auth-password" class="input" type="password" placeholder="мин. 4 символа" id="auth-password" autocomplete="current-password" style="width:100%;box-sizing:border-box;">
+  </label>
+  <button id="auth-submit" class="btn primary" style="width:100%;" onclick="authDoSubmit()">Войти</button>
+  </div>`;
+  document.body.appendChild(el);
+  el.querySelector('#auth-username').focus();
+  el.querySelector('#auth-password').addEventListener('keydown',e=>{ if(e.key==='Enter') authDoSubmit(); });
+  authTabSwitch(_authMode);
+}
+
+function authTabSwitch(mode){
+  _authMode=mode;
+  const el=document.getElementById('auth-overlay'); if(!el) return;
+  el.querySelector('#auth-tab-login').className='btn sm '+(mode==='login'?'primary':'ghost');
+  el.querySelector('#auth-tab-reg').className='btn sm '+(mode==='reg'?'primary':'ghost');
+  const btn=el.querySelector('#auth-submit'); if(btn) btn.textContent=mode==='login'?'Войти':'Зарегистрироваться';
+  const pw=el.querySelector('#auth-password'); if(pw) pw.autocomplete=mode==='login'?'current-password':'new-password';
+  const err=el.querySelector('#auth-err'); if(err) err.style.display='none';
+}
+
+async function authDoSubmit(){
+  const username=(document.getElementById('auth-username')||{}).value||'';
+  const password=(document.getElementById('auth-password')||{}).value||'';
+  const errEl=document.getElementById('auth-err');
+  const btn=document.getElementById('auth-submit');
+  if(!username.trim()||!password.trim()){ if(errEl){errEl.textContent='Заполните все поля';errEl.style.display='';} return; }
+  if(btn){btn.disabled=true;btn.textContent='…';}
+  const {ok,err}=await _authSubmit(_authMode,username.trim(),password.trim());
+  if(!ok){
+    const msgs={too_short:'Слишком короткий логин или пароль',invalid_chars:'Логин: только a-z 0-9 _ -',exists:'Пользователь уже существует',invalid:'Неверный логин или пароль',registration_closed:'Регистрация закрыта'};
+    if(errEl){errEl.textContent=msgs[err]||('Ошибка: '+err);errEl.style.display='';}
+    if(btn){btn.disabled=false;btn.textContent=_authMode==='login'?'Войти':'Зарегистрироваться';}
+  }
+}

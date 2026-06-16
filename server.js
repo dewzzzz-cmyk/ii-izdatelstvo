@@ -6,11 +6,95 @@
  * Нужен, чтобы (а) обойти CORS и (б) не светить ключ в стороннюю выдачу.
  *
  * Запуск:  node server.js   →   http://localhost:8787
- * env: PORT (8787). Ключи задаются в интерфейсе студии, не здесь.
+ * env: PORT (8787), AUTH_SECRET (генерируется если не задан).
  */
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
+
+/* ════ AUTH ══════════════════════════════════════════════════════════ */
+const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+const DATA_DIR = path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+
+function ensureDataDir(){ try{ fs.mkdirSync(DATA_DIR,{recursive:true}); }catch{} }
+function loadUsers(){ ensureDataDir(); try{ return JSON.parse(fs.readFileSync(USERS_FILE,'utf8')); }catch{ return {}; } }
+function saveUsers(u){ ensureDataDir(); fs.writeFileSync(USERS_FILE,JSON.stringify(u),'utf8'); }
+
+// In-memory sessions: token → {userId, expires}
+const _sessions = {};
+
+function hashPw(pw){ return crypto.pbkdf2Sync(pw, AUTH_SECRET, 50000, 32, 'sha256').toString('hex'); }
+function genToken(){ return crypto.randomBytes(32).toString('hex'); }
+function parseCookies(h){ const c={}; (h||'').split(';').forEach(p=>{ const [k,...v]=p.trim().split('='); if(k) c[k.trim()]=decodeURIComponent(v.join('=')); }); return c; }
+
+function getSessionUser(req){
+  const token = parseCookies(req.headers.cookie).izd_sess;
+  if(!token) return null;
+  const s = _sessions[token];
+  if(!s || s.expires < Date.now()){ if(s) delete _sessions[token]; return null; }
+  return s.userId;
+}
+
+function authRequired(){ return !!process.env.AUTH_SECRET || Object.keys(loadUsers()).length > 0; }
+
+async function handleAuth(req, res, url, method){
+  const json=(code,obj)=>{ res.writeHead(code,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(obj)); };
+  const setCookieJson=(code,obj,cookie)=>{ res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Set-Cookie':cookie}); res.end(JSON.stringify(obj)); };
+
+  if(url==='/api/auth/me' && method==='GET'){
+    const userId=getSessionUser(req);
+    const users=loadUsers();
+    const hasUsers=Object.keys(users).length>0;
+    const authEnabled=hasUsers||!!process.env.AUTH_SECRET;
+    if(!userId){ json(401,{error:'not_logged_in',authEnabled,hasUsers}); return true; }
+    json(200,{userId,authEnabled,hasUsers}); return true;
+  }
+
+  if(method!=='POST') return false;
+  const body=await new Promise(resolve=>{ let r=''; req.on('data',c=>{r+=c;}); req.on('end',()=>resolve(r)); });
+  let b={}; if(body.trim()){ try{ b=JSON.parse(body); }catch{ json(400,{error:'bad_json'}); return true; } }
+
+  if(url==='/api/auth/register'){
+    const users=loadUsers();
+    if(!process.env.AUTH_OPEN&&Object.keys(users).length>0&&!process.env.AUTH_SECRET){ json(403,{error:'registration_closed'}); return true; }
+    const name=(b.username||'').trim().toLowerCase();
+    const pw=(b.password||'').trim();
+    if(!name||name.length<2||!pw||pw.length<4){ json(400,{error:'too_short'}); return true; }
+    if(!/^[a-z0-9_-]+$/.test(name)){ json(400,{error:'invalid_chars'}); return true; }
+    if(users[name]){ json(409,{error:'exists'}); return true; }
+    users[name]={id:name,hash:hashPw(pw),created:Date.now()};
+    saveUsers(users);
+    const token=genToken();
+    _sessions[token]={userId:name,expires:Date.now()+30*24*3600*1000};
+    setCookieJson(200,{ok:true,userId:name},`izd_sess=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${30*24*3600}`);
+    return true;
+  }
+
+  if(url==='/api/auth/login'){
+    const users=loadUsers();
+    const name=(b.username||'').trim().toLowerCase();
+    const pw=(b.password||'').trim();
+    const user=users[name];
+    if(!user||user.hash!==hashPw(pw)){ json(401,{error:'invalid'}); return true; }
+    const token=genToken();
+    _sessions[token]={userId:name,expires:Date.now()+30*24*3600*1000};
+    setCookieJson(200,{ok:true,userId:name},`izd_sess=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${30*24*3600}`);
+    return true;
+  }
+
+  if(url==='/api/auth/logout'){
+    const token=parseCookies(req.headers.cookie).izd_sess;
+    if(token) delete _sessions[token];
+    res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Set-Cookie':'izd_sess=; Path=/; Max-Age=0'});
+    res.end('{"ok":true}');
+    return true;
+  }
+
+  return false;
+}
+/* ═════════════════════════════════════════════════════════════════════ */
 
 const PORT = process.env.PORT || 8787;
 const ROOT = __dirname;
@@ -176,10 +260,12 @@ function handleSaveBook(req,res){
     }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
   });
 }
-http.createServer((req,res)=>{
+http.createServer(async (req,res)=>{
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
   if(req.method==='OPTIONS') return send(res,204,'');
+  const url = req.url.split('?')[0];
+  if(url.startsWith('/api/auth')) { const handled=await handleAuth(req,res,url,req.method); if(handled) return; }
   if(req.method==='POST' && req.url==='/api/generate') return handleGenerate(req,res);
   if(req.method==='POST' && req.url==='/api/backup')   return handleBackup(req,res);
   if(req.method==='POST' && req.url==='/api/save-book') return handleSaveBook(req,res);
