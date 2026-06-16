@@ -130,8 +130,15 @@
       </div>
       <div class="simp-row">
         <div class="simp-field">
-          <label>👤 Персонажей</label>
-          <div class="simp-char-range">
+          <label class="simp-char-label">
+            👤 Персонажей
+            <label class="scr-toggle" title="Задать количество вручную">
+              <input type="checkbox" id="simp-char-manual" />
+              <span class="scr-toggle-track"></span>
+              <span class="scr-toggle-hint">задать</span>
+            </label>
+          </label>
+          <div class="simp-char-range" id="simp-char-range" style="display:none">
             <span class="scr-label">от</span>
             <input id="simp-char-min" type="number" min="1" max="10" value="3" class="simp-char-inp" />
             <span class="scr-label">до</span>

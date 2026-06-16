@@ -135,7 +135,7 @@ function defaultState(){
   const nodes=startTpls.map((t,i)=>freshNode(t,60+(i%3)*250,40+Math.floor(i/3)*180));
   const edges=[]; for(let i=0;i<nodes.length-1;i++) edges.push({id:uid(),from:nodes[i].id,to:nodes[i+1].id,condition:'',maxRetries:0,_retryCount:0});
   return { _bookId:'',
-    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''},conceptApproved:false,world:{setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''},seriesId:'',bookNumber:1,charMin:3,charMax:5},
+    project:{title:'',genre:'',audience:'',author:'',brief:'',mode:'write',input:'',disclosure:'Текст подготовлен с использованием ИИ',styleRef:'',stylePassport:'',engagementPatterns:'',styleSourceName:'',styleMix:[],cover:'',isbn:'',annotation:'',bisac:'',series:'',fb2genre:'',concept:{setting:'',characters:[],plotTurns:'',tone:''},conceptApproved:false,world:{setting:'',atmosphere:'',rules:'',timeline:'',secrets:'',relations:''},seriesId:'',bookNumber:1,charMin:3,charMax:5,charManual:false},
     styleLibrary:[],
     bible:[], log:[], runs:[], approvals:[], groups:[], chapters:[], chapterBook:[], chapterCtx:null, dailyRuns:{date:'',count:0}, baseline:null, onboarded:false, attention:[],
     userTemplates:[], snippets:[], auxTokens:0, auxCost:0,
@@ -3593,8 +3593,10 @@ async function generateConcept(silent){
     ? '"setting":"ОБЯЗАТЕЛЬНО две части: (1) обычный мир героя ДО начала истории — где живёт, чем занимается; (2) волшебный/особый мир куда попадает. Пример: «Москва, панельная пятиэтажка → замок Академии над северным озером»"'
     : '"setting":"место, время, атмосфера — 1-2 предложения"';
   const detailRule=`"detail":"ОДНА неожиданная деталь — черта речи / реакция на стресс / отличие внешности / специфическая привычка в конкретных ситуациях. ЗАПРЕЩЕНО: 'всегда крутит/теребит/держит в руках предмет' — это клише. ВМЕСТО ЭТОГО: как говорит (например 'никогда не заканчивает фразу'), как выглядит (например 'шрам через бровь'), что делает в неловкой тишине, как реагирует на ложь."`;
-  const charMin=state.project.charMin||3; const charMax=state.project.charMax||5;
-  const sys=`Ты — редактор-разработчик. Создай детальный ЗАМЫСЕЛ книги СТРОГО на основе названия и брифа автора — НЕ придумывай свою историю, РАЗВИВАЙ то что написал автор. Верни СТРОГО JSON:\n{${settingInstruction},"characters":[{"name":"Имя Фамилия","age":"возраст","role":"роль в истории","brief":"суть персонажа — 1 предложение","secret":"главная тайна или скрытый мотив — конкретно",${detailRule},"motive":"чего хочет в этой истории — конкретно"}],"plotTurns":"3-5 конкретных поворотов прямо из брифа автора. ПЕРВЫЙ поворот — момент когда обычный мир разрушается. Повороты должны СООТВЕТСТВОВАТЬ названию и брифу.","tone":"тон и настроение — согласно жанру и брифу"}. Только JSON. Персонажей от ${charMin} до ${charMax}, все с заполненными полями.`;
+  const charCountRule=state.project.charManual
+    ? `Персонажей строго от ${state.project.charMin||3} до ${state.project.charMax||5}`
+    : 'Персонажей столько, сколько требует история (обычно 3-5)';
+  const sys=`Ты — редактор-разработчик. Создай детальный ЗАМЫСЕЛ книги СТРОГО на основе названия и брифа автора — НЕ придумывай свою историю, РАЗВИВАЙ то что написал автор. Верни СТРОГО JSON:\n{${settingInstruction},"characters":[{"name":"Имя Фамилия","age":"возраст","role":"роль в истории","brief":"суть персонажа — 1 предложение","secret":"главная тайна или скрытый мотив — конкретно",${detailRule},"motive":"чего хочет в этой истории — конкретно"}],"plotTurns":"3-5 конкретных поворотов прямо из брифа автора. ПЕРВЫЙ поворот — момент когда обычный мир разрушается. Повороты должны СООТВЕТСТВОВАТЬ названию и брифу.","tone":"тон и настроение — согласно жанру и брифу"}. Только JSON. ${charCountRule}, все с заполненными полями.`;
   const titleLine=pr.title?`Название книги: «${pr.title}»\n`:'';
   const usr=`${titleLine}Бриф (задумка автора): ${pr.brief||'не задан'}\nЖанр: ${pr.genre||'не задан'}\nАудитория: ${pr.audience||'не задана'}\n\nВАЖНО: замысел должен точно соответствовать названию «${pr.title||''}» и брифу. Не меняй жанр, не придумывай не связанных с брифом событий.`;
   if(!silent) toast('Генерирую замысел…');
@@ -4757,6 +4759,13 @@ function initSimplifiedMode(){
   fill('simp-title',state.project.title); fill('simp-brief',state.project.brief);
   fill('simp-genre',state.project.genre); fill('simp-aud',state.project.audience);
   fill('simp-char-min',state.project.charMin||3); fill('simp-char-max',state.project.charMax||5);
+  const _manualCb=document.getElementById('simp-char-manual');
+  const _charRange=document.getElementById('simp-char-range');
+  if(_manualCb&&_charRange){
+    _manualCb.checked=!!state.project.charManual;
+    _charRange.style.display=_manualCb.checked?'flex':'none';
+    _manualCb.onchange=()=>{ _charRange.style.display=_manualCb.checked?'flex':'none'; };
+  }
 
   // ── Кнопка «Далее» шаг 1 ──────────────────────
   const next1=document.querySelector('#wiz-next-1');
@@ -4768,6 +4777,7 @@ function initSimplifiedMode(){
     state.project.genre    = document.querySelector('#simp-genre')?.value||'';
     state.project.audience = document.querySelector('#simp-aud')?.value.trim()||'';
     state.project.sourceText=(document.querySelector('#simp-source')?.value||'').trim();
+    state.project.charManual=!!document.getElementById('simp-char-manual')?.checked;
     const _cmin=parseInt(document.querySelector('#simp-char-min')?.value||'3',10);
     const _cmax=parseInt(document.querySelector('#simp-char-max')?.value||'5',10);
     state.project.charMin=Math.max(1,Math.min(10,_cmin||3));

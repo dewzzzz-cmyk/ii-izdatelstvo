@@ -1717,9 +1717,17 @@ body.zen-mode[data-view="reader"] #right-panel{display:none!important}
 body.zen-mode[data-view="reader"] .reader-inner{max-width:680px;margin:0 auto;padding:48px 24px}
 
 /* ── Персонажей мин/макс (wizard шаг 1) ─────────── */
-.simp-char-range{display:flex;align-items:center;gap:6px}
+.simp-char-range{display:flex;align-items:center;gap:6px;margin-top:6px}
 .scr-label{font-size:.8rem;color:var(--dim)}
 .simp-char-inp{width:56px;text-align:center;padding:6px 8px}
+.simp-char-label{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+.scr-toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.scr-toggle input[type=checkbox]{display:none}
+.scr-toggle-track{width:28px;height:16px;background:var(--line2);border-radius:8px;position:relative;transition:background .18s;flex-shrink:0}
+.scr-toggle-track::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--dim);transition:transform .18s,background .18s}
+.scr-toggle input:checked ~ .scr-toggle-track{background:var(--accent)}
+.scr-toggle input:checked ~ .scr-toggle-track::after{transform:translateX(12px);background:#fff}
+.scr-toggle-hint{font-size:.75rem;color:var(--faint);font-weight:400}
 
 /* ── Оценка замысла ИИ (wizard шаг 2) ──────────── */
 .concept-eval{margin-top:14px;padding:14px 16px;background:var(--panel2);border:1px solid var(--line);border-radius:10px}
