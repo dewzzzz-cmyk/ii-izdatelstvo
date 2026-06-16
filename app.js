@@ -3661,7 +3661,9 @@ async function evalConcept(){
   const genre=pr.genre||'не задан'; const aud=pr.audience||'не задана';
   const sys=`Ты — редактор, оценивающий замысел СТРОГО в рамках жанра и аудитории. Жанр: ${genre}. Аудитория: ${aud}.\nШкала привязана к жанровой норме: 5=образцово для этого жанра, 4=соответствует ожиданиям, 3=есть над чем работать, 2=слабо даже для жанра, 1=не работает.\nПравило для tip: ТОЛЬКО малая аддитивная правка — одна сцена, одна деталь, одна реплика. ЗАПРЕЩЕНО менять концепцию или предлагать новый сюжет. Если score >= 4 — tip обязательно пустой ("").\nВерни СТРОГО JSON:\n{"axes":[{"key":"conflict","label":"Конфликт","score":3,"comment":"что именно слабо или сильно","tip":"малая правка или пустая строка"},{"key":"chars","label":"Персонажи","score":3,"comment":"...","tip":"..."},{"key":"world","label":"Мир","score":3,"comment":"...","tip":"..."},{"key":"orig","label":"Оригинальность","score":3,"comment":"...","tip":"..."}],"summary":"2-3 предложения"}\nТолько JSON.`;
   const charList=(c.characters||[]).map(p=>`${p.name||p.role||'?'} (${p.role||'?'}): ${p.brief||''}`).join('; ')||'нет';
-  const usr=`Название: «${pr.title||''}» | Жанр: ${genre} | Аудитория: ${aud}\nМесто/время: ${c.setting||'не задано'}\nПовороты: ${c.plotTurns||'нет'}\nПерсонажи: ${charList}\nТон: ${c.tone||'?'}`;
+  const briefLine=pr.brief?`\nОписание книги: ${pr.brief.slice(0,400)}`:'';
+  const srcLine=(pr.mode==='edit'&&pr.sourceText)?`\nИсточник/оригинал: ${pr.sourceText.slice(0,600)}`:'';
+  const usr=`Название: «${pr.title||''}» | Жанр: ${genre} | Аудитория: ${aud}${briefLine}${srcLine}\nМесто/время: ${c.setting||'не задано'}\nПовороты: ${c.plotTurns||'нет'}\nПерсонажи: ${charList}\nТон: ${c.tone||'?'}`;
   try{
     const resp=await callLLM(conf,[{role:'system',content:sys},{role:'user',content:usr}]);
     let txt=String(resp||'').trim();
