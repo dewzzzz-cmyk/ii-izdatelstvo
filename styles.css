@@ -1744,3 +1744,16 @@ body.zen-mode[data-view="reader"] .reader-inner{max-width:680px;margin:0 auto;pa
 .ce-improve:hover{opacity:1}
 .ce-summary{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:.8rem;color:var(--dim);line-height:1.55;font-style:italic}
 .ce-loading{font-size:.8rem;color:var(--faint);padding:12px 0;text-align:center}
+
+/* ── Таблица глав в wizard шаг 1 ───────────────── */
+.wiz-chapters-inline{margin-top:4px;padding:12px 14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px}
+.wci-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.wci-title{font-size:.82rem;font-weight:700;color:var(--dim)}
+.wci-empty{font-size:.8rem;color:var(--faint);padding:8px 0;text-align:center}
+.wci-row{display:grid;grid-template-columns:18px 1fr 1fr 80px 22px;gap:6px;align-items:center;margin-bottom:6px}
+.wci-num{font-size:.78rem;color:var(--faint);text-align:right}
+.wci-title-inp,.wci-brief-inp{padding:5px 8px;font-size:.82rem;background:var(--panel3);border:1px solid var(--line);border-radius:6px;color:var(--txt)}
+.wci-size-sel{padding:5px 4px;font-size:.75rem;background:var(--panel3);border:1px solid var(--line);border-radius:6px;color:var(--dim)}
+.wci-del{background:none;border:none;color:var(--faint);cursor:pointer;font-size:1rem;line-height:1;padding:0;border-radius:4px}
+.wci-del:hover{color:var(--err)}
+.wci-hint{font-size:.75rem;color:var(--faint);margin:8px 0 0;line-height:1.4}

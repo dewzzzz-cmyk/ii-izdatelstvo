@@ -3658,9 +3658,10 @@ async function evalConcept(){
   const pr=state.project;
   if(!(c.plotTurns||(c.characters||[]).length)) return null;
   const conf=cfg({useGlobal:true}); conf.temperature=0.2;
-  const sys=`Ты — литературный редактор. Оцени замысел книги по 4 осям. Верни СТРОГО JSON:\n{"axes":[{"key":"conflict","label":"Конфликт","score":3,"comment":"1 предл.","tip":"1 конкретный совет"},{"key":"chars","label":"Персонажи","score":3,"comment":"1 предл.","tip":"1 конкретный совет"},{"key":"world","label":"Мир","score":3,"comment":"1 предл.","tip":"1 конкретный совет"},{"key":"orig","label":"Оригинальность","score":3,"comment":"1 предл.","tip":"1 конкретный совет"}],"summary":"2-3 предложения общей оценки"}\nШкала: 5=отлично 4=хорошо 3=средне 2=слабо 1=нужна доработка. Только JSON.`;
+  const genre=pr.genre||'не задан'; const aud=pr.audience||'не задана';
+  const sys=`Ты — редактор, оценивающий замысел СТРОГО в рамках жанра и аудитории. Жанр: ${genre}. Аудитория: ${aud}.\nШкала привязана к жанровой норме: 5=образцово для этого жанра, 4=соответствует ожиданиям, 3=есть над чем работать, 2=слабо даже для жанра, 1=не работает.\nПравило для tip: ТОЛЬКО малая аддитивная правка — одна сцена, одна деталь, одна реплика. ЗАПРЕЩЕНО менять концепцию или предлагать новый сюжет. Если score >= 4 — tip обязательно пустой ("").\nВерни СТРОГО JSON:\n{"axes":[{"key":"conflict","label":"Конфликт","score":3,"comment":"что именно слабо или сильно","tip":"малая правка или пустая строка"},{"key":"chars","label":"Персонажи","score":3,"comment":"...","tip":"..."},{"key":"world","label":"Мир","score":3,"comment":"...","tip":"..."},{"key":"orig","label":"Оригинальность","score":3,"comment":"...","tip":"..."}],"summary":"2-3 предложения"}\nТолько JSON.`;
   const charList=(c.characters||[]).map(p=>`${p.name||p.role||'?'} (${p.role||'?'}): ${p.brief||''}`).join('; ')||'нет';
-  const usr=`Название: «${pr.title||''}» | Жанр: ${pr.genre||'?'} | Аудитория: ${pr.audience||'?'}\nМесто/время: ${c.setting||'не задано'}\nПовороты: ${c.plotTurns||'нет'}\nПерсонажи: ${charList}\nТон: ${c.tone||'?'}`;
+  const usr=`Название: «${pr.title||''}» | Жанр: ${genre} | Аудитория: ${aud}\nМесто/время: ${c.setting||'не задано'}\nПовороты: ${c.plotTurns||'нет'}\nПерсонажи: ${charList}\nТон: ${c.tone||'?'}`;
   try{
     const resp=await callLLM(conf,[{role:'system',content:sys},{role:'user',content:usr}]);
     let txt=String(resp||'').trim();
@@ -3673,7 +3674,7 @@ async function improveConceptAxis(axis){
   const c=state.project.concept; const pr=state.project; if(!c) return;
   const instructions={
     conflict:'Улучши сюжетные повороты (plotTurns). Конфликт острее, ставки реальные. Верни JSON: {"plotTurns":"..."}',
-    chars:'Улучши персонажей (characters) — глубже, без клише, с противоречиями. Верни JSON: {"characters":[{"name":"","age":"","role":"","brief":"","secret":"","detail":"","motive":""},...]}',
+    chars:'Улучши персонажей (characters). Для каждого добавь: (1) внутреннее противоречие — хочет X, но делает Y; (2) одну специфическую деталь поведения — не черта характера, а конкретное действие; (3) слабость, которая будет что-то стоить в сюжете. Не добавляй новых персонажей. Не меняй имена и роли. Верни JSON: {"characters":[{"name":"","age":"","role":"","brief":"","secret":"","detail":"","motive":""},...]}',
     world:'Улучши место/время (setting) — конкретнее, атмосфернее. Верни JSON: {"setting":"..."}',
     orig:'Сделай оригинальнее — неожиданный угол, нестандартный поворот. Улучши plotTurns и tone. Верни JSON: {"plotTurns":"...","tone":"..."}'
   };
@@ -4750,9 +4751,20 @@ function initSimplifiedMode(){
       const btn=document.createElement('button');
       btn.className='simp-tpl-btn'+(t.key===_simpTpl?' selected':'');
       btn.textContent=t.label;
-      btn.onclick=()=>{ _simpTpl=t.key; row.querySelectorAll('.simp-tpl-btn').forEach(b=>b.classList.remove('selected')); btn.classList.add('selected'); };
+      btn.onclick=()=>{
+        _simpTpl=t.key;
+        row.querySelectorAll('.simp-tpl-btn').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const cw=document.getElementById('wiz-chapters-wrap');
+        if(cw) cw.style.display=_simpTpl==='chapters'?'':'none';
+        if(_simpTpl==='chapters') renderWizChapterList();
+      };
       row.appendChild(btn);
     });
+    // Показать если уже выбран режим глав
+    const cw=document.getElementById('wiz-chapters-wrap');
+    if(cw) cw.style.display=_simpTpl==='chapters'?'':'none';
+    if(_simpTpl==='chapters') renderWizChapterList();
   }
   // Заполнить поля текущими значениями
   const fill=(id,v)=>{ const el=document.querySelector('#'+id); if(el) el.value=v||''; };
@@ -4784,6 +4796,7 @@ function initSimplifiedMode(){
     state.project.charMax=Math.max(state.project.charMin,Math.min(15,_cmax||5));
     if(state.project.sourceText) state.project.mode='edit';
     state.project.concept  = {setting:'',characters:[],plotTurns:'',tone:''};
+    if(_simpTpl==='chapters') collectWizChapterList();
     applyTemplate(_simpTpl,{genreCode: GENRES.find(g=>g.l===state.project.genre)?.v||'', strictness:1});
     save();
     wizGoStep(2);
@@ -4800,6 +4813,13 @@ function initSimplifiedMode(){
   };
 
   // ── Шаг 2: показ и редактирование замысла ──────
+  // ── Список глав wizard ──────────────────────────
+  document.getElementById('wiz-ch-add')?.addEventListener('click',()=>{
+    if(!state.chapters) state.chapters=[];
+    state.chapters.push({id:uid(),title:'Глава '+(state.chapters.length+1),brief:'',size:'md'});
+    renderWizChapterList();
+  });
+
   document.querySelector('#wiz-back-1')?.addEventListener('click',()=>wizGoStep(1));
   document.querySelector('#wiz-regen')?.addEventListener('click',async()=>{
     const body=document.querySelector('#wiz-concept-body');
@@ -4827,6 +4847,46 @@ function initSimplifiedMode(){
   renderSimpleProgress();
 }
 
+const WIZ_CH_SIZES=[
+  {k:'xs',l:'~400 сл'},
+  {k:'sm',l:'~900 сл'},
+  {k:'md',l:'~1800 сл'},
+  {k:'lg',l:'~2800 сл'},
+  {k:'xl',l:'~4500 сл'}
+];
+function renderWizChapterList(){
+  const list=document.getElementById('wiz-ch-list'); if(!list) return;
+  const chs=state.chapters||[];
+  if(!chs.length){
+    list.innerHTML=`<div class="wci-empty">Нет глав — нажмите «+ Глава» чтобы добавить</div>`;
+    return;
+  }
+  list.innerHTML=chs.map((ch,i)=>`
+    <div class="wci-row" data-chidx="${i}">
+      <span class="wci-num">${i+1}</span>
+      <input class="wci-title-inp" value="${esc(ch.title||'')}" placeholder="Название главы" />
+      <input class="wci-brief-inp" value="${esc(ch.brief||'')}" placeholder="О чём глава (опционально)" />
+      <select class="wci-size-sel">${WIZ_CH_SIZES.map(s=>`<option value="${s.k}"${ch.size===s.k?' selected':''}>${s.l}</option>`).join('')}</select>
+      <button class="wci-del" data-chidx="${i}" title="Удалить">×</button>
+    </div>`).join('');
+  list.querySelectorAll('.wci-del').forEach(btn=>{
+    btn.onclick=()=>{
+      collectWizChapterList();
+      state.chapters.splice(parseInt(btn.dataset.chidx),1);
+      renderWizChapterList();
+    };
+  });
+}
+function collectWizChapterList(){
+  const list=document.getElementById('wiz-ch-list'); if(!list) return;
+  if(!state.chapters) state.chapters=[];
+  list.querySelectorAll('.wci-row').forEach((row,i)=>{
+    const ch=state.chapters[i]; if(!ch) return;
+    ch.title=row.querySelector('.wci-title-inp')?.value.trim()||ch.title;
+    ch.brief=row.querySelector('.wci-brief-inp')?.value.trim()||'';
+    ch.size=row.querySelector('.wci-size-sel')?.value||'md';
+  });
+}
 function renderWizConcept(){
   const body=document.querySelector('#wiz-concept-body'); if(!body) return;
   const c=state.project.concept||{};
