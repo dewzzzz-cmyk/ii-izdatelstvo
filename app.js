@@ -47,6 +47,12 @@ const ROLE_TEMPS = {
   'scout':0.8,'dev':0.7,'writer':1.0,'line':0.7,'proof':0.2,'humanize':0.8,
   'continuity':0.3,'factcheck':0.2,'art':0.9,'layout':0.3,'meta':0.1,'mkt':0.8,'logedit':0.3,'audit':0.2,'distill':0.1,'fanout':1.0,'beatsheet':0.8
 };
+const ROLE_COLORS = {
+  'dev':'#6366f1','writer':'#8b5cf6','logedit':'#f59e0b','audit':'#ef4444',
+  'line':'#10b981','proof':'#06b6d4','continuity':'#3b82f6','meta':'#f97316',
+  'mkt':'#ec4899','art':'#84cc16','layout':'#a855f7','scout':'#14b8a6',
+  'humanize':'#fb923c','distill':'#64748b','fanout':'#22d3ee','beatsheet':'#c084fc'
+};
 const KDP_CHECKLIST =
 `## Чек-лист публикации (KDP и др.)
 - [ ] Указать использование ИИ при загрузке (обязательно, иначе бан)
@@ -1777,7 +1783,8 @@ function renderNodes(){
     const appr=n.status==='review'?`<div class="node-foot"><button class="btn ok sm" data-action="approve" data-id="${n.id}">✅ Принять</button><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">✍ Правка</button></div>`:
       n.status==='variants'?`<div class="node-foot"><button class="btn ok sm" data-action="open-variants" data-id="${n.id}">🔀 Выбрать вариант</button></div>`:
       `<div class="node-foot"><button class="btn ghost sm" data-action="open-node" data-id="${n.id}">⚙ Настроить</button><button class="btn ghost sm" data-action="run-node" data-id="${n.id}">▶ Прогнать</button></div>`;
-    return `<div class="node ${n.status}${selCls}"${ntAttr} data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
+    const rc=ROLE_COLORS[roleKeyOf(n)]||'var(--accent)';
+    return `<div class="node ${n.status}${selCls}"${ntAttr} data-node="${n.id}" data-role="${roleKeyOf(n)}" style="left:${n.x}px;top:${n.y}px;--rc:${rc}">
       ${badge}
       <div class="port in" data-port="in" data-id="${n.id}"></div>
       <div class="port out" data-port="out" data-id="${n.id}"></div>
@@ -1804,23 +1811,35 @@ function portPos(id,side){ const n=node(id); if(!n) return {x:0,y:0}; return {x:
 function edgePath(a,b){ const dx=Math.max(40,Math.abs(b.x-a.x)*0.5); return `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`; }
 function renderEdges(){
   const collapsedIds=new Set((state.groups||[]).filter(g=>g.collapsed).flatMap(g=>g.nodeIds));
-  edgesEl.innerHTML=`<defs><marker id="loop-arr" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#4f46e5"/></marker></defs>`+renderGroups()+state.edges.filter(e=>!collapsedIds.has(e.from)&&!collapsedIds.has(e.to)).map(e=>{ if(!node(e.from)||!node(e.to)) return '';
+  const defs=`<defs>
+    <marker id="arr" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#5a6290"/></marker>
+    <marker id="arr-flow" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="var(--accent2)"/></marker>
+    <marker id="arr-cond" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#a78bfa"/></marker>
+    <marker id="arr-cyclic" markerWidth="7" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#f59e0b"/></marker>
+    <marker id="loop-arr" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#4f46e5"/></marker>
+  </defs>`;
+  edgesEl.innerHTML=defs+renderGroups()+state.edges.filter(e=>!collapsedIds.has(e.from)&&!collapsedIds.has(e.to)).map(e=>{ if(!node(e.from)||!node(e.to)) return '';
     const p1=portPos(e.from,'out'), p2=portPos(e.to,'in');
     const d=edgePath(p1,p2);
     const flow=node(e.from).status==='running'||node(e.to).status==='running';
     const cond=e.condition&&e.condition.trim()?'conditional':'';
     const isCyclic=(e.maxRetries||0)>0;
-    // For loop (backward) edges, use a curved arc that goes below nodes
     if(e.isLoop){
       const fx=p1.x, fy=p1.y, tx=p2.x, ty=p2.y;
-      const dLoop=`M ${fx} ${fy} C ${fx+60} ${fy+120}, ${tx-60} ${ty+120}, ${tx} ${ty}`;
+      const arc=Math.abs(tx-fx)*0.6+80;
+      const dLoop=`M ${fx} ${fy} C ${fx+arc*0.4} ${fy+arc}, ${tx-arc*0.4} ${ty+arc}, ${tx} ${ty}`;
+      const midLx=(fx+tx)/2, midLy=(fy+ty)/2+arc*0.55;
+      const loopLabel=`<text x="${midLx}" y="${midLy}" text-anchor="middle" fill="#6366f1" font-size="10" font-weight="600" style="pointer-events:none">🔁 ${e._retryCount||0}/${e.maxRetries||5}</text>`;
       return `<path class="edge loop-back" d="${dLoop}" style="stroke:#4f46e5;stroke-dasharray:8 4;fill:none" marker-end="url(#loop-arr)"></path>
-        <path class="edge hit" d="${dLoop}" data-edge="${e.id}" title="Петля: ${esc(e.condition||'всегда')} (${e._retryCount||0}/${e.maxRetries||5})"></path>`;
+        <path class="edge hit" d="${dLoop}" data-edge="${e.id}" title="Петля → ${esc(node(e.to)?.name||'?')} (${e._retryCount||0}/${e.maxRetries||5}): ${esc(e.condition||'всегда')}"></path>${loopLabel}`;
     }
+    const markerEnd=flow?'url(#arr-flow)':isCyclic?'url(#arr-cyclic)':cond?'url(#arr-cond)':'url(#arr)';
     const cyclicStyle=isCyclic?` style="stroke:#f59e0b;stroke-dasharray:8 4 2 4"`:'';
     const midX=(p1.x+p2.x)/2, midY=(p1.y+p2.y)/2;
-    const badge=isCyclic?`<text x="${midX}" y="${midY-6}" text-anchor="middle" fill="#f59e0b" font-size="10" font-family="monospace" style="pointer-events:none">↩${e._retryCount||0}/${e.maxRetries}</text>`:'';
-    return `<path class="edge ${flow?'flow':''} ${isCyclic?'cyclic':cond}" d="${d}"${cyclicStyle}></path><path class="edge hit" d="${d}" data-edge="${e.id}" title="${isCyclic?'Повторы: '+(e._retryCount||0)+'/'+e.maxRetries+(cond?' | Условие: '+esc(e.condition):''):cond?'Условие: '+esc(e.condition):''}"></path>${badge}`; }).join('');
+    const badge=isCyclic?`<text x="${midX}" y="${midY-8}" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="600" style="pointer-events:none">↩${e._retryCount||0}/${e.maxRetries}</text>`:
+      cond?`<text x="${midX}" y="${midY-8}" text-anchor="middle" fill="#a78bfa" font-size="9" style="pointer-events:none">if…</text>`:'';
+    const title=isCyclic?`Повторы: ${e._retryCount||0}/${e.maxRetries}${cond?' | Условие: '+esc(e.condition):''}`:cond?`Условие: ${esc(e.condition)}`:'';
+    return `<path class="edge ${flow?'flow':''} ${isCyclic?'cyclic':cond}" d="${d}"${cyclicStyle} marker-end="${markerEnd}"></path><path class="edge hit" d="${d}" data-edge="${e.id}" title="${title}"></path>${badge}`; }).join('');
 }
 function renderLoopCards(){
   // Remove existing loop cards

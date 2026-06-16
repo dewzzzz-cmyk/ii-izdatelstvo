@@ -173,11 +173,16 @@ button{font-family:inherit}
 
 /* node */
 .node{position:absolute;width:212px;background:linear-gradient(180deg,var(--panel2),var(--panel));
-  border:1px solid var(--line2);border-radius:14px;box-shadow:0 6px 22px rgba(0,0,0,.35);user-select:none;transition:box-shadow .15s,border-color .15s}
+  border:1px solid var(--line2);border-radius:14px;box-shadow:0 6px 22px rgba(0,0,0,.35);user-select:none;transition:box-shadow .15s,border-color .15s;overflow:visible}
 .node:hover{border-color:#454c6e}
 .node.running{border-color:var(--run);box-shadow:0 0 0 1px var(--run),0 0 26px rgba(96,165,250,.3)}
 .node.done{border-color:#1f6b4f}
 .node.error{border-color:var(--err);box-shadow:0 0 0 1px var(--err)}
+/* role color accent — левая полоска */
+.node::before{content:'';position:absolute;left:-1px;top:6px;bottom:6px;width:3px;border-radius:3px;background:var(--rc,var(--accent));opacity:.5;transition:opacity .15s}
+.node:hover::before,.node.running::before,.node.done::before{opacity:1}
+.node.running::before{animation:rc-pulse 1.2s ease-in-out infinite}
+@keyframes rc-pulse{0%,100%{opacity:.6}50%{opacity:1}}
 .node-head{display:flex;align-items:center;gap:9px;padding:11px 12px;cursor:grab}
 .node-head:active{cursor:grabbing}
 .node-emoji{width:34px;height:34px;border-radius:9px;background:var(--panel3);display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
@@ -201,17 +206,24 @@ button{font-family:inherit}
 .deliverable::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px}
 
 /* ports */
-.port{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--panel3);border:2px solid var(--line2);top:23px;cursor:crosshair;z-index:3}
-.port:hover{border-color:var(--accent2);background:var(--accent2)}
-.port.in{left:-8px}
-.port.out{right:-8px}
+.port{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--panel3);border:2px solid var(--line2);top:23px;cursor:crosshair;z-index:3;transition:background .12s,border-color .12s,transform .12s}
+.port:hover{border-color:var(--accent2);background:var(--accent2);transform:scale(1.3)}
+.port.in{left:-8px;background:var(--panel2)}
+.port.in:hover{background:var(--accent2)}
+.port.out{right:-8px;background:var(--accent);border-color:var(--accent);opacity:.75}
+.port.out:hover{opacity:1;transform:scale(1.3)}
+/* port labels */
+.port.in::after{content:'IN';position:absolute;left:16px;top:-1px;font-size:8px;color:var(--faint);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
+.port.out::after{content:'OUT';position:absolute;right:16px;top:-1px;font-size:8px;color:var(--faint);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
+.node:hover .port::after{opacity:1}
 
 /* edges */
-.edge{fill:none;stroke:#4a5280;stroke-width:2.5}
+.edge{fill:none;stroke:#5a6290;stroke-width:2}
 .edge.hit{stroke:transparent;stroke-width:18;cursor:pointer;pointer-events:stroke}
-.edge.flow{stroke:var(--accent2);stroke-width:3;stroke-dasharray:7 6;animation:dash .6s linear infinite}
-.edge.conditional{stroke:#a78bfa;stroke-dasharray:6 4;stroke-width:2.4}
-.edge.cyclic{stroke:#f59e0b;stroke-dasharray:8 4 2 4;stroke-width:2.4}
+.edge.flow{stroke:var(--accent2);stroke-width:2.5;stroke-dasharray:7 6;animation:dash .6s linear infinite}
+.edge.conditional{stroke:#a78bfa;stroke-dasharray:6 4;stroke-width:2}
+.edge.cyclic{stroke:#f59e0b;stroke-dasharray:8 4 2 4;stroke-width:2}
+.edge.loop-back{stroke-width:1.8}
 /* ─── Cyclic Edges ─── */
 .edge-retry-badge{fill:var(--warn);font-size:10px;font-family:monospace}
 /* ---------- NODE GROUPS ---------- */
@@ -1083,8 +1095,10 @@ ins.wd{background:#16361f;color:#86efac;text-decoration:none;border-radius:3px}
 .studio.rail-collapsed{grid-template-columns:0 1fr}
 
 .main-pane{position:relative;min-width:0;overflow:hidden}
-/* viewbar теперь внутри main-pane, поверх абсолютных вкладок */
-.main-pane .viewbar{position:absolute;top:0;left:0;right:0;z-index:5}
+/* viewbar всегда fixed на всю ширину — никаких прыжков при переходах */
+#viewbar{position:fixed!important;left:0!important;right:0!important;top:46px!important;width:auto!important;z-index:25!important}
+/* в не-reader режимах: оставить место под viewbar */
+body:not([data-view="reader"]) #left-rail{padding-top:36px}
 
 /* ── Левая колонка: структура книги + навигация ── */
 .left-rail{background:var(--panel);border-right:1px solid var(--line2);
@@ -1543,16 +1557,6 @@ body[data-view="reader"] .studio{
    Левая и правая панели — position:fixed (как в VS Code).
    Центр (#reader) получает margin чтобы не перекрываться. */
 #right-panel{display:none}
-
-/* Viewbar — фиксированный на всю ширину в reader-режиме */
-body[data-view="reader"] #viewbar{
-  position:fixed!important;
-  left:0!important;
-  right:0!important;
-  top:46px!important;
-  width:auto!important;
-  z-index:25!important;
-}
 
 /* Drag-ресайзеры панелей */
 .pane-resizer{
