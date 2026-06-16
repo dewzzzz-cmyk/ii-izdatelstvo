@@ -1,0 +1,6 @@
+backups/
+docs/
+.claude/
+node_modules/
+*.log
+.env

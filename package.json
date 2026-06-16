@@ -1,1 +1,12 @@
-{"name":"издательство","scripts":{"test":"node test/smoke.cjs"}}
+{
+  "name": "ii-izdatelstvo",
+  "version": "1.0.0",
+  "description": "ИИ-Издательство — многоагентный редактор для написания книг",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/smoke.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
