@@ -62,7 +62,7 @@
 <div class="viewbar" id="viewbar">
   <button class="lr-toggle" id="lr-toggle" data-action="toggle-rail" title="Свернуть/развернуть боковую панель">◀</button>
   <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader" title="Читать готовую книгу">📖 Книга</button>
-  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas" title="Схема агентов — настройте и запустите пайплайн">🗺 Схема</button>
+  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="stage" title="Стадии книги — агенты по этапам">📋 Стадии</button>
   <button class="view-tab" id="tab-simple" data-action="switch-view" data-view="simple" title="Мастер — заполните бриф и ИИ напишет книгу сам">✨ Просто</button>
   <button class="view-tab" id="tab-world" data-action="switch-view" data-view="world" title="Мир книги — персонажи, локации, правила вселенной">🌍 Мир</button>
   <button class="view-tab" id="tab-chapters" data-action="chapters" title="Написать книгу по главам — план и последовательный прогон">📚 Главы</button>
@@ -73,6 +73,7 @@
   <div class="nodes" id="nodes"></div>
   <div class="canvas-hint" id="canvas-hint"></div>
 </div>
+<div id="stage-view" style="display:none"></div>
 
 <div class="reader" id="reader"><div class="reader-inner" id="reader-inner"></div></div>
 <div class="world-view" id="world-view" style="display:none">

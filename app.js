@@ -1443,7 +1443,7 @@ function renderAttention(){
 }
 
 /* ============ РЕНДЕР ============ */
-const _VIEWS=['canvas','reader','simple','world'];
+const _VIEWS=['canvas','stage','reader','simple','world'];
 let _currentView=(()=>{ const h=location.hash.slice(1); if(_VIEWS.includes(h)) return h;
   const hasOutput=(state.nodes||[]).some(n=>n.output&&n.output.trim());
   return hasOutput?'reader':'simple'; })();
@@ -1523,6 +1523,7 @@ function render(){
   if(_panelNodeId){ const pn=node(_panelNodeId); if(pn && pn.status!=='running') refreshNodePanel(); }
   if(_currentView==='reader') renderReader();
   if(_currentView==='simple') renderSimpleProgress();
+  if(_currentView==='stage') renderStageView();
   updateStyleRefBadge();
   renderLeftRail();
   renderBookInspector();
@@ -6255,15 +6256,226 @@ function renderWorldView(){
   });
 }
 
+/* ══════════════════════════════════════════════════════
+   STAGE VIEW — замена pipeline canvas
+══════════════════════════════════════════════════════ */
+const SV_STAGES=[
+  {key:'concept',   label:'Замысел',   emoji:'🔍', roles:['scout','dev']},
+  {key:'structure', label:'Структура', emoji:'🗂', roles:['beatsheet','arch','fanout']},
+  {key:'write',     label:'Написание', emoji:'✍', roles:['writer','humanize','logedit','distill']},
+  {key:'edit',      label:'Редактура', emoji:'🔤', roles:['line','continuity','audit']},
+  {key:'proof',     label:'Вычитка',   emoji:'✅', roles:['proof','factcheck']},
+  {key:'final',     label:'Финал',     emoji:'🎨', roles:['art','layout','meta','mkt']},
+];
+// map template.title → template.role  (freshNode stores role=t.title)
+const _T2R={};
+TEMPLATES.forEach(t=>{_T2R[t.title]=t.role;});
+
+let _svStage='write', _svNodeId=null, _svChapterIdx=-1, _svTab='output', _svDragId=null;
+
+function _svRoleKey(n){ return _T2R[n.role]||n.role||''; }
+function _svNodeStage(n){
+  if(n.svStage) return n.svStage;
+  const rk=_svRoleKey(n);
+  for(const s of SV_STAGES) if(s.roles.includes(rk)) return s.key;
+  return 'write';
+}
+function _svNodesIn(key){ return state.nodes.filter(n=>_svNodeStage(n)===key).sort((a,b)=>(a.svOrder||0)-(b.svOrder||0)); }
+function _svStageSt(key){
+  const ns=_svNodesIn(key); if(!ns.length) return 'empty';
+  if(ns.some(n=>n.status==='running')) return 'running';
+  if(ns.every(n=>['done','skip','error'].includes(n.status))) return 'done';
+  if(ns.some(n=>n.status==='done'||n.status==='error')) return 'partial';
+  return 'idle';
+}
+function _svDotClr(st){ return {done:'var(--ok)',running:'var(--run)',partial:'var(--warn)',idle:'var(--line2)',empty:'var(--line)'}[st]||'var(--line)'; }
+function _svNodeDotClr(st){ return {idle:'var(--line2)',running:'var(--run)',done:'var(--ok)',error:'var(--err)',skip:'var(--faint)',review:'var(--warn)'}[st]||'var(--line2)'; }
+
+function renderStageView(){
+  const wrap=document.getElementById('stage-view'); if(!wrap) return;
+  const curStage=_svStage;
+  const nodes=_svNodesIn(curStage);
+  const selNode=_svNodeId ? state.nodes.find(n=>n.id===_svNodeId) : null;
+  const total=state.nodes.length||1;
+  const doneN=state.nodes.filter(n=>['done','skip'].includes(n.status)).length;
+  const pct=Math.round(doneN/total*100);
+
+  // ── stage rail ──
+  const rail=SV_STAGES.map((s,i)=>{
+    const st=_svStageSt(s.key);
+    const cls=s.key===curStage?'active':(st==='done'?'done':st==='running'?'running':'idle');
+    return `<button class="sv-chip ${cls}" onclick="svSetStage('${s.key}')"><span class="sv-dot" style="background:${_svDotClr(st)}"></span>${s.label}</button>${i<SV_STAGES.length-1?'<span class="sv-arr">›</span>':''}`;
+  }).join('');
+
+  // ── sidebar: chapters + stage agent shortcuts ──
+  const chs=state.chapters||[];
+  const chRows=chs.map((ch,i)=>{
+    const has=!!(state.chapterBook&&state.chapterBook[i]);
+    return `<div class="sv-ch-row${_svChapterIdx===i&&!_svNodeId?' sel':''}" onclick="svSelChapter(${i})">
+      <span class="sv-ch-n">${i+1}</span>
+      <span class="sv-ch-t">${esc(ch.title||'Глава '+(i+1))}</span>
+      <span class="sv-ch-dot" style="background:${has?'var(--ok)':'var(--line2)'}"></span>
+    </div>`;
+  }).join('')||'<div style="padding:8px;font-size:11px;color:var(--faint)">Нет глав</div>';
+
+  const agShortcuts=nodes.map(n=>`
+    <div class="sv-ch-row${n.id===_svNodeId?' sel':''}" onclick="svSelNode('${n.id}')">
+      <span style="font-size:13px;flex-shrink:0">${n.emoji||'🤖'}</span>
+      <span class="sv-ch-t">${esc(n.name)}</span>
+      <span class="sv-ch-dot" style="background:${_svNodeDotClr(n.status)}"></span>
+    </div>`).join('')||'<div style="padding:6px 8px;font-size:11px;color:var(--faint)">Нет агентов</div>';
+
+  // ── center pane ──
+  const docTitle=selNode?esc(selNode.name):_svChapterIdx>=0?esc(chs[_svChapterIdx]?.title||''):'Выберите агента →';
+  const toolbar=selNode?`
+    <div class="sv-seg">
+      <button class="sv-seg-btn${_svTab==='output'?' on':''}" onclick="svSetTab('output')">Результат</button>
+      <button class="sv-seg-btn${_svTab==='prompt'?' on':''}" onclick="svSetTab('prompt')">Промпт</button>
+    </div>
+    <button class="sv-run-btn${selNode.status==='running'?' running':''}" onclick="svRunNode('${selNode.id}')">
+      ${selNode.status==='running'?'⏸ Идёт…':'▶ Запустить'}
+    </button>`:'';
+
+  let centerContent;
+  if(selNode){
+    if(_svTab==='prompt') centerContent=`<div class="sv-output">${esc(selNode.prompt||'(нет промпта)')}</div>`;
+    else if(!selNode.output) centerContent=`<div class="sv-empty-hint">Агент ещё не запускался.<br>Нажмите ▶ Запустить.</div>`;
+    else centerContent=`<div class="sv-output md">${md(selNode.output)}</div>`;
+  } else if(_svChapterIdx>=0){
+    const content=state.chapterBook?.[_svChapterIdx];
+    centerContent=content?`<div class="sv-output md">${md(content)}</div>`:`<div class="sv-empty-hint">Глава «${esc(chs[_svChapterIdx]?.title||'')}» ещё не написана.</div>`;
+  } else {
+    centerContent=`<div class="sv-empty-hint">← Выберите агента в правой панели<br>или главу в списке слева</div>`;
+  }
+
+  // ── right panel: agents in stage ──
+  const agCards=nodes.map(n=>{
+    const dotBg=_svNodeDotClr(n.status);
+    const glow=n.status==='running'?`box-shadow:0 0 5px ${dotBg}`:'';
+    return `<div class="sv-agent-card${n.id===_svNodeId?' sel':''}" draggable="true" data-nid="${n.id}"
+      ondragstart="svDragStart(event,'${n.id}')"
+      ondragover="svDragOver(event)"
+      ondrop="svDrop(event,'${n.id}')"
+      ondragend="svDragEnd(event)"
+      onclick="svSelNode('${n.id}')">
+      <span class="sv-drag-h">⠿</span>
+      <span class="sv-ac-icon">${n.emoji||'🤖'}</span>
+      <div class="sv-ac-info">
+        <div class="sv-ac-name">${esc(n.name)}</div>
+        <div class="sv-ac-sub">${esc(_svRoleKey(n))} · ${n.model||state.global.model||'—'}</div>
+      </div>
+      <span class="sv-ac-st" style="background:${dotBg};${glow}"></span>
+      <button class="sv-ac-del" onclick="event.stopPropagation();svDelAgent('${n.id}')">×</button>
+    </div>`;
+  }).join('')||`<div class="sv-empty-stage">Нет агентов в этой стадии.<br>Нажмите «+ Добавить».</div>`;
+
+  wrap.innerHTML=`
+    <div class="sv-rail">${rail}<div style="flex:1"></div><span style="font-size:10.5px;color:var(--faint)">${doneN}/${state.nodes.length} · ${pct}%</span></div>
+    <div class="sv-body">
+      <div class="sv-sidebar">
+        <div class="sv-sb-head">Главы</div>
+        <div class="sv-sb-list" style="flex:1;max-height:50%">${chRows}</div>
+        <div class="sv-sb-sep"></div>
+        <div class="sv-sb-head">Агенты</div>
+        <div class="sv-sb-list" style="flex:1">${agShortcuts}</div>
+      </div>
+      <div class="sv-main">
+        <div class="sv-doc-bar">
+          <div class="sv-doc-title">${docTitle}</div>
+          ${toolbar}
+        </div>
+        <div class="sv-doc-scroll">${centerContent}</div>
+      </div>
+      <div class="sv-agents">
+        <div class="sv-ap-head">
+          <span class="sv-ap-title">${SV_STAGES.find(s=>s.key===curStage)?.label||''}</span>
+          <button class="sv-ap-add-btn" onclick="svToggleAddPicker()">+ Добавить</button>
+        </div>
+        <div class="sv-agent-list" id="sv-agent-list">${agCards}</div>
+        <div class="sv-stage-run"><button class="sv-run-btn" style="width:100%;justify-content:center" onclick="svRunStage()">▶ Запустить стадию</button></div>
+      </div>
+    </div>
+    <div class="sv-stats">
+      <div class="sv-stat"><span class="sv-ch-dot" style="background:var(--ok)"></span><b>${doneN}</b>&nbsp;готово</div>
+      <div class="sv-stat"><span class="sv-ch-dot" style="background:var(--run)"></span><b>${state.nodes.filter(n=>n.status==='running').length}</b>&nbsp;работает</div>
+      <div class="sv-stat"><span class="sv-ch-dot" style="background:var(--line2)"></span><b>${state.nodes.filter(n=>!n.status||n.status==='idle').length}</b>&nbsp;ожидание</div>
+      <div class="sv-prog"><div class="sv-prog-fill" style="width:${pct}%"></div></div>
+      <span style="font-size:10.5px;color:var(--faint)">${pct}%</span>
+    </div>`;
+}
+
+function svSetStage(key){ _svStage=key; _svNodeId=null; renderStageView(); }
+function svSelNode(id){ _svNodeId=id; _svChapterIdx=-1; _svTab='output'; renderStageView(); }
+function svSelChapter(i){ _svChapterIdx=i; _svNodeId=null; renderStageView(); }
+function svSetTab(tab){ _svTab=tab; renderStageView(); }
+
+async function svRunNode(id){
+  const n=node(id); if(!n) return;
+  if(n.status==='running') return;
+  renderStageView();
+  await runNode(id);
+  renderStageView();
+}
+async function svRunStage(){
+  const ns=_svNodesIn(_svStage);
+  if(!ns.length){ toast('Нет агентов в этой стадии','warn'); return; }
+  renderStageView();
+  await Promise.all(ns.map(n=>runNode(n.id)));
+  renderStageView();
+}
+
+function svToggleAddPicker(){
+  const list=document.getElementById('sv-agent-list'); if(!list) return;
+  const existing=list.querySelector('.sv-add-picker');
+  if(existing){ existing.remove(); return; }
+  const div=document.createElement('div');
+  div.className='sv-add-picker';
+  div.innerHTML=`<div class="sv-add-ph">Выбери агента</div>`+
+    TEMPLATES.map(t=>`<div class="sv-add-tpl" onclick="svPickTemplate('${t.role}')"><span>${t.emoji}</span>${t.name}</div>`).join('')+
+    `<button class="sv-add-cancel" onclick="this.closest('.sv-add-picker').remove()">Отмена</button>`;
+  list.prepend(div);
+}
+function svPickTemplate(roleKey){
+  const t=TEMPLATES.find(tt=>tt.role===roleKey); if(!t) return;
+  const n=freshNode(t,9999,9999);
+  n.svStage=_svStage;
+  const ns=_svNodesIn(_svStage);
+  n.svOrder=ns.length;
+  state.nodes.push(n);
+  save(); renderStageView();
+}
+function svDelAgent(id){
+  if(!confirm('Удалить агента?')) return;
+  state.nodes=state.nodes.filter(n=>n.id!==id);
+  if(_svNodeId===id) _svNodeId=null;
+  save(); renderStageView();
+}
+
+// Drag-and-drop reorder в правой панели
+function svDragStart(e,id){ _svDragId=id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
+function svDragEnd(e){ e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.sv-agent-card').forEach(c=>c.classList.remove('drag-over')); _svDragId=null; }
+function svDragOver(e){ e.preventDefault(); e.dataTransfer.dropEffect='move'; e.currentTarget.classList.add('drag-over'); }
+function svDrop(e,targetId){
+  e.preventDefault();
+  if(!_svDragId||_svDragId===targetId) return;
+  const ns=_svNodesIn(_svStage);
+  ns.forEach((n,i)=>{ n.svOrder=i; });
+  const fi=ns.findIndex(n=>n.id===_svDragId), ti=ns.findIndex(n=>n.id===targetId);
+  if(fi<0||ti<0) return;
+  const tmp=ns[fi].svOrder; ns[fi].svOrder=ns[ti].svOrder; ns[ti].svOrder=tmp;
+  save(); renderStageView();
+}
+
 function switchView(view){
-  if(!_VIEWS.includes(view)) view='canvas';
+  if(!_VIEWS.includes(view)) view='stage';
   _currentView=view;
   // Явное управление display — надёжнее CSS-каскада
-  const canvas=$('#canvas'), reader=$('#reader'), simp=$('#simplified'), world=$('#world-view');
-  if(canvas) canvas.style.display = view==='canvas' ? '' : 'none';
-  if(reader) reader.style.display = view==='reader' ? 'block' : 'none';
-  if(simp)   simp.style.display   = view==='simple'  ? ''     : 'none';
-  if(world)  world.style.display  = view==='world'   ? ''     : 'none';
+  const canvas=$('#canvas'), reader=$('#reader'), simp=$('#simplified'), world=$('#world-view'), stageV=$('#stage-view');
+  if(canvas)  canvas.style.display  = view==='canvas'  ? '' : 'none';
+  if(stageV)  stageV.style.display  = view==='stage'   ? '' : 'none';
+  if(reader)  reader.style.display  = view==='reader'  ? 'block' : 'none';
+  if(simp)    simp.style.display    = view==='simple'  ? ''      : 'none';
+  if(world)   world.style.display   = view==='world'   ? ''      : 'none';
   // data-view на body — для CSS-тем/хуков снаружи
   document.body.dataset.view=view;
   // Табы
@@ -6271,14 +6483,15 @@ function switchView(view){
   if(view==='reader') $('#tab-reader')?.classList.add('active');
   else if(view==='simple') $('#tab-simple')?.classList.add('active');
   else if(view==='world'){ $('#tab-world')?.classList.add('active'); renderWorldView(); }
-  else $('#tab-canvas')?.classList.add('active');
+  else $('#tab-canvas')?.classList.add('active'); // stage или canvas — один таб
   // Сайд-эффекты экранов
   if(view==='reader'){ renderReader(); renderBookInspector(); }
   if(view==='simple') initSimplifiedMode();
-  // CTB-тулбар холста
+  if(view==='stage') renderStageView();
+  // CTB-тулбар холста — только на старом канвасе
   $('#ctb')?.classList.toggle('ctb-visible', view==='canvas');
-  // Сохранение в URL-хэше (кнопка «Назад» работает, ссылка сохраняет вид)
-  if(view==='canvas') history.replaceState(null,'',location.pathname+location.search);
+  // Сохранение в URL-хэше
+  if(view==='canvas'||view==='stage') history.replaceState(null,'',location.pathname+location.search);
   else history.replaceState(null,'',location.pathname+location.search+'#'+view);
 }
 
