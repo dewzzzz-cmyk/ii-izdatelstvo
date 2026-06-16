@@ -3,56 +3,70 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ИИ-Издательство · Конвейер</title>
+<title>ИИ-Издательство</title>
+<meta name="description" content="Локальный ИИ-редактор для написания книг с помощью агентов" />
+<meta name="theme-color" content="#6c63ff" />
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
+<link rel="apple-touch-icon" href="icon-192.svg" />
+<link rel="manifest" href="manifest.json" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body data-view="canvas">
 <header class="topbar">
-  <div class="brand"><span class="brand-dot"></span> ИИ-Издательство</div>
-  <input id="proj-title" class="title-input" placeholder="Название книги…">
-  <span id="style-ref-badge" class="hint-pill" title="Стиль-ориентир задан — агенты пишут в вашем голосе" style="display:none;color:var(--ok)">✍️ стиль</span>
-  <button class="btn primary" data-action="run" id="run-btn" title="Запустить создание книги (команда агентов по порядку)">▶ Запустить</button>
-  <button class="btn danger" data-action="stop" id="stop-btn" style="display:none" title="Остановить создание">■ Стоп</button>
-  <div class="spacer"></div>
-  <span class="hint-pill" id="cost-state" title="Суммарная стоимость токенов">Σ $0.00</span>
-  <span class="hint-pill backup-ok" id="backup-state" title="Статус резервного копирования" style="display:none">💾</span>
-  <span class="hint-pill" id="api-state" title="Статус API-ключа">● ключ не задан</span>
-  <button class="btn ghost" data-action="settings" title="Глобальные настройки: API-ключ, модель, лимиты">⚙ Настройки</button>
+  <div class="tb-left">
+    <div class="brand"><span class="brand-dot"></span></div>
+    <input id="proj-title" class="title-input" placeholder="Название книги…">
+    <span class="tb-chapter-hint" id="tb-chapter-hint"></span>
+  </div>
+  <div class="tb-pipeline" id="tb-pipeline">
+    <span class="tpl-stage active" data-stage="0">Черновик</span>
+    <span class="tpl-arrow">→</span>
+    <span class="tpl-stage" data-stage="1">Редактура</span>
+    <span class="tpl-arrow">→</span>
+    <span class="tpl-stage" data-stage="2">Верстка</span>
+    <span class="tpl-arrow">→</span>
+    <span class="tpl-stage" data-stage="3">Публикация</span>
+  </div>
+  <div class="tb-right">
+    <span id="style-ref-badge" class="hint-pill" title="Стиль задан" style="display:none;color:var(--ok)">✍️</span>
+    <span class="api-dot" id="api-dot" title="API-ключ"></span>
+    <span class="hint-pill api-state-pill" id="api-state" title="Нажмите ⚙ чтобы добавить ключ"></span>
+    <span class="hint-pill" id="cost-state" title="Стоимость">$0.00</span>
+    <span id="backup-state" class="hint-pill backup-ok" style="display:none">💾</span>
+    <button class="btn ghost sm" data-action="new-book" id="topbar-new-book" title="Новая книга">+ Новая</button>
+    <button class="btn primary sm" data-action="run" id="run-btn">▶ Запустить</button>
+    <button class="btn danger sm" data-action="stop" id="stop-btn" style="display:none">■ Стоп</button>
+    <button class="btn ghost sm" data-action="settings" id="settings-btn" title="Настройки API">⚙</button>
+    <button class="btn ghost sm" id="theme-toggle" data-action="toggle-theme" title="Светлая / тёмная тема">☀️</button>
+    <button class="btn ghost sm" id="tb-more-btn" data-action="more-menu" title="Все инструменты">⋯</button>
+  </div>
 </header>
 
 <div class="studio" id="studio">
 <aside class="left-rail" id="left-rail">
   <!-- статический раздел «Проект» — renderLeftRail() его НЕ трогает -->
-  <div id="lr-project">
-    <div class="lr-sec-label">Проект</div>
-    <div class="lrp-field">
-      <label for="proj-genre">Жанр</label>
-      <select id="proj-genre">
-        <option value="">— выбрать жанр —</option>
-      </select>
-    </div>
-    <div class="lrp-field">
-      <label for="proj-aud">Аудитория</label>
-      <input id="proj-aud" placeholder="взрослые 25-45, подростки…">
-    </div>
-    <div class="lrp-field">
-      <label for="proj-brief">О чём книга</label>
-      <textarea id="proj-brief" rows="3" placeholder="Кто герой, в чём конфликт, чем заканчивается"></textarea>
-    </div>
-    <label class="lrp-toggle" title="Включить если хотите улучшить готовый текст, а не писать с нуля">
-      <input type="checkbox" id="proj-edit-mode"> 📄 Редактировать исходник
+  <div id="lr-project" style="display:none">
+    <select id="proj-genre" class="field-input" style="width:100%;margin-bottom:6px">
+      <option value="">— жанр —</option>
+    </select>
+    <input id="proj-aud" class="field-input" placeholder="Аудитория" style="width:100%;margin-bottom:6px">
+    <textarea id="proj-brief" class="field-input" placeholder="Бриф / идея книги" rows="3" style="width:100%;margin-bottom:6px;resize:vertical"></textarea>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer">
+      <input type="checkbox" id="proj-edit-mode"> Режим редактирования
     </label>
   </div>
   <!-- динамический раздел — renderLeftRail() пишет сюда -->
-  <div id="lr-body"><!-- заполняется renderLeftRail() --></div>
+  <div id="lr-body"></div>
 </aside>
 <div class="main-pane" id="main-pane">
 <div class="viewbar" id="viewbar">
   <button class="lr-toggle" id="lr-toggle" data-action="toggle-rail" title="Свернуть/развернуть боковую панель">◀</button>
-  <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader">📖 Книга</button>
-  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas">🗺 Схема</button>
-  <button class="view-tab" id="tab-simple" data-action="switch-view" data-view="simple">✨ Просто</button>
-  <button class="view-tab" id="tab-world" data-action="switch-view" data-view="world">🌍 Мир</button>
+  <button class="view-tab" id="tab-reader" data-action="switch-view" data-view="reader" title="Читать готовую книгу">📖 Книга</button>
+  <button class="view-tab active" id="tab-canvas" data-action="switch-view" data-view="canvas" title="Схема агентов — настройте и запустите пайплайн">🗺 Схема</button>
+  <button class="view-tab" id="tab-simple" data-action="switch-view" data-view="simple" title="Мастер — заполните бриф и ИИ напишет книгу сам">✨ Просто</button>
+  <button class="view-tab" id="tab-world" data-action="switch-view" data-view="world" title="Мир книги — персонажи, локации, правила вселенной">🌍 Мир</button>
+  <button class="view-tab" id="tab-chapters" data-action="chapters" title="Написать книгу по главам — план и последовательный прогон">📚 Главы</button>
+  <button class="view-tab" id="zen-btn" data-action="zen-mode" title="Zen-режим: только текст">🧘</button>
 </div>
 <div class="canvas" id="canvas">
   <svg class="edges" id="edges"></svg>
@@ -77,6 +91,20 @@
 
     <!-- Шаг 1: О книге -->
     <div class="wiz-panel" id="wiz-step-1">
+<div class="wiz-type-row" id="wiz-type-row">
+  <div class="wiz-type-card active" data-wtype="fiction">
+    <span class="wtc-ic">📖</span><span class="wtc-lbl">Художественная</span>
+    <span class="wtc-sub">роман, рассказ, фэнтези</span>
+  </div>
+  <div class="wiz-type-card" data-wtype="nonfiction">
+    <span class="wtc-ic">📊</span><span class="wtc-lbl">Нон-фикшн</span>
+    <span class="wtc-sub">бизнес, саморазвитие, практикум</span>
+  </div>
+  <div class="wiz-type-card" data-wtype="adaptation">
+    <span class="wtc-ic">📄</span><span class="wtc-lbl">Адаптация</span>
+    <span class="wtc-sub">сценарий, интервью, черновик</span>
+  </div>
+</div>
       <h2 class="simp-title">Расскажите о своей книге</h2>
       <div class="simp-field">
         <label>📖 Название</label>
@@ -85,6 +113,10 @@
       <div class="simp-field">
         <label>🎭 О чём книга <span class="required">*</span></label>
         <textarea id="simp-brief" rows="4" placeholder="Кто главный герой, в чём конфликт, что происходит. Чем подробнее — тем лучше получится книга."></textarea>
+      </div>
+      <div class="simp-field" id="wiz-src-wrap" style="display:none">
+        <label>📋 Исходный материал</label>
+        <textarea id="simp-source" rows="5" placeholder="Вставьте сценарий, интервью, заметки или черновик. Агенты структурируют и дорабатывают его."></textarea>
       </div>
       <div class="simp-row">
         <div class="simp-field">
@@ -100,8 +132,14 @@
         <label>📏 Объём</label>
         <div class="simp-tpl-row" id="simp-tpl-row"><!-- шаблоны --></div>
       </div>
+      <div class="wiz-key-warn" id="wiz-key-warn">
+  ⚡ Для запуска нужен API-ключ
+  <button class="btn ghost xs wkw-btn" data-action="settings">Настроить →</button>
+  <span class="wkw-hint">DeepSeek — ~$0.01 за рассказ, ключ на platform.deepseek.com</span>
+</div>
       <button class="btn primary lg" id="wiz-next-1">Далее: создать замысел →</button>
-      <button class="btn ghost sm simp-expert" id="simp-to-expert">Перейти в режим эксперта</button>
+      <p class="wiz-timing-hint">⏱ Создание замысла ~20 сек · Написание книги ~10-20 мин · ~$0.10-0.40 при DeepSeek</p>
+      <button class="btn ghost sm simp-expert simp-to-expert">Перейти в режим эксперта</button>
     </div>
 
     <!-- Шаг 2: Замысел (персонажи, мир, повороты) -->
@@ -113,6 +151,7 @@
         <button class="btn ghost" id="wiz-back-1">← Назад</button>
         <button class="btn ghost" id="wiz-regen">🔄 Перегенерировать</button>
         <button class="btn primary lg" id="wiz-next-2">Всё верно — писать книгу! →</button>
+        <p class="wiz-timing-hint">⏱ Обычно 10-20 мин · прогресс сохраняется, можно закрыть и вернуться</p>
       </div>
     </div>
 
@@ -120,14 +159,26 @@
     <div class="wiz-panel" id="wiz-step-3" style="display:none">
       <h2 class="simp-title" id="wiz-running-title">Команда агентов пишет книгу…</h2>
       <div class="simp-progress" id="simp-progress"></div>
-      <button class="btn ghost sm" id="simp-to-expert" style="margin-top:16px">Посмотреть процесс на схеме</button>
+      <button class="btn ghost sm simp-to-expert" style="margin-top:16px">Посмотреть процесс на схеме</button>
     </div>
-    <div class="simp-progress" id="simp-progress" style="display:none"></div>
   </div>
 </div>
 </div><!-- /#main-pane -->
-<aside class="book-inspector" id="book-inspector"><!-- renderBookInspector() пишет сюда; виден только в view=reader --></aside>
+<aside class="right-panel" id="right-panel">
+  <div class="rp-header">
+    <span class="rp-title">✦ Соавтор</span>
+    <span class="rp-sub">помнит весь роман</span>
+    <button class="icon-btn rp-collapse" id="rp-collapse" title="Свернуть">›</button>
+  </div>
+  <div class="rp-hints" id="rp-hints"><!-- заполняется JS --></div>
+  <div class="rp-actions">
+    <button class="btn ghost sm rp-act" data-rpact="continue">→ Продолжить мысль</button>
+    <button class="btn ghost sm rp-act" data-rpact="twist">✦ Предложить поворот</button>
+    <button class="btn ghost sm rp-act" data-rpact="check">🗸 Проверить главу</button>
+  </div>
+</aside>
 </div><!-- /#studio -->
+<div id="book-inspector" style="display:none"></div>
 <div id="attention-bar" class="attention-bar" style="display:none"></div>
 <div class="completion-banner" id="completion-banner" style="display:none">
   <div class="cb-text">✅ <span id="cb-stats">Книга готова!</span></div>
@@ -137,16 +188,21 @@
     <button class="btn ghost sm" id="cb-docx" title="Для Литрес">📄 Word</button>
     <button class="btn ghost sm" id="cb-epub" title="Для KDP">📗 EPUB</button>
     <button class="btn ghost sm" id="cb-next" title="Как опубликовать книгу">Что дальше?</button>
+    <button class="btn ghost sm" id="cb-antiplagiat" title="Скопировать текст и открыть сервис проверки на плагиат">🔍 Антиплагиат</button>
+    <button class="btn ok sm" id="cb-new-book" title="Начать новую книгу">➕ Новая книга</button>
     <button class="btn ghost sm" id="cb-series-update" style="display:none">💾 Обновить Библию серии</button>
     <button class="icon-btn" id="cb-dismiss" title="Закрыть">✕</button>
   </div>
 </div>
-<div class="drawer-scrim" id="scrim"></div>
-<section class="drawer" id="drawer" aria-hidden="true">
-  <header class="drawer-head"><div class="drawer-title" id="drawer-title">—</div>
-    <button class="icon-btn" id="drawer-close">✕</button></header>
-  <div class="drawer-body" id="drawer-body"></div>
-</section>
+<div class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-modal">
+    <header class="drawer-head">
+      <div class="drawer-title" id="drawer-title">—</div>
+      <button class="icon-btn" id="drawer-close">✕</button>
+    </header>
+    <div class="drawer-body" id="drawer-body"></div>
+  </div>
+</div>
 <aside class="node-panel" id="node-panel" aria-hidden="true"></aside>
 
 <div class="toast" id="toast"></div>
