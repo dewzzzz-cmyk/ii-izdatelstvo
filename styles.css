@@ -1544,6 +1544,16 @@ body[data-view="reader"] .studio{
    Центр (#reader) получает margin чтобы не перекрываться. */
 #right-panel{display:none}
 
+/* Viewbar — фиксированный на всю ширину в reader-режиме */
+body[data-view="reader"] #viewbar{
+  position:fixed!important;
+  left:0!important;
+  right:0!important;
+  top:46px!important;
+  width:auto!important;
+  z-index:25!important;
+}
+
 /* Левая панель — фиксированная */
 body[data-view="reader"] #left-rail{
   position:fixed!important;
