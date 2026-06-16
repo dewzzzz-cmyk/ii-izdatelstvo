@@ -136,7 +136,8 @@ function defaultState(){
     global:{ baseURL:'https://api.deepseek.com', apiKey:'', apiKeys:'', model:'deepseek-chat', temperature:1.0,
       maxContextChars:24000, maxRetries:2, costCapUSD:0, proxyToken:'', autoSummarize:false, autoBibleExtract:false, autoDistill:false, autoEval:false, approvalTimeoutMin:0, fallbackURL:'',
       backupDir:'', autoBackup:true, backupIntervalMin:10, lastBackupTs:0, gdriveClientId:'', gdriveLastBackup:null, banList:'',
-      maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'', minAcceptScore:7 },
+      maxConcurrent:3, onErrorPolicy:'continue', judgeModel:'', judgeBaseURL:'', judgeApiKey:'', minAcceptScore:7,
+      leftRailW:220, rightPanelW:260 },
     nodes, edges };
 }
 let state=load(); rebuildBibleVecs();
@@ -6698,6 +6699,45 @@ function applyZoom(){
   [nodesEl,edgesEl].forEach(el=>{ if(el){ el.style.transformOrigin='0 0'; el.style.transform=`scale(${s})`; } });
 }
 
+/* ── Panel resize ── */
+function applyPanelWidths(){
+  const lw=state.global.leftRailW||220;
+  const rw=state.global.rightPanelW||260;
+  document.documentElement.style.setProperty('--lrw',lw+'px');
+  document.documentElement.style.setProperty('--rpw',rw+'px');
+}
+function initPanelResizers(){
+  if(document.getElementById('resizer-left')) return;
+  ['left','right'].forEach(side=>{
+    const el=document.createElement('div');
+    el.id='resizer-'+side; el.className='pane-resizer';
+    document.body.appendChild(el);
+    el.addEventListener('mousedown',e=>{
+      e.preventDefault();
+      const isLeft=side==='left';
+      const startX=e.clientX;
+      const startW=isLeft?(state.global.leftRailW||220):(state.global.rightPanelW||260);
+      el.classList.add('is-dragging');
+      const onMove=mv=>{
+        const delta=isLeft?mv.clientX-startX:startX-mv.clientX;
+        const max=Math.floor((window.innerWidth-300)/2);
+        const w=Math.max(160,Math.min(max,startW+delta));
+        if(isLeft) state.global.leftRailW=w; else state.global.rightPanelW=w;
+        applyPanelWidths();
+      };
+      const onUp=()=>{
+        el.classList.remove('is-dragging');
+        save();
+        document.removeEventListener('mousemove',onMove);
+        document.removeEventListener('mouseup',onUp);
+      };
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onUp);
+    });
+  });
+  applyPanelWidths();
+}
+
 /* ── Fit screen (visual-only: pick scale + scroll, do NOT move nodes) ── */
 function ctbFitScreen(){
   if(!state.nodes.length) return;
@@ -6915,6 +6955,8 @@ function initCtb(){
 }
 
 initCtb();
+initPanelResizers();
+applyPanelWidths();
 localStorage.removeItem('izd_view'); // очищаем устаревший ключ
 switchView(_currentView);
 

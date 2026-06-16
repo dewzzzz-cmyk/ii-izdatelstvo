@@ -1554,12 +1554,39 @@ body[data-view="reader"] #viewbar{
   z-index:25!important;
 }
 
+/* Drag-ресайзеры панелей */
+.pane-resizer{
+  position:fixed;
+  top:82px;
+  bottom:0;
+  width:6px;
+  cursor:col-resize;
+  z-index:30;
+  background:transparent;
+}
+.pane-resizer::after{
+  content:'';
+  position:absolute;
+  top:0;bottom:0;
+  left:2px;width:2px;
+  background:var(--line2);
+  transition:background .15s,opacity .15s;
+  opacity:0;
+}
+.pane-resizer:hover::after,.pane-resizer.is-dragging::after{
+  background:var(--accent);
+  opacity:1;
+}
+#resizer-left{ left:var(--lrw,220px);transform:translateX(-3px) }
+#resizer-right{ right:var(--rpw,260px);transform:translateX(3px) }
+body:not([data-view="reader"]) .pane-resizer{display:none!important}
+
 /* Левая панель — фиксированная */
 body[data-view="reader"] #left-rail{
   position:fixed!important;
   left:0;
   top:82px;
-  width:220px;
+  width:var(--lrw,220px);
   height:calc(100vh - 82px);
   display:flex!important;
   flex-direction:column;
@@ -1587,7 +1614,7 @@ body[data-view="reader"] #right-panel{
   position:fixed!important;
   right:0;
   top:82px;
-  width:260px;
+  width:var(--rpw,260px);
   height:calc(100vh - 82px);
   display:flex!important;
   flex-direction:column;
@@ -1600,8 +1627,8 @@ body[data-view="reader"] #right-panel{
 /* Центральный редактор — отступы для панелей */
 body[data-view="reader"] .reader{
   position:fixed!important;
-  left:220px!important;
-  right:260px!important;
+  left:var(--lrw,220px)!important;
+  right:var(--rpw,260px)!important;
   top:82px!important;
   bottom:0!important;
   overflow-y:auto!important;
