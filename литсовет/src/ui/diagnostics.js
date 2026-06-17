@@ -6,12 +6,37 @@ import { RUBRIC_AXES } from '../agents.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий' };
+const SEV_RANK = { critical:0, warning:1, ok:2 };
+
+function renderFlags(scene){
+  if(!scene || !scene.flags) return '';
+  const all = [];
+  Object.entries(scene.flags).forEach(([role,arr])=>{ (arr||[]).forEach(f=>all.push({...f, role})); });
+  if(!all.length) return '';
+  all.sort((a,b)=>(SEV_RANK[a.severity]??1)-(SEV_RANK[b.severity]??1));
+  const crit = all.filter(f=>f.severity==='critical').length;
+  const warn = all.filter(f=>f.severity==='warning').length;
+  return `<div class="ph">Флаги сцены <span style="font-weight:400;text-transform:none;letter-spacing:0">${crit?crit+' критич':''}${crit&&warn?', ':''}${warn?warn+' предупр':''}${!crit&&!warn?'норма':''}</span></div>
+    <div class="flags-list">
+      ${all.map(f=>`<div class="flag-item">
+        <div class="flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span>
+          <span class="flag-role">${GUARD_LABELS[f.role]||f.role}</span></div>
+        <div class="flag-title">${esc(f.title)}</div>
+        ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
+        ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
+      </div>`).join('')}
+    </div>`;
+}
+
 export function renderDiagnostics(){
   const s = getState();
   const agents = s.agents||[];
   const runs = getRuns();
+  const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
   setTimeout(bindToggles, 0);
   return `
+    ${renderFlags(activeScene)}
     <div class="ph">Агенты <span style="font-weight:400;text-transform:none;letter-spacing:0">диагностика</span></div>
     <div class="diag-section">
       ${agents.map(a=>`

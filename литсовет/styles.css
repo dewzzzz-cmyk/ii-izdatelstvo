@@ -160,6 +160,19 @@ textarea{resize:vertical;min-height:60px}
 .mem-rb{margin-top:4px;font-size:11px;padding:2px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text-2)}
 .mem-rb:hover{background:var(--surface)}
 
+/* ── Flags (guards) ── */
+.flags-list{padding:0}
+.flag-item{padding:7px 12px;border-bottom:1px solid var(--border)}
+.flag-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.flag-sev{font-size:9px;padding:2px 6px;border-radius:8px;font-weight:600}
+.sev-critical{background:var(--err-bg);color:var(--err)}
+.sev-warning{background:var(--warn-bg);color:var(--warn)}
+.sev-ok{background:var(--ok-bg);color:var(--ok)}
+.flag-role{font-size:10px;color:var(--text-3)}
+.flag-title{font-size:12px;font-weight:500}
+.flag-detail{font-size:11px;color:var(--text-2);line-height:1.45;margin-top:2px}
+.flag-quote{font-size:11px;color:var(--text-2);font-style:italic;background:var(--surface-2);border-left:2px solid var(--ok-border);padding:3px 8px;margin-top:4px;border-radius:0 4px 4px 0}
+
 /* ── Modal ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100}
 .modal{background:var(--surface);border-radius:var(--radius-lg);padding:18px;width:420px;max-width:90vw}

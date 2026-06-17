@@ -266,6 +266,7 @@ export function renderWrite(els){
       });
       scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
       scene.lastEval=result.eval||null;
+      scene.flags=result.flags||{};
       save();
       // Суммаризация после одобрения (сжатие в память) + проверка дрейфа
       btn.innerHTML='<span class="spinner"></span> Суммаризация…';

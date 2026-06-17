@@ -6,11 +6,17 @@ import { callLLM } from './llm.js';
 import { buildSceneContext } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator } from './agents.js';
+import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
+         lineEditMessages, runGuardParse } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
+
+let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 
 // Запустить пайплайн для одной сцены. Возвращает {text, eval, runId}.
 // onProgress({stage, text}) — для UI стрима.
 export async function runScene(state, scene, opts={}, onProgress){
+  if(_running) throw new Error('Уже идёт прогон — дождитесь завершения.');
+  _running = true;
   const g = state.global;
   const llmBase = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
   const prevSceneText = opts.prevSceneText || prevDoneSceneText(state, scene);
@@ -74,12 +80,50 @@ export async function runScene(state, scene, opts={}, onProgress){
       directive = fix.join('; ') || directive;
     }
 
+    // ── 3. Стражи (параллельно) — только флагуют, не переписывают ──
+    const flags = {};
+    const guardJobs = [];
+    if(agentEnabled('voiceguard')) guardJobs.push(guardJob('voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples), flags));
+    if(agentEnabled('logic'))      guardJobs.push(guardJob('logic', llmBase, logicGuardMessages(state, scene, best), flags));
+    if(agentEnabled('events'))     guardJobs.push(guardJob('events', llmBase, eventsGuardMessages(state, scene, best), flags));
+    if(guardJobs.length){
+      onProgress && onProgress({stage:'guards', text:'Стражи проверяют сцену…'});
+      await Promise.all(guardJobs);
+    }
+
+    // ── 4. Линейный редактор (опц.) — единственный, кто правит текст ──
+    if(agentEnabled('lineedit')){
+      onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
+      try{
+        const leRes = await callLLM({ ...llmBase, temperature:0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:1600 });
+        if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
+          logStep({ agent:'lineedit', input:'(черновик)', output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
+          best = leRes.text;
+        }
+      }catch(e){ logStep({ agent:'lineedit', output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message }); }
+    }
+
     const run = endRun('done');
-    return { text: best || '', eval: bestEval, runId, run };
+    return { text: best || '', eval: bestEval, flags, runId, run };
   } catch(e){
     logStep({ agent:'error', output: e.message });
     const run = endRun('error');
     throw Object.assign(e, { runId, run });
+  } finally {
+    _running = false;
+  }
+}
+
+// Запуск одного Стража с устойчивостью к падению (спека 11: не валим весь прогон).
+async function guardJob(role, llmBase, messages, flagsOut){
+  try{
+    const res = await callLLM({ ...llmBase, temperature:0.2, messages, maxTokens:700 });
+    const flags = runGuardParse(res.text);
+    flagsOut[role] = flags;
+    logStep({ agent:role, input:'(черновик)', output:res.text, flags, tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost });
+  }catch(e){
+    flagsOut[role] = [];
+    logStep({ agent:role, output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message });
   }
 }
 
