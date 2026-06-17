@@ -7,6 +7,13 @@
       "runtimeArgs": ["server.js"],
       "port": 8787,
       "autoPort": false
+    },
+    {
+      "name": "litsovet",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["литсовет/server.js"],
+      "port": 8788,
+      "autoPort": false
     }
   ]
 }

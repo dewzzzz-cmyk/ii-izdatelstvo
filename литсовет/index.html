@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Литсовет</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header class="rail">
+    <div class="brand">Литсовет</div>
+    <nav class="stages" id="stages"></nav>
+    <div class="rail-right">
+      <span class="proj-meta" id="projMeta"></span>
+      <button class="icon-btn" id="settingsBtn" title="Настройки">⚙</button>
+    </div>
+  </header>
+  <main class="body" id="body">
+    <section class="panel panel-left" id="panelLeft"></section>
+    <div class="divider" data-divider="left"></div>
+    <section class="panel panel-center" id="panelCenter"></section>
+    <div class="divider" data-divider="right"></div>
+    <section class="panel panel-right" id="panelRight"></section>
+  </main>
+</div>
+<div id="modalRoot"></div>
+<script type="module" src="src/ui/app.js"></script>
+</body>
+</html>
