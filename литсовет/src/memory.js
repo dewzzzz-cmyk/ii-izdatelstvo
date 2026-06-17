@@ -97,12 +97,20 @@ export async function summarizeScene(state, scene){
     ch.stateNote = c.state || ch.stateNote;
   });
 
-  // новые факты в Bible
+  // новые факты в Bible — дедуп по СХОДСТВУ (не только точному совпадению) + лимит
   let added = 0;
   parsed.facts.forEach(f=>{
-    const exists = state.bible.some(b=>(b.text||'').toLowerCase()===(f.text||'').toLowerCase());
-    if(!exists){ state.bible.push({ keys:f.keys||'', text:f.text }); added++; }
+    if(!f.text) return;
+    const fvec = tfvec(tokensOf((f.keys||'')+' '+f.text));
+    const dup = state.bible.some(b=>{
+      if((b.text||'').toLowerCase()===f.text.toLowerCase()) return true;
+      const bv = b._vec || tfvec(tokensOf((b.keys||'')+' '+(b.text||'')));
+      return cosine(fvec, bv) > 0.6; // близкий по смыслу факт уже есть
+    });
+    if(!dup){ state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); added++; }
   });
+  // лимит размера Bible (защита от раздувания на длинной книге): держим последние 300
+  if(state.bible.length > 300) state.bible.splice(0, state.bible.length-300);
   if(added) rebuildBibleVecs(state.bible);
 
   return { summary: parsed.summary, charUpdates: parsed.characters.length, factsAdded: added };

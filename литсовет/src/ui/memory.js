@@ -4,6 +4,7 @@
 import { getState, save } from '../state.js';
 import { rollback } from '../memory.js';
 import { storageEstimate } from '../storage.js';
+import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -18,6 +19,8 @@ export function renderMemory(){
     <div class="ph">Память книги</div>
     <div class="pad" style="padding:10px 12px">
       <div id="quota" class="muted" style="margin-bottom:8px">квота…</div>
+
+      ${renderCalibration(s)}
 
       <div class="mem-h">Сводки сцен (${sceneSums.length})</div>
       ${sceneSums.length ? sceneSums.map(n=>{
@@ -43,6 +46,38 @@ export function renderMemory(){
     </div>`;
 }
 
+function renderCalibration(s){
+  const cal = s.global.calibration||{ratings:[]};
+  const pending = uncalibratedScenes(s).length;
+  const adj = cal.lastAdjust;
+  return `<div class="mem-h">Калибровка вкуса</div>
+    <div class="mem-card">
+      <div class="muted" style="font-size:11px;margin-bottom:6px">Оцените прозу вслепую — порог Оценщика подстроится под ваш вкус (а не висит на «7/10»).</div>
+      <div style="font-size:12px;margin-bottom:6px">Оценок: <b>${cal.ratings.length}</b>${adj?` · порог сейчас <b>${adj.threshold}</b> (вы ${adj.authorAvg} / ИИ ${adj.evalAvg})`:` · порог <b>${s.global.evaluatorThreshold??7}</b>`}</div>
+      <button class="btn ${pending?'btn-primary':''}" id="calBtn" ${pending?'':'disabled'}>${pending?`Оценить сцену вслепую (${pending})`:'Нет новых сцен'}</button>
+    </div>`;
+}
+
+function openBlindRating(){
+  const s = getState();
+  const scenes = uncalibratedScenes(s);
+  if(!scenes.length) return;
+  const scene = scenes[scenes.length-1]; // самая свежая
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `<div class="modal-bg" id="calBg"><div class="modal" style="width:560px;max-width:92vw" onclick="event.stopPropagation()">
+    <h2>Слепая оценка · «${esc(scene.title)}»</h2>
+    <div class="muted" style="margin-bottom:8px">Прочитайте без оценки ИИ. Насколько это хорошая проза (1–10)?</div>
+    <div style="max-height:300px;overflow-y:auto;font-size:13px;line-height:1.7;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:12px">${esc(scene.text)}</div>
+    <div class="cal-scale" id="calScale">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="cal-n" data-n="${n}">${n}</button>`).join('')}</div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('calBg').onclick=close;
+  document.querySelectorAll('.cal-n').forEach(b=>b.onclick=()=>{
+    const adj = recordRating(scene.id, parseInt(b.dataset.n));
+    close();
+  });
+}
+
 function driftBlock(scenes){
   const flagged = scenes.filter(n=>Array.isArray(n.drift) && n.drift.length);
   if(!flagged.length) return '';
@@ -54,6 +89,7 @@ function driftBlock(scenes){
 }
 
 function bindMemory(){
+  const cb=document.getElementById('calBtn'); if(cb) cb.onclick=openBlindRating;
   document.querySelectorAll('.mem-sum').forEach(t=>{
     t.addEventListener('change', ()=>{
       const s=getState(); const e=s.memory[t.dataset.level]?.[t.dataset.id];

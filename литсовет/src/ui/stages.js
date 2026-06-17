@@ -16,6 +16,7 @@ import { importSeriesBook } from '../series.js';
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 let _rightTab = 'diag'; // diag | mem
+let _busy = false;       // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
 function renderRightPanel(els){
   els.right.innerHTML = `
     <div class="rtabs">
@@ -204,7 +205,10 @@ export function renderStructure(els){
     const name=document.getElementById('scName').value.trim();
     const brief=document.getElementById('scBrief').value.trim();
     if(!name && !brief) return;
-    s.structure.push({ id:uid('sc'), type:'scene', title:name||'Без названия', brief, emotion:document.getElementById('scEmo').value.trim(), text:'', words:0, status:'todo', targetWords:700 });
+    // привязываем к последней главе (или создаём главу), иначе авторский контроль отключается
+    let lastCh = [...s.structure].reverse().find(n=>n.type==='chapter');
+    if(!lastCh){ lastCh={ id:uid('ch'), type:'chapter', title:'Глава 1', arc:'завязка' }; s.structure.push(lastCh); }
+    s.structure.push({ id:uid('sc'), type:'scene', chapterId:lastCh.id, title:name||'Без названия', brief, emotion:document.getElementById('scEmo').value.trim(), text:'', words:0, status:'todo', targetWords:700 });
     save();
   };
 
@@ -270,7 +274,7 @@ export function renderWrite(els){
   const scene = scenes.find(x=>x.id===s.ui.activeScene);
 
   els.left.innerHTML = `<div class="ph">Сцены</div>${renderSceneList(s)}`;
-  els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; save(); });
+  els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ if(_busy){ return; } s.ui.activeScene=r.dataset.sc; save(); });
 
   const ch = chapterOf(s, scene);
   const showStop = ch && chapterComplete(s, ch.id) && !chapterClosed(s, ch.id);
@@ -411,7 +415,10 @@ function renderEditorialStop(s, ch){
 
 async function doRun(els, s, scene, directive){
   const g=s.global;
+  if(_busy) return;
   if(!g.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+  _busy = true;
+  document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='0.5');
   scene.brief=document.getElementById('brief').value.trim();
   const btn=document.getElementById('runBtn'); btn.disabled=true;
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
@@ -427,7 +434,7 @@ async function doRun(els, s, scene, directive){
     try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }
     catch(e){ console.warn('summarize failed', e); }
   }catch(e){ ed.textContent='Ошибка: '+e.message; }
-  finally{ btn.disabled=false; }
+  finally{ btn.disabled=false; _busy=false; document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity=''); }
 }
 
 // Плавающее меню по выделению текста → директива, привязанная к фрагменту.

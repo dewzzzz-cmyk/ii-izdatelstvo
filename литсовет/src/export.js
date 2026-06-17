@@ -41,9 +41,9 @@ class ZipBuilder{
   }
 }
 
+const xesc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function paraXhtml(text){
-  const e=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  return typo(text).split(/\n{1,}/).filter(p=>p.trim()).map(p=>`<p>${e(p.trim())}</p>`).join('\n');
+  return typo(text).split(/\n{1,}/).filter(p=>p.trim()).map(p=>`<p>${xesc(p.trim())}</p>`).join('\n');
 }
 
 // ── Собрать главы→сцены в структуру для экспорта ──
@@ -80,9 +80,9 @@ export function exportMd(state){
 // ── .docx (HTML-in-DOC) ──
 export function exportDocx(state){
   const book = buildBook(state);
-  let body = `<h1>${book.title}</h1>`;
+  let body = `<h1>${xesc(book.title)}</h1>`;
   for(const ch of book.chapters){
-    if(ch.title) body += `<h2>${ch.title}</h2>`;
+    if(ch.title) body += `<h2>${xesc(ch.title)}</h2>`;
     for(const sc of ch.scenes){ body += paraXhtml(sc.text); }
   }
   const html = `<html xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body>${body}</body></html>`;
@@ -101,7 +101,7 @@ export function exportEpub(state){
   const items=[], spine=[], nav=[];
   book.chapters.forEach((ch,i)=>{
     const id='ch'+(i+1), file='chapters/'+id+'.xhtml';
-    const title = ch.title || ('Глава '+(i+1));
+    const title = xesc(ch.title || ('Глава '+(i+1)));
     const body = (ch.title?`<h2>${title}</h2>`:'') + ch.scenes.map(sc=>paraXhtml(sc.text)).join('\n<hr/>\n');
     zip.add('OEBPS/'+file, `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title><link rel="stylesheet" href="style.css"/></head><body>${body}</body></html>`);
@@ -117,7 +117,7 @@ export function exportEpub(state){
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="bid">urn:uuid:litsovet-${book.chapters.length}</dc:identifier>
-<dc:title>${book.title}</dc:title><dc:language>ru</dc:language></metadata>
+<dc:title>${xesc(book.title)}</dc:title><dc:language>ru</dc:language></metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
 <item id="css" href="style.css" media-type="text/css"/>${items.join('')}</manifest>
 <spine>${spine.join('')}</spine></package>`);

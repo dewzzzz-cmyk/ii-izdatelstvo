@@ -25,8 +25,18 @@ function renderFlags(scene){
         <div class="flag-title">${esc(f.title)}</div>
         ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
         ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
+        ${f.severity!=='ok'?`<button class="flag-fix" data-fix="${esc(f.title+': '+f.detail)}">→ Прозаику</button>`:''}
       </div>`).join('')}
     </div>`;
+}
+
+function bindFlagFix(){
+  document.querySelectorAll('.flag-fix').forEach(b=>b.onclick=()=>{
+    const inp=document.getElementById('directive');
+    if(inp){ inp.value=b.dataset.fix; inp.focus(); inp.scrollIntoView({block:'center'});
+      const re=document.getElementById('reRun'); if(re){ re.classList.add('btn-primary'); }
+    }
+  });
 }
 
 export function renderDiagnostics(){
@@ -34,7 +44,7 @@ export function renderDiagnostics(){
   const agents = s.agents||[];
   const runs = getRuns();
   const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
-  setTimeout(bindToggles, 0);
+  setTimeout(()=>{ bindToggles(); bindFlagFix(); }, 0);
   return `
     ${renderFlags(activeScene)}
     <div class="ph">Агенты <span style="font-weight:400;text-transform:none;letter-spacing:0">диагностика</span></div>
