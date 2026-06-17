@@ -24,7 +24,7 @@ body{font-family:var(--font);font-size:14px;color:var(--text);background:var(--b
 button{font-family:inherit;cursor:pointer}
 textarea,input,select{font-family:inherit;font-size:13px}
 
-#app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden;position:relative}
 
 /* ── Rail ── */
 .rail{display:flex;align-items:center;gap:14px;padding:0 16px;height:48px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
@@ -159,6 +159,21 @@ textarea{resize:vertical;min-height:60px}
 .mem-sum{width:100%;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;resize:vertical;min-height:36px}
 .mem-rb{margin-top:4px;font-size:11px;padding:2px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text-2)}
 .mem-rb:hover{background:var(--surface)}
+
+/* ── Author control ── */
+.hand-badge{font-size:10px;background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple-border);border-radius:10px;padding:2px 8px;font-weight:500}
+.ia-row{display:flex;gap:6px;margin-bottom:6px}
+.ia-input{flex:1;font-size:12px;padding:6px 9px;border:1px solid var(--border-2);border-radius:var(--radius);background:var(--surface)}
+.ia-chips{display:flex;flex-wrap:wrap;gap:5px}
+.ia-chip{font-size:11px;padding:2px 9px;border-radius:10px;background:var(--surface);border:1px solid var(--border-2);color:var(--text-2);cursor:pointer}
+.ia-chip:hover{background:var(--surface-2);color:var(--text)}
+.sel-menu{position:absolute;z-index:20;display:flex;gap:2px;padding:4px;background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);box-shadow:0 2px 10px rgba(0,0,0,.12)}
+.sm-btn{border:none;background:none;cursor:pointer;padding:4px 8px;border-radius:6px;font-size:11px;color:var(--text-2);white-space:nowrap}
+.sm-btn:hover{background:var(--surface-2);color:var(--text)}
+.stop-banner{margin:0 14px 12px;padding:11px 13px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:var(--radius)}
+.sb-title{font-size:12px;font-weight:500;color:var(--warn);margin-bottom:3px}
+.sb-text{font-size:11px;color:#633806;line-height:1.5;margin-bottom:8px}
+.sb-warn{font-size:11px;color:var(--err);margin-bottom:8px}
 
 /* ── Flags (guards) ── */
 .flags-list{padding:0}

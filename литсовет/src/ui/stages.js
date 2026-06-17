@@ -8,6 +8,7 @@ import { renderDiagnostics } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 import { runBookArchitect, applySkeleton } from '../architect-book.js';
+import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -233,53 +234,110 @@ export function renderWrite(els){
   els.left.innerHTML = `<div class="ph">Сцены</div>${renderSceneList(s)}`;
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; save(); });
 
+  const ch = chapterOf(s, scene);
+  const showStop = ch && chapterComplete(s, ch.id) && !chapterClosed(s, ch.id);
+
   els.center.innerHTML = `
     <div class="scene-bar">
       <span class="scene-tag">Сцена</span>
       <span class="scene-title">${esc(scene.title)}</span>
+      ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
     </div>
-    <div class="editor ${scene.text?'':'empty'}" id="editor">${scene.text?esc(scene.text):'Проза появится здесь после запуска агентов.'}</div>
+    <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?'contenteditable="true" spellcheck="false"':''}>${scene.text?esc(scene.text):'Проза появится здесь после запуска агентов.'}</div>
+    <div id="selMenu" class="sel-menu" style="display:none"></div>
+    ${showStop?renderEditorialStop(s, ch):''}
     <div class="brief-box">
-      <div class="field" style="margin:0"><label>Бриф сцены</label>
+      <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
         <textarea id="brief" rows="2">${esc(scene.brief)}</textarea></div>
+      <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Сказать агенту, что изменить</label>
+      <div class="ia-row">
+        <input type="text" id="directive" class="ia-input" placeholder="напр.: «сделай финал тревожнее», «убери описание погоды»">
+        <button class="btn" id="reRun">↻ Переписать</button>
+      </div>
+      <div class="ia-chips">
+        ${['сократи вдвое','усиль эмоцию','больше конкретной детали','короче предложения'].map(c=>`<span class="ia-chip" data-d="${esc(c)}">${esc(c)}</span>`).join('')}
+      </div>
     </div>
     <div class="run-row">
-      <button class="btn btn-primary btn-block" id="runBtn">▶ Запустить агентов</button>
+      <button class="btn btn-primary btn-block" id="runBtn">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
     </div>`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
 
-  renderRightPanel(els);
+  // редактирование текста автором → отметка «рука автора»
+  const edEl = document.getElementById('editor');
+  if(scene.text){
+    edEl.addEventListener('input', ()=>{ scene.text=edEl.innerText; if(!scene.handDone){ scene.handDone=true; } scene._dirty=true; });
+    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; scene._dirty=false; save(); } });
+    initSelectionMenu(edEl, scene, els);
+  }
 
-  document.getElementById('runBtn').onclick = async ()=>{
-    const g=s.global;
-    if(!g.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
-    scene.brief=document.getElementById('brief').value.trim();
-    const btn=document.getElementById('runBtn'); btn.disabled=true;
-    const ed=document.getElementById('editor'); ed.classList.remove('empty');
-    try{
-      const result = await runScene(s, scene, {}, prog=>{
-        if(prog.streaming){
-          ed.textContent=prog.text;
-          scene.text=prog.text;            // держим scene в актуальном состоянии — ре-рендер не мигнёт плейсхолдером
-        }
-        else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; }
-      });
-      scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
-      scene.lastEval=result.eval||null;
-      scene.flags=result.flags||{};
-      save();
-      // Суммаризация после одобрения (сжатие в память) + проверка дрейфа
-      btn.innerHTML='<span class="spinner"></span> Суммаризация…';
-      try{
-        await summarizeScene(s, scene);
-        scene.drift = driftCheck(s, scene);
-        await maybeRollup(s);   // свернуть старые сцены в синопсис, если окно переполнено
-        save();
-      }catch(e){ console.warn('summarize failed', e); }
-    }catch(e){
-      ed.textContent='Ошибка: '+e.message;
-    }finally{
-      btn.disabled=false; btn.innerHTML='▶ Запустить снова';
-    }
-  };
+  // инлайн-директива
+  const runWith = (directive)=>doRun(els, s, scene, directive);
+  document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
+  document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
+  document.getElementById('runBtn').onclick = ()=>runWith('');
+
+  const cc=document.getElementById('closeChapter');
+  if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
+
+  renderRightPanel(els);
+}
+
+function renderEditorialStop(s, ch){
+  const needHand = needsAuthorHand(s);
+  const scenes = scenesOfChapter(s, ch.id);
+  const handOk = !needHand || scenes.some(sc=>sc.handDone);
+  return `<div class="stop-banner">
+    <div class="sb-title">✋ Редакторский стоп · глава «${esc(ch.title)}»</div>
+    <div class="sb-text">Все сцены главы написаны. Прочитайте главу целиком перед следующей.${needHand?' Режим «Режиссёр»: перепишите хотя бы один абзац своей рукой.':''}</div>
+    ${needHand&&!handOk?'<div class="sb-warn">⚠ Пока ни один абзац не переписан автором — отредактируйте текст любой сцены главы.</div>':''}
+    <button class="btn ${handOk?'btn-primary':''}" id="closeChapter" ${handOk?'':'disabled'}>Закрыть главу →</button>
+  </div>`;
+}
+
+async function doRun(els, s, scene, directive){
+  const g=s.global;
+  if(!g.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+  scene.brief=document.getElementById('brief').value.trim();
+  const btn=document.getElementById('runBtn'); btn.disabled=true;
+  const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
+  try{
+    const result = await runScene(s, scene, directive?{directive}:{}, prog=>{
+      if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
+      else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; }
+    });
+    scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
+    scene.lastEval=result.eval||null; scene.flags=result.flags||{}; scene.handDone=false;
+    save();
+    btn.innerHTML='<span class="spinner"></span> Суммаризация…';
+    try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }
+    catch(e){ console.warn('summarize failed', e); }
+  }catch(e){ ed.textContent='Ошибка: '+e.message; }
+  finally{ btn.disabled=false; }
+}
+
+// Плавающее меню по выделению текста → директива, привязанная к фрагменту.
+function initSelectionMenu(edEl, scene, els){
+  const menu = document.getElementById('selMenu');
+  if(!menu) return;
+  const actions = [
+    ['Переписать','перепиши выделенный фрагмент'],
+    ['Сократить','сократи выделенный фрагмент'],
+    ['Усилить','усиль выделенный фрагмент, добавь напряжения'],
+    ['Деталь мира','добавь конкретную деталь мира в выделенный фрагмент'],
+    ['Продолжить','продолжи прозу от выделенного фрагмента'],
+  ];
+  edEl.addEventListener('mouseup', ()=>{
+    const sel=window.getSelection();
+    const text=sel.toString().trim();
+    if(!text){ menu.style.display='none'; return; }
+    const rect=sel.getRangeAt(0).getBoundingClientRect();
+    const appRect=document.getElementById('app').getBoundingClientRect();
+    menu.style.display='flex';
+    menu.style.top=(rect.top-appRect.top-38)+'px';
+    menu.style.left=(rect.left-appRect.left)+'px';
+    menu.innerHTML=actions.map(([label,d])=>`<button class="sm-btn" data-d="${esc(d)}: «${esc(text.slice(0,60))}»">${label}</button>`).join('');
+    menu.querySelectorAll('.sm-btn').forEach(b=>b.onclick=()=>{ menu.style.display='none'; doRun(els, getState(), scene, b.dataset.d); });
+  });
+  document.addEventListener('mousedown', e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; });
 }
