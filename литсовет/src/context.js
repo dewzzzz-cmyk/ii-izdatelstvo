@@ -37,7 +37,23 @@ export function buildSceneContext(state, scene, opts={}){
   ].filter(Boolean).join(' ');
   if(projBlock) layers.push({ name:'project', text:'=== ПРОЕКТ ===\n'+projBlock, fixed:true });
 
-  // 3. Состояния персонажей
+  // 3a. Память серии: сводки прошлых книг (режим серии)
+  const mem = state.memory || {};
+  if(state.series && state.series.length){
+    const seriesSums = state.series.map(b=>b.summary).filter(Boolean);
+    if(seriesSums.length) layers.push({ name:'series', text:'=== ПРОШЛЫЕ КНИГИ СЕРИИ ===\n'+seriesSums.join('\n\n') });
+  }
+
+  // 3b. Сводки завершённых глав текущей книги
+  const chapterSums = Object.values(mem.chapters||{}).map(e=>e.current).filter(Boolean);
+  if(chapterSums.length) layers.push({ name:'chapters', text:'=== ГЛАВЫ (СВОДКИ) ===\n'+chapterSums.join('\n\n') });
+
+  // 3c. Сводки предыдущих завершённых сцен (кроме текущей)
+  const sceneSums = (state.structure||[]).filter(n=>n.type==='scene' && n.id!==scene.id)
+    .map(n=>(mem.scenes||{})[n.id]).filter(e=>e&&e.current).map(e=>e.current);
+  if(sceneSums.length) layers.push({ name:'scenes', text:'=== ПРЕДЫДУЩИЕ СЦЕНЫ (СВОДКИ) ===\n'+sceneSums.join('\n') });
+
+  // 3d. Состояния персонажей
   const chars = serializeCharacterStates(characters, scene.presentChars);
   if(chars) layers.push({ name:'characters', text:'=== ПЕРСОНАЖИ ===\n'+chars });
 

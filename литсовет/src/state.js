@@ -2,6 +2,7 @@
 // Единый объект state, персистентный в IndexedDB (storage.js).
 
 import { saveProject, loadProject } from './storage.js';
+import { rebuildBibleVecs } from './bible.js';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -126,5 +127,9 @@ function migrate(s){
     s.agents = d.agents.map(da => byId[da.id] ? Object.assign({}, da, { enabled:byId[da.id].enabled, temp:byId[da.id].temp }) : da);
   }
   s.ui = s.ui || { stage:'concept' };
+  s.characters = s.characters || [];
+  s.series = s.series || [];
+  // Bible-векторы не сериализуются — восстанавливаем после загрузки
+  if(s.bible && s.bible.length) rebuildBibleVecs(s.bible);
   return s;
 }

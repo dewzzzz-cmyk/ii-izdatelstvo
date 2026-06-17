@@ -5,8 +5,21 @@ import { getState, save, uid } from '../state.js';
 import { extractVoice } from '../voice.js';
 import { runScene } from '../pipeline.js';
 import { renderDiagnostics } from './diagnostics.js';
+import { renderMemory } from './memory.js';
+import { summarizeScene, driftCheck } from '../memory.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+let _rightTab = 'diag'; // diag | mem
+function renderRightPanel(els){
+  els.right.innerHTML = `
+    <div class="rtabs">
+      <button class="rtab ${_rightTab==='diag'?'active':''}" data-rt="diag">Диагностика</button>
+      <button class="rtab ${_rightTab==='mem'?'active':''}" data-rt="mem">Память</button>
+    </div>
+    <div id="rtabBody">${_rightTab==='diag'?renderDiagnostics():renderMemory()}</div>`;
+  els.right.querySelectorAll('.rtab').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
+}
 
 // ─────────────────────────────── КОНЦЕПЦИЯ ───────────────────────────────
 export function renderConcept(els){
@@ -154,7 +167,7 @@ export function renderWrite(els){
     </div>`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
 
-  els.right.innerHTML = renderDiagnostics();
+  renderRightPanel(els);
 
   document.getElementById('runBtn').onclick = async ()=>{
     const g=s.global;
@@ -173,6 +186,13 @@ export function renderWrite(els){
       scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
       scene.lastEval=result.eval||null;
       save();
+      // Суммаризация после одобрения (сжатие в память) + проверка дрейфа
+      btn.innerHTML='<span class="spinner"></span> Суммаризация…';
+      try{
+        await summarizeScene(s, scene);
+        scene.drift = driftCheck(s, scene);
+        save();
+      }catch(e){ console.warn('summarize failed', e); }
     }catch(e){
       ed.textContent='Ошибка: '+e.message;
     }finally{
