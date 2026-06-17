@@ -160,6 +160,23 @@ textarea{resize:vertical;min-height:60px}
 .mem-rb{margin-top:4px;font-size:11px;padding:2px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text-2)}
 .mem-rb:hover{background:var(--surface)}
 
+/* ── Roadmap / edit stage ── */
+.rm-section{margin-bottom:18px}
+.rm-h{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
+.rm-stage{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px}
+.rm-dot{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
+.rm-dot.done{background:var(--ok-bg);color:var(--ok)}
+.rm-dot.cur{background:var(--accent-bg);color:var(--accent)}
+.rm-dot.todo{background:var(--surface-2);color:var(--text-3)}
+.rm-chap{margin-bottom:8px}
+.rm-chap-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px}
+.rm-bar{height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden}
+.rm-fill{height:100%;border-radius:2px}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px}
+.stat-card{background:var(--surface-2);border-radius:var(--radius);padding:10px 12px}
+.stat-val{font-size:18px;font-weight:500}
+.stat-lbl{font-size:10px;color:var(--text-3);margin-top:2px}
+
 /* ── Author control ── */
 .hand-badge{font-size:10px;background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple-border);border-radius:10px;padding:2px 8px;font-weight:500}
 .ia-row{display:flex;gap:6px;margin-bottom:6px}

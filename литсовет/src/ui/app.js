@@ -2,7 +2,7 @@
 // диспетчеризация стадий.
 
 import { init, getState, subscribe, save, newProject } from '../state.js';
-import { renderConcept, renderVoice, renderStructure, renderWrite } from './stages.js';
+import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } from './stages.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { exportCheckpoint } from '../storage.js';
 
@@ -56,9 +56,8 @@ function renderStage(){
   else if(stage==='voice'){ renderVoice(els); }
   else if(stage==='structure'){ renderStructure(els); }
   else if(stage==='write'){ renderWrite(els); }
-  else { els.left.innerHTML=''; els.center.innerHTML='<div class="empty-state">Стадия «Редактура» — в следующих под-проектах.</div>'; els.right.innerHTML=''; }
-  // правая панель диагностики доступна на стадиях write
-  if(stage==='write'){ /* renderWrite сам наполнит right через renderDiagnostics */ }
+  else if(stage==='edit'){ renderEdit(els); }
+  else { els.left.innerHTML=''; els.center.innerHTML=''; els.right.innerHTML=''; }
 }
 
 function rerender(){ renderRail(); renderStage(); }

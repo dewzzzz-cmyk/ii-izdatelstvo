@@ -9,6 +9,7 @@ import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 import { runBookArchitect, applySkeleton } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
+import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -281,6 +282,82 @@ export function renderWrite(els){
   if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
 
   renderRightPanel(els);
+}
+
+// ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
+const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['edit','Редактура']];
+export function renderEdit(els){
+  const s = getState();
+  const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+  const scenes = (s.structure||[]).filter(n=>n.type==='scene');
+  const doneScenes = scenes.filter(sc=>sc.status==='done');
+  const totalWords = doneScenes.reduce((a,sc)=>a+(sc.words||0),0);
+  const cost = (s.diagnostics?.runs||[]).reduce((a,r)=>a+(r.totalCost||0),0);
+  const avgVoice = (()=>{ const v=doneScenes.map(sc=>sc.lastEval?.scores?.voice).filter(Boolean); return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length*10)/10:'—'; })();
+
+  els.left.innerHTML = `<div class="ph">Прогресс</div>${renderSceneList(s)}`;
+  els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; s.ui.stage='write'; save(); });
+  els.right.innerHTML = '';
+
+  els.center.innerHTML = `
+    <div class="pad" style="max-width:680px">
+      <div class="rm-section">
+        <div class="rm-h">Этапы производства</div>
+        ${STAGE_LABELS.map(([id,label])=>{
+          const done = stageDoneFor(s,id); const cur = id==='edit';
+          return `<div class="rm-stage"><span class="rm-dot ${done?'done':cur?'cur':'todo'}">${done?'✓':cur?'▶':'○'}</span>${label}</div>`;
+        }).join('')}
+      </div>
+
+      <div class="rm-section">
+        <div class="rm-h">Главы · прогресс</div>
+        ${chapters.length?chapters.map(ch=>{
+          const cs=scenesOfChapter(s,ch.id); const cd=cs.filter(x=>x.status==='done').length;
+          const pct=cs.length?Math.round(cd/cs.length*100):0;
+          return `<div class="rm-chap"><div class="rm-chap-row"><span>${esc(ch.title)}</span><span class="muted">${cd}/${cs.length}${ch.closed?' ✓':''}</span></div><div class="rm-bar"><div class="rm-fill" style="width:${pct}%;background:${ch.closed?'var(--ok)':'var(--accent)'}"></div></div></div>`;
+        }).join(''):'<div class="muted">Глав нет.</div>'}
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-val">${doneScenes.length}/${scenes.length}</div><div class="stat-lbl">сцен готово</div></div>
+        <div class="stat-card"><div class="stat-val">${totalWords.toLocaleString('ru')}</div><div class="stat-lbl">слов</div></div>
+        <div class="stat-card"><div class="stat-val">$${cost.toFixed(3)}</div><div class="stat-lbl">потрачено</div></div>
+        <div class="stat-card"><div class="stat-val">${avgVoice}</div><div class="stat-lbl">ср. голос</div></div>
+      </div>
+
+      <div class="rm-section">
+        <div class="rm-h">Контекст для агентов</div>
+        <div class="chips">
+          ${s.project.genre?`<span class="tag" style="background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)">${esc(s.project.genre)}</span>`:''}
+          ${s.project.era?`<span class="tag">${esc(s.project.era)}</span>`:''}
+          ${(s.style.refs||[]).map(r=>`<span class="tag" style="background:var(--ok-bg);color:var(--ok);border-color:var(--ok-border)">${esc(r)}</span>`).join('')}
+          ${(s.style.forbidden||[]).map(f=>`<span class="tag" style="background:var(--err-bg);color:var(--err);border-color:var(--err-border)">↯ ${esc(f)}</span>`).join('')}
+        </div>
+      </div>
+
+      <div class="rm-h">Экспорт книги</div>
+      <div class="chips">
+        <button class="btn" id="exMd">📕 .md</button>
+        <button class="btn" id="exDocx">📄 .doc (Word)</button>
+        <button class="btn" id="exEpub">📗 .epub</button>
+        <button class="btn" id="exJson">⬇ .json (проект)</button>
+      </div>
+      ${!doneScenes.length?'<div class="muted" style="margin-top:8px">Напишите хотя бы одну сцену, чтобы экспортировать.</div>':''}
+    </div>`;
+
+  document.getElementById('exMd').onclick=()=>exportMd(s);
+  document.getElementById('exDocx').onclick=()=>exportDocx(s);
+  document.getElementById('exEpub').onclick=()=>exportEpub(s);
+  document.getElementById('exJson').onclick=()=>exportJson(s);
+}
+function stageDoneFor(s,id){
+  switch(id){
+    case 'concept': return !!(s.project.idea||s.project.title);
+    case 'voice': return (s.voice.examples||[]).length>0;
+    case 'structure': return (s.structure||[]).some(n=>n.type==='scene');
+    case 'write': return (s.structure||[]).filter(n=>n.type==='scene').some(n=>n.status==='done');
+    default: return false;
+  }
 }
 
 function renderEditorialStop(s, ch){
