@@ -7,6 +7,7 @@ import { runScene } from '../pipeline.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
+import { runBookArchitect, applySkeleton } from '../architect-book.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -112,33 +113,113 @@ function renderVoicePanel(v){
 export function renderStructure(els){
   const s = getState();
   const scenes = (s.structure||[]).filter(n=>n.type==='scene');
-  els.left.innerHTML = `<div class="ph">Сцены</div>${renderSceneList(s)}`;
+  els.left.innerHTML = `<div class="ph">Структура</div>${renderSceneList(s)}`;
+  els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; s.ui.stage='write'; save(); });
   els.right.innerHTML = '';
+
+  const hasSkeleton = (s.structure||[]).some(n=>n.type==='chapter');
   els.center.innerHTML = `
-    <div class="pad" style="max-width:620px">
-      <div class="muted" style="margin-bottom:10px">Минимальная структура (полный Книжный архитектор — в под-проекте 4). Добавьте сцену с брифом, затем перейдите к Написанию.</div>
-      <div class="field"><label>Название сцены</label><input type="text" id="scName" placeholder="например: Вокзал в дождь"></div>
-      <div class="field"><label>Бриф сцены <span class="hint">(что происходит, тон, чем заканчивается)</span></label>
-        <textarea id="scBrief" rows="3" placeholder="Анна прибывает. Тревога. Город чужой. Заканчивается — такси к дому."></textarea></div>
-      <div class="field"><label>Эмоция читателя в финале</label><input type="text" id="scEmo" placeholder="тревога, одиночество…"></div>
-      <button class="btn btn-primary" id="addScene">Добавить сцену</button>
-      ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn" id="toWrite">К Написанию →</button></div>`:''}
+    <div class="pad" style="max-width:660px">
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:22px">🏛️</div>
+          <div style="flex:1">
+            <div style="font-weight:500">Книжный архитектор</div>
+            <div class="muted">Сгенерирует скелет книги: главы → сцены с брифами и эмоциями. Один запуск, потом редактируете.</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="muted">Глав:</label>
+          <input type="text" id="chCount" value="" placeholder="авто" style="width:70px">
+          <button class="btn btn-primary" id="genSkeleton">${hasSkeleton?'Перегенерировать':'Сгенерировать скелет'}</button>
+          <span class="muted" id="genStatus"></span>
+        </div>
+      </div>
+
+      ${hasSkeleton ? renderSkeletonEditor(s) : `
+        <div class="muted" style="margin:10px 0">или добавьте сцену вручную:</div>
+        <div class="field"><label>Название сцены</label><input type="text" id="scName" placeholder="например: Вокзал в дождь"></div>
+        <div class="field"><label>Бриф сцены</label><textarea id="scBrief" rows="2" placeholder="Что происходит, тон, чем заканчивается."></textarea></div>
+        <div class="field"><label>Эмоция читателя</label><input type="text" id="scEmo" placeholder="тревога…"></div>
+        <button class="btn" id="addScene">Добавить сцену</button>
+      `}
+
+      ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
     </div>`;
-  document.getElementById('addScene').onclick = ()=>{
+
+  document.getElementById('genSkeleton').onclick = async (ev)=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    if(hasSkeleton && !confirm('Перегенерировать скелет? Текущая структура (и тексты сцен) будут заменены.')) return;
+    const btn=ev.target; btn.disabled=true; const st=document.getElementById('genStatus');
+    st.innerHTML='<span class="spinner"></span> Архитектор проектирует…';
+    try{
+      const chCount = parseInt(document.getElementById('chCount').value)||0;
+      const skeleton = await runBookArchitect(s, chCount?{chapters:chCount}:{});
+      applySkeleton(s, skeleton, uid);
+      save();
+    }catch(e){ st.textContent='Ошибка: '+e.message; btn.disabled=false; }
+  };
+
+  const add=document.getElementById('addScene');
+  if(add) add.onclick = ()=>{
     const name=document.getElementById('scName').value.trim();
     const brief=document.getElementById('scBrief').value.trim();
-    if(!name && !brief){ return; }
+    if(!name && !brief) return;
     s.structure.push({ id:uid('sc'), type:'scene', title:name||'Без названия', brief, emotion:document.getElementById('scEmo').value.trim(), text:'', words:0, status:'todo', targetWords:700 });
     save();
   };
+
   const tw=document.getElementById('toWrite'); if(tw) tw.onclick=()=>{ s.ui.stage='write'; if(!s.ui.activeScene){ const fs=scenes[0]; if(fs) s.ui.activeScene=fs.id; } save(); };
 }
 
+function renderSkeletonEditor(s){
+  const nodes = s.structure||[];
+  let html = '<div class="muted" style="margin-bottom:8px">Нажмите на сцену чтобы отредактировать бриф и эмоцию до написания.</div>';
+  let curChapter = null;
+  nodes.forEach(n=>{
+    if(n.type==='chapter'){
+      curChapter = n;
+      html += `<div class="sk-chapter"><span class="sk-arc">${esc(n.arc||'')}</span> ${esc(n.title)}</div>`;
+    } else if(n.type==='scene'){
+      const open = s.ui.editScene===n.id;
+      html += `<div class="sk-scene ${open?'open':''}" data-sc="${n.id}">
+        <div class="sk-scene-head" data-toggle="${n.id}">
+          <span class="sk-sc-title">${esc(n.title)}</span>
+          <span class="sr-meta">${n.text?(n.words+' сл'):('~'+(n.targetWords||700))}</span>
+        </div>
+        ${open?`<div class="sk-scene-body">
+          <textarea class="sk-brief" data-id="${n.id}" rows="2" placeholder="бриф">${esc(n.brief)}</textarea>
+          <input type="text" class="sk-emo" data-id="${n.id}" value="${esc(n.emotion||'')}" placeholder="эмоция читателя">
+        </div>`:''}
+      </div>`;
+    }
+  });
+  setTimeout(()=>bindSkeleton(s), 0);
+  return html;
+}
+
+function bindSkeleton(s){
+  document.querySelectorAll('.sk-scene-head[data-toggle]').forEach(h=>{
+    h.onclick=()=>{ const id=h.dataset.toggle; s.ui.editScene = s.ui.editScene===id?null:id; save(); };
+  });
+  document.querySelectorAll('.sk-brief').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.brief=t.value;save();} }));
+  document.querySelectorAll('.sk-emo').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.emotion=t.value;save();} }));
+}
+function node(s,id){ return (s.structure||[]).find(n=>n.id===id); }
+
 function renderSceneList(s){
-  const scenes=(s.structure||[]).filter(n=>n.type==='scene');
-  if(!scenes.length) return `<div class="empty-state">Сцен пока нет.</div>`;
-  return scenes.map(sc=>`<div class="scene-row ${s.ui.activeScene===sc.id?'active':''}" data-sc="${sc.id}">
-    <span class="sr-name">${esc(sc.title)}</span><span class="sr-meta">${sc.words||'—'}</span></div>`).join('');
+  const nodes=(s.structure||[]);
+  const scenes=nodes.filter(n=>n.type==='scene');
+  if(!scenes.length) return `<div class="empty-state">Структуры пока нет.</div>`;
+  let html='';
+  nodes.forEach(n=>{
+    if(n.type==='chapter'){ html+=`<div class="chapter-head">${esc(n.title)}</div>`; }
+    else if(n.type==='scene'){
+      html+=`<div class="scene-row ${s.ui.activeScene===n.id?'active':''}" data-sc="${n.id}">
+        <span class="sr-name">${esc(n.title)}</span><span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
+    }
+  });
+  return html;
 }
 
 // ─────────────────────────────── НАПИСАНИЕ ───────────────────────────────
