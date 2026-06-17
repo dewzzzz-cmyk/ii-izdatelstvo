@@ -5,6 +5,7 @@
 import { estimateTokens, smartTrunc, trimToTokens } from './tokens.js';
 import { bibleForPrompt } from './bible.js';
 import { voicePromptBlock } from './voice.js';
+import { activeSceneSummaries, runningSynopsis } from './memory.js';
 
 const SEP = '\n\n';
 
@@ -44,14 +45,21 @@ export function buildSceneContext(state, scene, opts={}){
     if(seriesSums.length) layers.push({ name:'series', text:'=== ПРОШЛЫЕ КНИГИ СЕРИИ ===\n'+seriesSums.join('\n\n') });
   }
 
-  // 3b. Сводки завершённых глав текущей книги
-  const chapterSums = Object.values(mem.chapters||{}).map(e=>e.current).filter(Boolean);
+  // 3b. Бегущий синопсис книги: сюда свёрнуты старые сцены (ограничивает рост контекста)
+  const synopsis = runningSynopsis(state);
+  if(synopsis) layers.push({ name:'synopsis', text:'=== РАНЕЕ В КНИГЕ (СИНОПСИС) ===\n'+synopsis, fixed:true });
+
+  // 3c. Сводки завершённых глав (в порядке structure, не случайном)
+  const chapterSums = (state.structure||[]).filter(n=>n.type==='chapter')
+    .map(n=>(mem.chapters||{})[n.id]?.current).filter(Boolean);
   if(chapterSums.length) layers.push({ name:'chapters', text:'=== ГЛАВЫ (СВОДКИ) ===\n'+chapterSums.join('\n\n') });
 
-  // 3c. Сводки предыдущих завершённых сцен (кроме текущей)
-  const sceneSums = (state.structure||[]).filter(n=>n.type==='scene' && n.id!==scene.id)
-    .map(n=>(mem.scenes||{})[n.id]).filter(e=>e&&e.current).map(e=>e.current);
-  if(sceneSums.length) layers.push({ name:'scenes', text:'=== ПРЕДЫДУЩИЕ СЦЕНЫ (СВОДКИ) ===\n'+sceneSums.join('\n') });
+  // 3d. Последние развёрнутые посценные сводки (окно, без свёрнутых; кроме текущей)
+  const recent = activeSceneSummaries(state).filter(e=>e.id!==scene.id);
+  if(recent.length){
+    layers.push({ name:'scenes', entries:recent.map(e=>e.text), header:'=== ПРЕДЫДУЩИЕ СЦЕНЫ (СВОДКИ) ===',
+      get text(){ return this.header+'\n'+this.entries.join('\n'); } });
+  }
 
   // 3d. Состояния персонажей
   const chars = serializeCharacterStates(characters, scene.presentChars);
@@ -113,8 +121,16 @@ function buildTask(scene, proj, opts){
 function applyBudget(layers, BUDGET){
   const total = ()=>layers.reduce((s,l)=>s+estimateTokens(l.text), 0);
   if(total() <= BUDGET) return;
-  // порядок выбивания «памяти» (по name)
-  const dropOrder = ['series','chapters','scenes','characters','bible'];
+
+  // (а) Слой сцен: выбрасываем СТАРЕЙШИЕ записи по одной (entries[0] = старейшая)
+  const scenesLayer = layers.find(l=>l.name==='scenes' && l.entries);
+  while(scenesLayer && scenesLayer.entries.length>1 && total() > BUDGET){
+    scenesLayer.entries.shift();
+  }
+  if(total() <= BUDGET) return;
+
+  // (б) Дальше выбиваем целые слои «памяти» по приоритету (не fixed)
+  const dropOrder = ['scenes','chapters','series','characters','bible'];
   for(const nm of dropOrder){
     while(total() > BUDGET){
       const idx = layers.findIndex(l=>l.name===nm && !l.fixed);
@@ -123,7 +139,7 @@ function applyBudget(layers, BUDGET){
     }
     if(total() <= BUDGET) return;
   }
-  // последний рубеж: ужать живой контекст
+  // (в) последний рубеж: ужать живой контекст (но не голос/синопсис — они fixed)
   const live = layers.find(l=>l.live);
   if(live && total() > BUDGET){
     const over = total() - BUDGET;

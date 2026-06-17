@@ -6,7 +6,7 @@ import { extractVoice } from '../voice.js';
 import { runScene } from '../pipeline.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { renderMemory } from './memory.js';
-import { summarizeScene, driftCheck } from '../memory.js';
+import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -191,6 +191,7 @@ export function renderWrite(els){
       try{
         await summarizeScene(s, scene);
         scene.drift = driftCheck(s, scene);
+        await maybeRollup(s);   // свернуть старые сцены в синопсис, если окно переполнено
         save();
       }catch(e){ console.warn('summarize failed', e); }
     }catch(e){

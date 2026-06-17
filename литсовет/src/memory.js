@@ -23,6 +23,48 @@ function putVersioned(bucket, id, text){
 
 export function memText(bucket, id){ return bucket && bucket[id] ? bucket[id].current : ''; }
 
+// Сколько последних посценных сводок держать «развёрнутыми» в контексте.
+// Более старые сворачиваются в бегущий синопсис книги (ограничивает рост контекста).
+export const KEEP_SCENES = 8;
+const RUNNING_KEY = '__running__';
+
+// Сцены в порядке написания (по writtenAt; запасной вариант — порядок в structure).
+export function scenesInWriteOrder(state){
+  return (state.structure||[]).filter(n=>n.type==='scene' && n.text)
+    .slice().sort((a,b)=>(a.writtenAt||0)-(b.writtenAt||0));
+}
+
+// Развёрнутые (не свёрнутые) посценные сводки — для контекста.
+export function activeSceneSummaries(state){
+  const mem = state.memory||{};
+  return scenesInWriteOrder(state)
+    .filter(n=>!n.rolledUp && (mem.scenes||{})[n.id]?.current)
+    .map(n=>({ id:n.id, title:n.title, text:mem.scenes[n.id].current }));
+}
+
+export function runningSynopsis(state){ return memText(state.memory.books||{}, RUNNING_KEY); }
+
+// Свернуть переполнение: когда развёрнутых сводок > KEEP_SCENES, старейшие
+// сжимаются в бегущий синопсис книги и помечаются rolledUp (исчезают из контекста).
+export async function maybeRollup(state){
+  const g = state.global;
+  const active = activeSceneSummaries(state);
+  if(active.length <= KEEP_SCENES || !g.apiKey) return null;
+  const overflow = active.slice(0, active.length - KEEP_SCENES); // старейшие
+  const prevSynopsis = runningSynopsis(state);
+  const parts = [prevSynopsis, ...overflow.map(o=>o.text)].filter(Boolean);
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3,
+    messages: bookSummaryMessages(state.project.title||'книга', parts), maxTokens:600, retries:g.retries });
+  const synopsis = parseSummary(res.text);
+  if(synopsis){
+    state.memory.books = state.memory.books || {};
+    putVersioned(state.memory.books, RUNNING_KEY, synopsis);
+    const ids = new Set(overflow.map(o=>o.id));
+    (state.structure||[]).forEach(n=>{ if(ids.has(n.id)) n.rolledUp = true; });
+  }
+  return synopsis;
+}
+
 export function rollback(state, level, id, versionIdx){
   const bucket = state.memory[level];
   const entry = bucket && bucket[id];
@@ -39,6 +81,7 @@ export function rollback(state, level, id, versionIdx){
 export async function summarizeScene(state, scene){
   const g = state.global;
   if(!g.apiKey || !scene.text) return null;
+  if(!scene.writtenAt) scene.writtenAt = Date.now(); // порядок написания для дрейфа/сворачивания
   const msgs = sceneSummaryMessages(scene, scene.text);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:500, retries:g.retries });
   const parsed = parseSceneSummary(res.text);
@@ -92,24 +135,32 @@ function scenesOfChapter(state, chapterId){
 // ── Детектор дрейфа (спека 7.1): численный сигнал, не ручная вычитка ──
 // 1) падение оси «Голос» Оценщика ниже скользящего среднего на ≥2
 // 2) рост cosine-расстояния текста сцены до образца голоса
+const DRIFT_WINDOW = 5; // скользящее окно предыдущих сцен
 export function driftCheck(state, scene){
   const signals = [];
-  // (1) оценочный дрейф голоса
-  const voiceScores = (state.structure||[]).filter(n=>n.type==='scene' && n.lastEval && n.lastEval.scores)
-    .map(n=>Number(n.lastEval.scores.voice)||0);
-  if(scene.lastEval && scene.lastEval.scores && voiceScores.length>=3){
-    const prior = voiceScores.slice(0,-1);
-    const avg = prior.reduce((a,b)=>a+b,0)/prior.length;
+  if(!scene.lastEval || !scene.lastEval.scores) return signals;
+  // сцены в порядке написания, строго ДО текущей
+  const ordered = scenesInWriteOrder(state).filter(n=>n.id!==scene.id && n.lastEval?.scores);
+
+  // (1) оценочный дрейф голоса: текущая ось «Голос» против среднего по окну предыдущих
+  const window = ordered.slice(-DRIFT_WINDOW).map(n=>Number(n.lastEval.scores.voice)||0);
+  if(window.length>=3){
+    const avg = window.reduce((a,b)=>a+b,0)/window.length;
     const cur = Number(scene.lastEval.scores.voice)||0;
-    if(avg - cur >= 2) signals.push(`оценка голоса упала: ${cur} против среднего ${avg.toFixed(1)}`);
+    if(avg - cur >= 2) signals.push(`оценка голоса упала: ${cur} против среднего ${avg.toFixed(1)} (окно ${window.length})`);
   }
-  // (2) расстояние до образца
+
+  // (2) лексическое сходство с образцом: ОТНОСИТЕЛЬНЫЙ спад против окна, не абсолютный порог
   if(state.voice && state.voice.sample && scene.text){
     const sampleVec = tfvec(tokensOf(state.voice.sample));
-    const sceneVec = tfvec(tokensOf(scene.text));
-    const sim = cosine(sampleVec, sceneVec);
-    // низкое лексическое сходство — не строгий сигнал, но индикатор
-    if(sim < 0.04) signals.push(`низкое лексическое сходство с образцом (${sim.toFixed(3)})`);
+    const simOf = t => cosine(sampleVec, tfvec(tokensOf(t)));
+    const cur = simOf(scene.text);
+    const priorSims = ordered.slice(-DRIFT_WINDOW).filter(n=>n.text).map(n=>simOf(n.text));
+    if(priorSims.length>=3){
+      const avg = priorSims.reduce((a,b)=>a+b,0)/priorSims.length;
+      // флаг только при заметном относительном спаде (>40% ниже среднего окна)
+      if(avg>0 && cur < avg*0.6) signals.push(`лексика отдалилась от образца: ${cur.toFixed(3)} против среднего ${avg.toFixed(3)}`);
+    }
   }
   return signals;
 }
