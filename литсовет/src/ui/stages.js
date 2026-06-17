@@ -10,6 +10,8 @@ import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 import { runBookArchitect, applySkeleton } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
+import { parseFile } from '../import.js';
+import { importSeriesBook } from '../series.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -72,42 +74,77 @@ export function renderConcept(els){
 // ─────────────────────────────── ГОЛОС ───────────────────────────────
 export function renderVoice(els){
   const s = getState(); const v = s.voice;
-  els.left.innerHTML = `<div class="ph">Голос</div><div class="pad"><div class="muted">Вставьте образец вашей прозы — система отберёт характерные предложения. Модель получает примеры, не числа.</div></div>`;
-  els.right.innerHTML = renderVoicePanel(v);
+  const mode = s.ui.voiceMode || 'sample';
+  els.left.innerHTML = `<div class="ph">Голос</div><div class="pad"><div class="muted">Голос — отпечаток вашего стиля. Модель получает примеры предложений, не числа.</div></div>`;
+  els.right.innerHTML = renderVoicePanel(v, s);
   els.center.innerHTML = `
     <div class="pad" style="max-width:620px">
-      <div class="field"><label>Образец прозы <span class="hint">(3–5 абзацев вашего текста или ориентир)</span></label>
-        <textarea id="sample" rows="10" placeholder="Вставьте сюда фрагмент прозы…">${esc(v.sample)}</textarea></div>
-      <div class="row">
-        <button class="btn btn-primary" id="extract">Извлечь голос</button>
-        <span class="muted" id="vstatus"></span>
+      <div class="mode-switch" id="vmode">
+        <div class="mode-opt ${mode==='sample'?'sel':''}" data-m="sample">Образец текста<small>пишу первую книгу</small></div>
+        <div class="mode-opt ${mode==='series'?'sel':''}" data-m="series">Мои книги серии<small>продолжаю серию</small></div>
       </div>
+      ${mode==='sample'?`
+        <div class="field"><label>Образец прозы <span class="hint">(3–5 абзацев вашего текста или ориентир)</span></label>
+          <textarea id="sample" rows="9" placeholder="Вставьте сюда фрагмент прозы…">${esc(v.sample)}</textarea></div>
+        <div class="row"><button class="btn btn-primary" id="extract">Извлечь голос</button><span class="muted" id="vstatus"></span></div>
+      `:`
+        <div class="field"><label>Загрузить готовую книгу серии <span class="hint">(.txt, .docx, .epub)</span></label>
+          <input type="file" id="bookFile" accept=".txt,.docx,.epub"></div>
+        <div class="row"><button class="btn btn-primary" id="importBook">Импортировать и извлечь</button><span class="muted" id="vstatus"></span></div>
+        ${(s.series||[]).length?`<div class="muted" style="margin-top:12px">Загруженные книги: ${(s.series||[]).map(b=>esc(b.title)).join(', ')}</div>`:''}
+      `}
       <div class="row" style="margin-top:18px;justify-content:flex-end">
         <button class="btn" id="toStruct">Дальше — Структура →</button>
       </div>
     </div>`;
-  document.getElementById('extract').onclick = ()=>{
+
+  document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
+
+  const ext=document.getElementById('extract');
+  if(ext) ext.onclick = ()=>{
     const sample = document.getElementById('sample').value.trim();
     if(sample.length<40){ document.getElementById('vstatus').textContent='Слишком короткий образец.'; return; }
-    const extracted = extractVoice(sample, 5);
-    s.voice = extracted; save();
+    s.voice = extractVoice(sample, 5); save();
   };
+
+  const imp=document.getElementById('importBook');
+  if(imp) imp.onclick = async ()=>{
+    const file = document.getElementById('bookFile').files[0];
+    const st = document.getElementById('vstatus');
+    if(!file){ st.textContent='Выберите файл.'; return; }
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    imp.disabled=true; st.innerHTML='<span class="spinner"></span> Читаю файл…';
+    try{
+      const text = await parseFile(file);
+      if(text.length<200) throw new Error('Слишком мало текста в файле.');
+      st.innerHTML='<span class="spinner"></span> Извлекаю голос, персонажей, канон…';
+      const title = file.name.replace(/\.[^.]+$/,'');
+      const report = await importSeriesBook(s, title, text);
+      save();
+      st.textContent = `Готово: ${report.charactersAdded} персонажей, ${report.factsAdded} фактов, голос (${report.voiceExamples} примеров).`;
+    }catch(e){ st.textContent='Ошибка: '+e.message; }
+    finally{ imp.disabled=false; }
+  };
+
   document.getElementById('toStruct').onclick = ()=>{ s.ui.stage='structure'; save(); };
 }
 
-function renderVoicePanel(v){
+function renderVoicePanel(v, s){
   if(!v.examples || !v.examples.length) return `<div class="ph">Отпечаток</div><div class="empty-state">Голос ещё не извлечён.</div>`;
   const m = v.metrics||{};
+  const chars = (s&&s.characters)||[];
   return `<div class="ph">Отпечаток голоса</div>
     <div class="pad">
       <div class="muted" style="margin-bottom:8px">Примеры (идут в промпт):</div>
-      ${v.examples.map(e=>`<div class="card" style="margin-bottom:6px;font-size:12px;font-style:italic;color:var(--text-2)">«${esc(e)}»</div>`).join('')}
+      ${v.examples.slice(0,6).map(e=>`<div class="card" style="margin-bottom:6px;font-size:12px;font-style:italic;color:var(--text-2)">«${esc(e)}»</div>`).join('')}
       <div class="muted" style="margin:12px 0 6px">Метрики (только индикатор):</div>
       <div style="font-size:12px;color:var(--text-2);line-height:1.8">
         Ср. длина предложения: <b>${m.avgSentence||'—'}</b> сл.<br>
         Доля диалога: <b>${m.dialogueRatio||0}%</b><br>
         Вариативность ритма: <b>${m.rhythmStdev||'—'}</b>
       </div>
+      ${(v.evolution&&v.evolution.length)?`<div class="muted" style="margin:12px 0 6px">Эволюция голоса:</div>${v.evolution.map(e=>`<div style="font-size:11px;color:var(--text-2)">${esc(e.book)}: ср. ${e.avgSentence} сл (${e.delta>0?'+':''}${e.delta})</div>`).join('')}`:''}
+      ${chars.length?`<div class="muted" style="margin:12px 0 6px">Персонажи серии (${chars.length}):</div>${chars.slice(0,8).map(c=>`<div class="card" style="margin-bottom:5px"><div style="font-size:12px;font-weight:500">${esc(c.name)}</div><div style="font-size:11px;color:var(--text-3)">${esc(c.stateNote||c.desc||'')}</div></div>`).join('')}`:''}
     </div>`;
 }
 
