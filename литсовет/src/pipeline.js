@@ -64,9 +64,14 @@ export async function runScene(state, scene, opts={}, onProgress){
 
       // лучший по баллу вариант
       if(!bestEval || (verdict.ok && verdict.weighted > (bestEval.weighted||0))){ best=pRes.text; bestEval=verdict; }
-      if(verdict.ok && verdict.pass){ break; }
-      // обратная связь Прозаику
-      directive = (verdict.notes||[]).join('; ') || directive;
+      // Принять можно, только если прошёл порог И Оценщик не нашёл клише (либо итерации кончились).
+      // Иначе анти-клише замечания остались бы справкой, а не действием.
+      const hasCliches = (verdict.cliches||[]).length > 0;
+      const iterationsLeft = iter < maxIter;
+      if(verdict.ok && verdict.pass && !(hasCliches && iterationsLeft)){ break; }
+      // обратная связь Прозаику (замечания + явный список клише)
+      const fix = [...(verdict.notes||[]), ...(hasCliches?['убери клише: '+verdict.cliches.join(', ')]:[])];
+      directive = fix.join('; ') || directive;
     }
 
     const run = endRun('done');
