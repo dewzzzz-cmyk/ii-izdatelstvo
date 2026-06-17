@@ -6,6 +6,8 @@ import { renderConcept, renderVoice, renderStructure, renderWrite } from './stag
 import { renderDiagnostics } from './diagnostics.js';
 import { exportCheckpoint } from '../storage.js';
 
+function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 const STAGES = [
   { id:'concept',   label:'Концепция' },
   { id:'voice',     label:'Голос' },
@@ -95,11 +97,11 @@ function openSettings(){
       <div class="modal" onclick="event.stopPropagation()">
         <h2>Настройки</h2>
         <div class="field"><label>API-ключ <span class="hint">(только в памяти, не сохраняется на диск)</span></label>
-          <input type="text" id="setKey" value="${g.apiKey||''}" placeholder="sk-..."></div>
+          <input type="text" id="setKey" value="${escAttr(g.apiKey)}" placeholder="sk-..."></div>
         <div class="field"><label>Базовый URL</label>
-          <input type="text" id="setUrl" value="${g.baseURL||''}"></div>
+          <input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
         <div class="field"><label>Модель</label>
-          <input type="text" id="setModel" value="${g.model||''}"></div>
+          <input type="text" id="setModel" value="${escAttr(g.model)}"></div>
         <div class="row" style="justify-content:space-between;margin-top:6px">
           <button class="btn" id="setNew">Новый проект</button>
           <div class="row">

@@ -35,13 +35,20 @@ export async function runScene(state, scene, opts={}, onProgress){
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     let best = null, bestEval = null;
     let directive = opts.directive || '';
+    let prevDraft = '';
 
     for(let iter=1; iter<=maxIter; iter++){
       onProgress && onProgress({stage:'prose', text:`Прозаик пишет${iter>1?` (итерация ${iter})`:''}…`});
-      const ctx = buildSceneContext(state, scene, { prevSceneText, architectOutput:architectText, directive });
+      // На доработке (iter>1) даём Прозаику прошлый черновик + замечания, температура ниже (точечная правка).
+      const isRevision = iter > 1 && prevDraft;
+      const ctx = buildSceneContext(state, scene, {
+        prevSceneText, architectOutput:architectText, directive,
+        prevDraft: isRevision ? prevDraft : '',
+      });
       let streamed = '';
-      const pRes = await callLLM({ ...llmBase, temperature:0.85, messages:ctx.messages, maxTokens:1600 },
+      const pRes = await callLLM({ ...llmBase, temperature: isRevision?0.7:0.85, messages:ctx.messages, maxTokens:1600 },
         chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); });
+      prevDraft = pRes.text;
       logStep({ agent:'prose', iter, input:ctx.messages[1].content, output:pRes.text,
         layers:ctx.layers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
 

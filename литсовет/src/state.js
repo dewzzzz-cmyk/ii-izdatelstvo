@@ -119,7 +119,12 @@ function migrate(s){
   s.global  = Object.assign({}, d.global, s.global);
   s.memory  = Object.assign({}, d.memory, s.memory);
   s.diagnostics = s.diagnostics || { runs: [] };
-  s.agents  = s.agents && s.agents.length ? s.agents : d.agents;
+  // Мердж агентов по id: сохраняем пользовательские enabled/temp, до-добавляем новых агентов из дефолтов.
+  if(!s.agents || !s.agents.length){ s.agents = d.agents; }
+  else {
+    const byId = Object.fromEntries(s.agents.map(a=>[a.id, a]));
+    s.agents = d.agents.map(da => byId[da.id] ? Object.assign({}, da, { enabled:byId[da.id].enabled, temp:byId[da.id].temp }) : da);
+  }
   s.ui = s.ui || { stage:'concept' };
   return s;
 }

@@ -55,6 +55,11 @@ export function buildSceneContext(state, scene, opts={}){
     layers.push({ name:'architect', text:'=== ПЛАН СЦЕНЫ (АРХИТЕКТОР) ===\n'+opts.architectOutput, fixed:true });
   }
 
+  // 7. Предыдущий черновик при доработке (петля): Прозаик видит, что правит, а не пишет с нуля
+  if(opts.prevDraft){
+    layers.push({ name:'prevDraft', text:'=== ТВОЙ ПРЕДЫДУЩИЙ ЧЕРНОВИК (доработай, сохрани удачные места) ===\n'+opts.prevDraft, fixed:true, live:false });
+  }
+
   // Применяем бюджет: режем по приоритету (не трогаем fixed; live ужимаем последним)
   applyBudget(layers, BUDGET);
 
@@ -72,12 +77,17 @@ export function buildSceneContext(state, scene, opts={}){
 
 function buildTask(scene, proj, opts){
   const lines = [];
-  lines.push('ЗАДАЧА: напиши прозу этой сцены.');
+  const revising = !!opts.prevDraft;
+  lines.push(revising
+    ? 'ЗАДАЧА: доработай предыдущий черновик по замечаниям. Сохрани удачные образы и ритм, исправь указанное. НЕ переписывай с нуля.'
+    : 'ЗАДАЧА: напиши прозу этой сцены.');
   lines.push('Бриф сцены: ' + (scene.brief || scene.title || '(нет)'));
-  if(scene.emotion) lines.push('Эмоция читателя в финале: ' + scene.emotion);
+  if(scene.emotion) lines.push('Эмоция читателя в финале: ' + scene.emotion + ' (передай через действие и деталь, не называй чувство прямо).');
   const target = scene.targetWords || 700;
   lines.push(`Объём: примерно ${target} слов.`);
-  if(opts.directive) lines.push('Указание автора к переработке: ' + opts.directive);
+  if(opts.directive) lines.push((revising?'Замечания оценщика: ':'Указание автора: ') + opts.directive);
+  // Анти-ИИшность: направляем от гладкого нейтрала к живой прозе
+  lines.push('Требования к прозе: конкретная чувственная деталь вместо абстракций; избегай эпитетов-ярлыков (зловещий, прекрасный, ужасный); «показывай, не рассказывай»; без морализаторского вывода в финале; варьируй длину предложений.');
   lines.push('Пиши только прозу, без заголовков и пояснений.');
   return lines.join('\n');
 }

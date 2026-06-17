@@ -164,7 +164,10 @@ export function renderWrite(els){
     const ed=document.getElementById('editor'); ed.classList.remove('empty');
     try{
       const result = await runScene(s, scene, {}, prog=>{
-        if(prog.streaming){ ed.textContent=prog.text; }
+        if(prog.streaming){
+          ed.textContent=prog.text;
+          scene.text=prog.text;            // держим scene в актуальном состоянии — ре-рендер не мигнёт плейсхолдером
+        }
         else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; }
       });
       scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';

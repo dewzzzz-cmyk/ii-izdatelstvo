@@ -32,6 +32,7 @@ export function computeMetrics(sample){
 export function pickExamples(sample, n=5){
   const sents = splitSentences(sample).map(s=>s.trim()).filter(s=>tokensOf(s).length>=3);
   if(sents.length<=n) return sents;
+  if(n<=1) return sents.slice(0,1);
   const withLen = sents.map(s=>({s, len:tokensOf(s).length}));
   withLen.sort((a,b)=>a.len-b.len);
   // равномерная выборка по отсортированной длине → захватываем спектр ритма
