@@ -7,7 +7,7 @@ import { runScene } from '../pipeline.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
-import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, pushSceneVersion, revertScene } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -172,6 +172,7 @@ export function renderStructure(els){
           <label class="muted">Глав:</label>
           <input type="text" id="chCount" value="" placeholder="авто" style="width:70px">
           <button class="btn btn-primary" id="genSkeleton">${hasSkeleton?'Перегенерировать':'Сгенерировать скелет'}</button>
+          ${(s.skeletonVersions&&s.skeletonVersions.length)?`<button class="btn" id="revertSkeleton" title="Вернуть прошлый скелет">↶ скелет (${s.skeletonVersions.length})</button>`:''}
           <span class="muted" id="genStatus"></span>
         </div>
       </div>
@@ -200,6 +201,9 @@ export function renderStructure(els){
     }catch(e){ st.textContent='Ошибка: '+e.message; btn.disabled=false; }
   };
 
+  const rs=document.getElementById('revertSkeleton');
+  if(rs) rs.onclick = ()=>{ if(revertSkeleton(s)) save(); };
+
   const add=document.getElementById('addScene');
   if(add) add.onclick = ()=>{
     const name=document.getElementById('scName').value.trim();
@@ -222,7 +226,7 @@ function renderSkeletonEditor(s){
   nodes.forEach(n=>{
     if(n.type==='chapter'){
       curChapter = n;
-      html += `<div class="sk-chapter"><span class="sk-arc">${esc(n.arc||'')}</span> ${esc(n.title)}</div>`;
+      html += `<div class="sk-chapter"><span class="sk-arc">${esc(n.arc||'')}</span> <span style="flex:1">${esc(n.title)}</span><button class="sk-ch-regen" data-chregen="${n.id}" title="Перегенерировать все сцены этой главы по подсказке">↻ глава</button></div>`;
     } else if(n.type==='scene'){
       const open = s.ui.editScene===n.id;
       html += `<div class="sk-scene ${open?'open':''}" data-sc="${n.id}">
@@ -272,6 +276,15 @@ function bindSkeleton(s){
     const n=node(s, b.dataset.revert); if(!n) return;
     if(revertScene(n)) save();
   });
+  document.querySelectorAll('.sk-ch-regen[data-chregen]').forEach(b=>b.onclick=async ()=>{
+    const ch=node(s, b.dataset.chregen); if(!ch) return;
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    const hint=prompt('Перегенерировать все сцены главы «'+ch.title+'». В каком направлении? (пусто — просто усилить)');
+    if(hint===null) return;
+    b.disabled=true; const orig=b.textContent; b.innerHTML='<span class="spinner"></span>';
+    try{ await regenerateChapter(s, ch, hint.trim()); save(); }
+    catch(e){ b.textContent='ошибка'; b.title=e.message; b.disabled=false; setTimeout(()=>{b.textContent=orig;},1500); }
+  });
   document.querySelectorAll('.sk-down[data-down]').forEach(b=>b.onclick=async ()=>{
     const n=node(s, b.dataset.down); if(!n) return;
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
@@ -291,6 +304,13 @@ function bindSkeleton(s){
 }
 function node(s,id){ return (s.structure||[]).find(n=>n.id===id); }
 
+// Пометить все НИЖЕ написанные сцены как возможно устаревшие (поворот сюжета выше).
+function markDownstreamStale(s, scene){
+  const scenes=(s.structure||[]).filter(n=>n.type==='scene');
+  const i=scenes.findIndex(n=>n.id===scene.id);
+  scenes.slice(i+1).forEach(n=>{ if(n.status==='done') n.stale=true; });
+}
+
 function renderSceneList(s){
   const nodes=(s.structure||[]);
   const scenes=nodes.filter(n=>n.type==='scene');
@@ -300,7 +320,7 @@ function renderSceneList(s){
     if(n.type==='chapter'){ html+=`<div class="chapter-head">${esc(n.title)}</div>`; }
     else if(n.type==='scene'){
       html+=`<div class="scene-row ${s.ui.activeScene===n.id?'active':''}" data-sc="${n.id}">
-        <span class="sr-name">${esc(n.title)}</span><span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
+        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${esc(n.title)}</span><span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
     }
   });
   return html;
@@ -324,6 +344,7 @@ export function renderWrite(els){
     <div class="scene-bar">
       <span class="scene-tag">Сцена</span>
       <span class="scene-title">${esc(scene.title)}</span>
+      ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
     </div>
     <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?'contenteditable="true" spellcheck="false"':''}>${scene.text?esc(scene.text):'Проза появится здесь после запуска агентов.'}</div>
@@ -343,6 +364,7 @@ export function renderWrite(els){
     </div>
     <div class="run-row">
       <button class="btn btn-primary btn-block" id="runBtn">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
+      ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" title="Вернуть прошлый вариант прозы">↶ ${scene.proseVersions.length}</button>`:''}
     </div>`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
 
@@ -359,6 +381,17 @@ export function renderWrite(els){
   document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
+
+  const rp=document.getElementById('revertProse');
+  if(rp) rp.onclick = ()=>{
+    if(!scene.proseVersions||!scene.proseVersions.length) return;
+    const prev = scene.proseVersions.shift();   // прошлый вариант прозы
+    scene.proseVersions.unshift(scene.text);     // текущее → в историю (свап, можно вернуться)
+    scene.text = prev;
+    scene.words=(prev.match(/\S+/g)||[]).length;
+    scene.handDone=false;
+    save();
+  };
 
   const cc=document.getElementById('closeChapter');
   if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
@@ -461,6 +494,8 @@ async function doRun(els, s, scene, directive){
   _busy = true;
   document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='0.5');
   scene.brief=document.getElementById('brief').value.trim();
+  const wasDone = scene.status==='done' && !!scene.text;
+  const oldText = scene.text;
   const btn=document.getElementById('runBtn'); btn.disabled=true;
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
   try{
@@ -468,8 +503,11 @@ async function doRun(els, s, scene, directive){
       if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
       else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; }
     });
+    if(wasDone && oldText){ scene.proseVersions=scene.proseVersions||[]; scene.proseVersions.unshift(oldText); if(scene.proseVersions.length>10)scene.proseVersions.length=10; }
     scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
-    scene.lastEval=result.eval||null; scene.flags=result.flags||{}; scene.handDone=false;
+    scene.lastEval=result.eval||null; scene.flags=result.flags||{}; scene.handDone=false; scene.stale=false;
+    // Каскад: перезапись уже готовой сцены могла повернуть сюжет — нижние готовые сцены под подозрением
+    if(wasDone) markDownstreamStale(s, scene);
     save();
     btn.innerHTML='<span class="spinner"></span> Суммаризация…';
     try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }

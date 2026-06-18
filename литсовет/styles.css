@@ -167,8 +167,12 @@ textarea{resize:vertical;min-height:60px}
 .mem-card{border:1px solid var(--border);border-radius:var(--radius);padding:7px 9px;margin-bottom:6px;background:var(--surface)}
 .mem-title{font-size:12px;font-weight:500;margin-bottom:3px}
 .mem-sum{width:100%;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;resize:vertical;min-height:36px}
-.mem-rb{margin-top:4px;font-size:11px;padding:2px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text-2)}
-.mem-rb:hover{background:var(--surface)}
+.mem-rb,.mem-rs{font-size:11px;padding:2px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text-2)}
+.mem-rb:hover,.mem-rs:hover{background:var(--surface)}
+.stale-badge{font-size:10px;background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-border);border-radius:10px;padding:2px 8px;font-weight:500}
+.stale-dot{color:var(--warn);font-weight:700}
+.sk-ch-regen{font-size:10px;padding:2px 7px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-3);flex-shrink:0}
+.sk-ch-regen:hover:not(:disabled){background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)}
 
 /* ── Roadmap / edit stage ── */
 .rm-section{margin-bottom:18px}

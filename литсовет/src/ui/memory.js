@@ -2,7 +2,7 @@
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
 import { getState, save } from '../state.js';
-import { rollback } from '../memory.js';
+import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 
@@ -28,7 +28,10 @@ export function renderMemory(){
         return `<div class="mem-card">
           <div class="mem-title">${esc(n.title)}</div>
           <textarea class="mem-sum" data-level="scenes" data-id="${n.id}" rows="2">${esc(e.current)}</textarea>
-          ${e.versions&&e.versions.length?`<button class="mem-rb" data-level="scenes" data-id="${n.id}">↶ откатить (${e.versions.length})</button>`:''}
+          <div class="row" style="gap:6px;margin-top:4px">
+            <button class="mem-rs" data-id="${n.id}" title="Пере-суммаризировать сцену заново">↻ заново</button>
+            ${e.versions&&e.versions.length?`<button class="mem-rb" data-level="scenes" data-id="${n.id}">↶ откатить (${e.versions.length})</button>`:''}
+          </div>
         </div>`;
       }).join('') : '<div class="muted" style="margin-bottom:10px">Появятся после написания сцен.</div>'}
 
@@ -98,6 +101,15 @@ function bindMemory(){
   });
   document.querySelectorAll('.mem-rb').forEach(b=>{
     b.onclick=()=>{ const s=getState(); if(rollback(s, b.dataset.level, b.dataset.id, 0)){ save(); } };
+  });
+  document.querySelectorAll('.mem-rs').forEach(b=>{
+    b.onclick=async ()=>{
+      const s=getState(); const scene=(s.structure||[]).find(n=>n.id===b.dataset.id);
+      if(!scene||!s.global.apiKey){ if(!s.global.apiKey) alert('Задайте API-ключ (⚙).'); return; }
+      b.disabled=true; b.innerHTML='<span class="spinner"></span>';
+      try{ await summarizeScene(s, scene); save(); }   // putVersioned сохранит прошлую сводку
+      catch(e){ b.textContent='ошибка'; b.title=e.message; }
+    };
   });
 }
 

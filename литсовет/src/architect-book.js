@@ -178,7 +178,9 @@ export function revertScene(scene){
 }
 
 // Применить скелет к плоскому state.structure[] (chapter|scene узлы).
+// Перед заменой сохраняет прошлую структуру в историю (откат полного скелета).
 export function applySkeleton(state, skeleton, uid){
+  pushSkeletonVersion(state);
   const nodes = [];
   for(const ch of skeleton.chapters){
     const chId = uid('ch');
@@ -189,4 +191,59 @@ export function applySkeleton(state, skeleton, uid){
     }
   }
   state.structure = nodes;
+}
+
+// ── История полного скелета (откат неудачной перегенерации) ──
+export function pushSkeletonVersion(state){
+  if(!state.structure || !state.structure.length) return; // нечего сохранять на первой генерации
+  state.skeletonVersions = state.skeletonVersions || [];
+  state.skeletonVersions.unshift(JSON.parse(JSON.stringify(state.structure)));
+  if(state.skeletonVersions.length>5) state.skeletonVersions.length=5;
+}
+export function revertSkeleton(state){
+  if(!state.skeletonVersions || !state.skeletonVersions.length) return false;
+  const prev = state.skeletonVersions.shift();
+  state.skeletonVersions.unshift(JSON.parse(JSON.stringify(state.structure))); // текущее → в историю (свап, можно вернуться)
+  state.structure = prev;
+  return true;
+}
+
+// ── Перегенерация всех сцен ОДНОЙ главы с подсказкой ──
+export async function regenerateChapter(state, chapter, hint){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  const nodes = state.structure||[];
+  const ci = nodes.findIndex(n=>n.id===chapter.id);
+  const scenes=[]; for(let i=ci+1;i<nodes.length;i++){ if(nodes[i].type==='chapter') break; if(nodes[i].type==='scene') scenes.push(nodes[i]); }
+  if(!scenes.length) return [];
+  const p = state.project;
+  const sys = 'Ты — книжный архитектор. Перепроектируй сцены ОДНОЙ главы по подсказке автора, сохраняя их число и дугу главы. Не пишешь прозу.';
+  const user = [
+    `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
+    `Глава: «${chapter.title}» (${chapter.arc||''}). Сцен: ${scenes.length}.`,
+    'Текущие сцены:\n'+scenes.map((s,i)=>`${i+1}. «${s.title}» — ${s.brief}`).join('\n'),
+    '',
+    'ПОДСКАЗКА АВТОРА: ' + (hint||'сделай сильнее и конкретнее, сохрани сюжетные функции'),
+    '',
+    `Верни JSON: { "scenes": [ ровно ${scenes.length} объектов: {"title","brief","emotion","targetWords"} ] }. Только JSON.`,
+  ].join('\n');
+  let lastErr='';
+  for(let attempt=0; attempt<=(g.retries??2); attempt++){
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:2000 });
+    const j = extractJSON(res.text);
+    const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
+    if(arr && arr.length){
+      const applied=[];
+      for(let i=0;i<Math.min(arr.length,scenes.length);i++){
+        const sc=scenes[i], fr=arr[i];
+        pushSceneVersion(sc);
+        sc.title=(fr.title||sc.title).trim(); sc.brief=fr.brief.trim(); sc.emotion=(fr.emotion||sc.emotion||'').trim();
+        if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
+        applied.push(sc.id);
+      }
+      return applied;
+    }
+    lastErr='невалидный JSON';
+  }
+  throw new Error('Перегенерация главы не удалась: '+lastErr);
 }
