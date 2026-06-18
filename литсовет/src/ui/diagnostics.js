@@ -1,13 +1,13 @@
 // Правая панель: диагностический режим — toggle агентов + трейс прогонов.
 
-import { getState, save, addCustomAgent, removeAgent } from '../state.js';
+import { getState, save, addCustomAgent, removeAgent, addRule } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene } from '../ondemand.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий' };
+const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля' };
 const _openAgents = new Set();
 
 // Параметры агента (реально влияют на прогон). target:'agent' пишет в агента, 'global' — в state.global.
@@ -96,7 +96,7 @@ export function renderSceneAnalysis(){
 }
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
-const PARALLEL_ROLES = new Set(['voiceguard','logic','events','custom']);
+const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom']);
 export function renderAgentPipeline(){
   const s = getState();
   const agents = s.agents||[];
@@ -254,12 +254,13 @@ function toDirective(text){
   return true;
 }
 
-// Две кнопки на замечание: точечная правка (по умолчанию) и полная переработка.
+// Кнопки на замечание: точечная правка, полная переработка, и «в правило».
 function fixActions(text){
   const t = esc(text);
   return `<div class="ares-acts">
     <button class="ares-patch" data-fix="${t}" data-tip="Внести только эту правку в текущий текст. Остальное не трогается, цикл агентов не запускается. Можно откатить ↶.">✎ Поправить точечно</button>
     <button class="ares-todir" data-dir="${t}" data-tip="Положить замечание в задачу Прозаику для полной переработки сцены через цикл (Прозаик → Оценщик → Стражи).">↻ Прозаику</button>
+    <button class="ares-rule" data-rule="${t}" data-tip="Сделать постоянным правилом автора: впредь Прозаик это не порождает, Оценщик штрафует, Страж стиля ловит.">⊕ В правило</button>
   </div>`;
 }
 
@@ -269,7 +270,7 @@ function renderResultBody(r){
     if(!v||!v.ok) return `<div class="muted">Оценщик не вернул разбор.</div>`;
     const axes=RUBRIC_AXES.map(a=>{ const val=v.scores[a.key]; const col=val>=7?'var(--ok)':val>=5?'var(--warn)':'var(--err)';
       return `<div class="ares-axis"><span>${a.label}</span><b style="color:${col}">${val}</b></div>`; }).join('');
-    const cl=(v.cliches||[]).length?`<div class="ares-h">Клише в тексте</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}`:'';
+    const cl=(v.cliches||[]).length?`<div class="ares-h">Клише в тексте</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}» <button class="ares-rule" data-rule="${esc('избегай штампа «'+c+'» и подобных шаблонных оборотов')}" data-tip="Сделать правилом — впредь избегать">⊕ В правило</button></div>`).join('')}`:'';
     const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span>${fixActions(n)}</div>`).join('')}`:'';
     const all=((v.notes||[]).length||(v.cliches||[]).length)
       ? `<button class="btn btn-primary ares-all" style="margin-top:12px;width:100%">Все замечания → переписать сцену</button>`
@@ -343,4 +344,10 @@ function openAgentResult(agent, result, scene){
     if(sc.proseVersions.length>10) sc.proseVersions.length=10;
     sc.text=result.text; sc.words=(result.text.match(/\S+/g)||[]).length; save(); close();
   };
+  document.querySelectorAll('.ares-rule').forEach(b=>b.onclick=()=>{
+    const t=prompt('Правило автора (как принцип, не привязка к одной сцене):', b.dataset.rule);
+    if(t==null||!t.trim()) return;
+    addRule(getState(), t.trim()); save();
+    b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true;
+  });
 }

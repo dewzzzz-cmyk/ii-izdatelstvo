@@ -7,7 +7,8 @@ import { buildSceneContext, bookContextBlock } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
-         lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages } from './guards.js';
+         lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
+         styleGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -86,7 +87,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(isRevision){
         onProgress && onProgress({stage:'prose', text:`Прозаик правит черновик по замечаниям (итерация ${iter})…`});
         const cap = Math.min(4000, Math.max(1400, Math.round(prevDraft.length/2) + 800));
-        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive), maxTokens: proseAg.maxTokens ?? cap }, streamCb);
+        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: proseAg.maxTokens ?? cap }, streamCb);
         // защита от усечения: если ответ подозрительно короткий — оставляем прошлый черновик
         if(pRes.text && pRes.text.length < prevDraft.length*0.6) pRes.text = prevDraft;
         logInput = '(хирургическая доработка) ' + (directive||'');
@@ -112,7 +113,7 @@ export async function runScene(state, scene, opts={}, onProgress){
 
       // Оценщик
       onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
-      const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene));
+      const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
       const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??700 });
       const verdict = parseEvaluator(eRes.text, threshold);
       logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
@@ -129,7 +130,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       // Ручная пауза после Оценщика: автор видит вердикт, может ПОПРАВИТЬ ТЕКСТ руками,
       // принять как есть или вернуть Прозаику на точечную доработку по замечаниям.
       if(manual(state,'evaluator')){
-        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, formatVerdict(verdict), opts, {draft:pRes.text, editable:true});
+        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, formatVerdict(verdict), opts, {draft:pRes.text, editable:true, verdict});
         if(gt.approve){ best=(gt.text!=null && gt.text.trim())?gt.text.trim():pRes.text; bestEval=verdict; break; }
         if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; } // правки автора → база для доработки
         directive = gt.note || [...(verdict.notes||[]), ...((verdict.cliches||[]).length?['убери клише: '+verdict.cliches.join(', ')]:[])].join('; ') || directive;
@@ -150,6 +151,8 @@ export async function runScene(state, scene, opts={}, onProgress){
     if(agentEnabled('voiceguard')) guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples, ag(state,'voiceguard').strictness), flags));
     if(agentEnabled('logic'))      guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
     if(agentEnabled('events'))     guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
+    if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
+                                   guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
     // кастомные стражи (добавленные автором)
     (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
       guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
@@ -159,8 +162,8 @@ export async function runScene(state, scene, opts={}, onProgress){
       await Promise.all(guardJobs);
       onProgress && onProgress({log:{icon:'🛡', text:`Стражи: ${Object.values(flags).reduce((a,b)=>a+(b?b.length:0),0)} флагов`}});
       // Ручная пауза: если хоть один Страж в ручном режиме — показать флаги и ждать.
-      if(['voiceguard','logic','events'].some(r=>agentEnabled(r) && manual(state,r))){
-        await gate(state, ['voiceguard','logic','events'].find(r=>manual(state,r)), 'Стражи · флаги сцены', flagsText(flags), opts);
+      if(['voiceguard','logic','events','styleguard'].some(r=>agentEnabled(r) && manual(state,r))){
+        await gate(state, ['voiceguard','logic','events','styleguard'].find(r=>manual(state,r)), 'Стражи · флаги сцены', flagsText(flags), opts);
       }
     }
 

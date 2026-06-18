@@ -32,6 +32,7 @@ export function defaultState(){
       refs: [],                // стилевые ориентиры (авторы)
       density: 3, dialogue: 2, pace: 2,
       forbidden: ['клише','эмоц. ярлыки','восклицания'],
+      rules: [],               // правила автора (do/don't): идут Прозаику, Оценщику, Стражу стиля
       profanity: 'moderate',   // off | mild | moderate | strict
     },
     voice: {
@@ -75,9 +76,19 @@ export function defaultAgents(){
       desc:'Проверяет физику, время и причинность: возможно ли это в мире сцены. Видит только факты, не стиль. Параллельно.' },
     { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'events',
       desc:'Проверяет, что персонаж знает/чувствует то, что должен по прошлым событиям. Видит только факты. Параллельно.' },
+    { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'styleguard',
+      desc:'Ловит нарушения ваших «Правил автора» (do/don\'t) и показывает цитату. Только флагует. Параллельно с другими стражами.' },
     { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:1600, enabled:false, role:'lineedit',
       desc:'Лёгкая правка: убирает эмоциональные ярлыки, варьирует ритм, чистит клише. Единственный, кто меняет текст после Прозаика.' },
   ];
+}
+
+// Добавить правило автора (do/don't). Дедуп по тексту. Возвращает true, если добавлено.
+export function addRule(state, text){
+  text = (text||'').trim(); if(!text) return false;
+  state.style = state.style || {}; state.style.rules = state.style.rules || [];
+  if(state.style.rules.includes(text)) return false;
+  state.style.rules.push(text); return true;
 }
 
 let _agc = 0;

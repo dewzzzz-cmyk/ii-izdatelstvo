@@ -6,7 +6,8 @@
 import { callLLM } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
-         customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages } from './guards.js';
+         customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
+         styleGuardMessages } from './guards.js';
 import { bookContextBlock } from './context.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
@@ -24,7 +25,7 @@ export async function runAgentOnDemand(state, scene, agent){
   const role = agent.role;
 
   if(role==='evaluator'){
-    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene));
+    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
     const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
     return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7) };
   }
@@ -40,10 +41,14 @@ export async function runAgentOnDemand(state, scene, agent){
   }
   // стражи (включая кастомных) — только флагуют
   let msgs;
-  if(role==='voiceguard')   msgs = voiceGuardMessages(scene, draft, state.voice?.examples, agent.strictness);
-  else if(role==='logic')   msgs = logicGuardMessages(state, scene, draft, agent.strictness);
-  else if(role==='events')  msgs = eventsGuardMessages(state, scene, draft, agent.strictness);
-  else                      msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
+  if(role==='voiceguard')    msgs = voiceGuardMessages(scene, draft, state.voice?.examples, agent.strictness);
+  else if(role==='logic')    msgs = logicGuardMessages(state, scene, draft, agent.strictness);
+  else if(role==='events')   msgs = eventsGuardMessages(state, scene, draft, agent.strictness);
+  else if(role==='styleguard'){
+    if(!(state.style?.rules||[]).filter(Boolean).length) throw new Error('Нет правил автора — добавьте их на вкладке «Голос» или кнопкой «⊕ В правило».');
+    msgs = styleGuardMessages(draft, state.style.rules, agent.strictness);
+  }
+  else                       msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
   const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
@@ -59,7 +64,7 @@ export async function patchScene(state, scene, instruction){
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
   const cap = Math.min(4000, Math.max(1400, Math.round(draft.length/2) + 800));
   const res = await callLLM({ ...base, temperature:0.4,
-    messages: surgicalReviseMessages(draft, instruction), maxTokens:cap });
+    messages: surgicalReviseMessages(draft, instruction, state.style?.rules), maxTokens:cap });
   const out = (res.text||'').trim();
   if(out.length < draft.length*0.6) throw new Error('Ответ оборван — попробуйте ещё раз.');
   return out;

@@ -46,6 +46,10 @@ export function buildSceneContext(state, scene, opts={}){
   const voiceBlock = voicePromptBlock(voice, style.forbidden);
   if(voiceBlock) layers.push({ name:'voice', text:'=== ГОЛОС ===\n'+voiceBlock, fixed:true });
 
+  // 1b. Правила автора (do/don't) — фикс, не режется. Профилактика: Прозаик не порождает.
+  const rules = (style.rules||[]).filter(Boolean);
+  if(rules.length) layers.push({ name:'rules', text:'=== ПРАВИЛА АВТОРА (соблюдай неукоснительно) ===\n'+rules.map(r=>'— '+r).join('\n'), fixed:true });
+
   // 2. Параметры проекта (жанр/тон) — короткий фикс
   const proj = state.project;
   const projBlock = [

@@ -90,6 +90,16 @@ function factsBlock(state, scene){
 
 export function runGuardParse(text){ return parseFlags(text); }
 
+// ── Страж стиля (0.2): ловит нарушения «Правил автора» (do/don't). Цитирует. ──
+export function styleGuardMessages(draft, rules, strictness){
+  const list = (rules||[]).filter(Boolean);
+  const sys = 'Ты — страж стиля автора. Тебе дан список ПРАВИЛ автора (его «не делай так» и «делай так»). Отметь места в черновике, где правило нарушено. Ты НЕ переписываешь, только флагуешь, цитируя нарушающий фрагмент. Правила, которые не нарушены, не упоминай.\n'+strictnessLine(strictness);
+  const user = ['ПРАВИЛА АВТОРА:', list.map((r,i)=>`${i+1}. ${r}`).join('\n'), '', 'ЧЕРНОВИК:', draft, '',
+    'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"какое правило нарушено","detail":"в чём нарушение","quote":"фрагмент черновика"}] }. Только реальные нарушения правил. Только JSON.'
+  ].join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
 // Кастомный страж: пользовательский промпт проверки. Только флагует.
 export function customGuardMessages(state, scene, draft, prompt, strictness){
   const sys = 'Ты — кастомный страж сцены. Твоя задача от автора: ' + (prompt||'проверь сцену') +
@@ -102,13 +112,15 @@ export function customGuardMessages(state, scene, draft, prompt, strictness){
 // ── Хирургическая доработка по замечаниям: меняем ТОЛЬКО нужные фразы, ──
 // остальное оставляем дословно. Используется и ручным «Поправить точечно»,
 // и петлёй Прозаик⇄Оценщик (чтобы Прозаик правил фразы, а не переписывал всё).
-export function surgicalReviseMessages(draft, instruction){
+export function surgicalReviseMessages(draft, instruction, rules){
+  const rl = (rules||[]).filter(Boolean);
   const sys = [
     'Ты — редактор-хирург. Тебе дают полный текст сцены и замечания, что в нём исправить.',
     'Внеси МИНИМАЛЬНЫЕ правки, устраняющие только эти замечания: можешь изменить или добавить нужные фразы / короткий фрагмент.',
     'Всё, что не относится к замечаниям, оставь ДОСЛОВНО — те же предложения, тот же порядок, тот же голос и стиль.',
     'Не переписывай сцену заново, не переставляй абзацы, не «улучшай» то, о чём не просили.',
-  ].join('\n');
+    rl.length ? 'Соблюдай правила автора, не нарушай их при правке:\n'+rl.map(r=>'— '+r).join('\n') : '',
+  ].filter(Boolean).join('\n');
   const user = [
     'ЗАМЕЧАНИЯ (что исправить):', (instruction||'').trim() || 'улучши самые слабые места, остальное сохрани',
     '', 'ТЕКСТ СЦЕНЫ:', draft, '',

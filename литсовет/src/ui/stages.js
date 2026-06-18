@@ -1,7 +1,7 @@
 // Рендереры стадий. ПП1+2: Концепция (онбординг+режим), Голос (образец→примеры),
 // Структура (минимальный список сцен), Написание (редактор + запуск ядра).
 
-import { getState, save, uid } from '../state.js';
+import { getState, save, uid, addRule } from '../state.js';
 import { extractVoice } from '../voice.js';
 import { runScene } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
@@ -135,12 +135,15 @@ export function renderVoice(els){
         <div class="row"><button class="btn btn-primary" id="importBook">Импортировать и извлечь</button><span class="muted" id="vstatus"></span></div>
         ${(s.series||[]).length?`<div class="muted" style="margin-top:12px">Загруженные книги: ${(s.series||[]).map(b=>esc(b.title)).join(', ')}</div>`:''}
       `}
+      ${renderRulesEditor(s)}
+
       <div class="row" style="margin-top:18px;justify-content:flex-end">
         <button class="btn" id="toStruct">Дальше — Структура →</button>
       </div>
     </div>`;
 
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
+  bindRulesEditor();
 
   const ext=document.getElementById('extract');
   if(ext) ext.onclick = ()=>{
@@ -169,6 +172,39 @@ export function renderVoice(els){
   };
 
   document.getElementById('toStruct').onclick = ()=>{ s.ui.stage='structure'; save(); };
+}
+
+// Правила автора (do/don't): задаются один раз, идут Прозаику (профилактика),
+// Оценщику (штраф) и Стражу стиля (ловит). Пополняются и здесь, и через ⊕ в разборах.
+const STARTER_RULES = [
+  'Не называй эмоцию ярлыком — показывай её жестом, действием или деталью.',
+  'Эмоциональный сдвиг показывай только с явным триггером в тексте (что именно его вызвало).',
+  'Не ставь два телесных маркера реакции подряд (сглотнул / выдохнул / сердце ёкнуло).',
+  'Не заканчивай абзац декларацией-тезисом — давай вывод через конкретику или умолчание.',
+  'Избегай сравнений, тавтологичных теме сцены (оптические метафоры там, где речь об оптике, и т.п.).',
+];
+function renderRulesEditor(s){
+  const rules = (s.style.rules||[]);
+  return `<div class="field" style="margin-top:22px;border-top:1px solid var(--border);padding-top:16px">
+    <label>Правила автора <span class="hint">(чего избегать / как писать — идут Прозаику, Оценщику и Стражу стиля)</span></label>
+    <div id="rulesList">${rules.length
+      ? rules.map((r,i)=>`<div class="rule-item"><span>${esc(r)}</span><button class="rule-del" data-i="${i}" title="Удалить правило">✕</button></div>`).join('')
+      : `<div class="muted" style="font-size:12px">Пока пусто. Добавьте правило, копите их по ходу работы (кнопкой «⊕ В правило» в разборе Оценщика, флагах и инлайн-меню) или <button class="linklike" id="rulesSeed">засейте примерами из разбора</button>.</div>`}</div>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="ruleInput" placeholder="напр.: не называй эмоцию ярлыком — показывай жестом или деталью" style="flex:1">
+      <button class="btn" id="ruleAdd">Добавить</button>
+    </div>
+  </div>`;
+}
+function bindRulesEditor(){
+  const add=document.getElementById('ruleAdd'), inp=document.getElementById('ruleInput');
+  if(!add) return;
+  const doAdd=()=>{ const t=inp.value.trim(); if(!t) return; if(addRule(getState(), t)){ save(); } inp.value=''; };
+  add.onclick=doAdd;
+  inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); doAdd(); } };
+  document.querySelectorAll('.rule-del').forEach(b=>b.onclick=()=>{ const s=getState(); s.style.rules.splice(+b.dataset.i,1); save(); });
+  const seed=document.getElementById('rulesSeed');
+  if(seed) seed.onclick=()=>{ const s=getState(); STARTER_RULES.forEach(r=>addRule(s, r)); save(); };
 }
 
 function renderVoicePanel(v, s){
@@ -586,16 +622,26 @@ function openRegenSettings(s, scene){
 }
 
 // Модалка ручного режима: показывает результат агента, ждёт «Принять» или «Переписать».
-function approvalGate({role, label, output, draft, editable}){
+function approvalGate({role, label, output, draft, editable, verdict}){
   return new Promise(resolve=>{
     const root=document.getElementById('modalRoot');
     const isEval = role==='evaluator';
     const hint = isEval
-      ? '«Принять» — взять текст как есть и завершить (петля остановится, даже если оценка «на доработку»). «На доработку» — вернуть Прозаику, он точечно поправит фразы по замечаниям.'
+      ? '«Принять» — взять текст как есть и завершить (петля остановится, даже если оценка «на доработку»). «На доработку» — вернуть Прозаику, он точечно поправит фразы по замечаниям. «⊕ В правило» — закрепить навсегда: следующая доработка и все будущие сцены это учтут.'
       : '«Принять» — взять текст как есть и продолжить. «Переписать» — заново с вашей заметкой.';
-    const infoBlock = output
-      ? `<div style="max-height:200px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output)}</div>`
-      : '';
+    // Для Оценщика — структурированный вердикт с кнопками «⊕ В правило» у клише и замечаний.
+    let infoBlock = '';
+    if(verdict){
+      const cl=(verdict.cliches||[]).map(c=>`<div class="apv-row"><span>«${esc(c)}»</span><button class="apv-rule" data-rule="${esc('избегай штампа «'+c+'» и подобных шаблонных оборотов')}" title="Сделать правилом">⊕ В правило</button></div>`).join('');
+      const nt=(verdict.notes||[]).map(n=>`<div class="apv-row"><span>${esc(n)}</span><button class="apv-rule" data-rule="${esc(n)}" title="Сделать правилом">⊕ В правило</button></div>`).join('');
+      infoBlock=`<div class="apv-verdict">
+        <div class="muted" style="margin-bottom:4px">Оценка <b>${verdict.weighted}/10</b> (мин. ось ${verdict.minAxis}) · ${verdict.pass?'проходит порог':'на доработку'}</div>
+        ${cl?`<div class="ph2">Клише</div>${cl}`:''}
+        ${nt?`<div class="ph2">Замечания</div>${nt}`:''}
+      </div>`;
+    } else if(output){
+      infoBlock=`<div style="max-height:200px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output)}</div>`;
+    }
     const editBlock = editable
       ? `<div class="muted" style="margin:10px 0 4px">Текст черновика — можно поправить руками прямо здесь:</div>
          <textarea id="apvDraft" class="apv-draft" spellcheck="false">${esc(draft||'')}</textarea>`
@@ -611,6 +657,15 @@ function approvalGate({role, label, output, draft, editable}){
         <button class="btn btn-primary" id="apvOk">✓ Принять</button>
       </div>
     </div></div>`;
+    // ⊕ В правило: рождаем правило прямо из вердикта. Без save() — идёт прогон и
+    // ре-рендер оторвёт ссылку на редактор; правило в памяти сразу действует на
+    // следующую доработку, а на диск попадёт при завершении прогона.
+    document.querySelectorAll('.apv-rule').forEach(b=>b.onclick=()=>{
+      const t=prompt('Правило автора (как принцип, не привязка к одной сцене):', b.dataset.rule);
+      if(t==null||!t.trim()) return;
+      addRule(getState(), t.trim());
+      b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true;
+    });
     const getText=()=>{ const t=document.getElementById('apvDraft'); return t? t.value : undefined; };
     document.getElementById('apvOk').onclick=()=>{ const text=getText(); root.innerHTML=''; resolve({approve:true, text}); };
     document.getElementById('apvRedo').onclick=()=>{ const note=document.getElementById('apvNote').value.trim(); const text=getText(); root.innerHTML=''; resolve({approve:false, note, text}); };
@@ -676,8 +731,18 @@ function initSelectionMenu(edEl, scene, els){
     menu.style.display='flex';
     menu.style.top=(rect.top-appRect.top-38)+'px';
     menu.style.left=(rect.left-appRect.left)+'px';
-    menu.innerHTML=INLINE_ACTIONS.map(([label,key])=>`<button class="sm-btn" data-act="${key}">${label}</button>`).join('');
-    menu.querySelectorAll('.sm-btn').forEach(b=>b.onclick=()=>{ menu.style.display='none'; applyInlineEdit(scene, edEl, b.dataset.act, sel0, sel1); });
+    menu.innerHTML=INLINE_ACTIONS.map(([label,key])=>`<button class="sm-btn" data-act="${key}">${label}</button>`).join('')
+      + `<button class="sm-btn sm-rule" data-act="__rule" title="Сделать правилом автора — впредь избегать подобного">⊕ В правило</button>`;
+    menu.querySelectorAll('.sm-btn').forEach(b=>b.onclick=()=>{
+      menu.style.display='none';
+      if(b.dataset.act==='__rule'){
+        const sel=edEl.textContent.slice(sel0, sel1).trim();
+        const t=prompt('Правило автора (как принцип, не привязка к сцене):', 'избегай оборотов вроде «'+sel.slice(0,80)+'»');
+        if(t&&t.trim()){ addRule(getState(), t.trim()); save(); }
+        return;
+      }
+      applyInlineEdit(scene, edEl, b.dataset.act, sel0, sel1);
+    });
   });
   document.addEventListener('mousedown', e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; });
 }
