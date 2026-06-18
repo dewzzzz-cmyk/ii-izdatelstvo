@@ -12,6 +12,7 @@ import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfCha
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
 import { importSeriesBook } from '../series.js';
+import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -517,27 +518,55 @@ async function doRun(els, s, scene, directive){
 }
 
 // Плавающее меню по выделению текста → директива, привязанная к фрагменту.
+// Смещение точки (node, offset) в символах внутри контейнера.
+function charOffset(container, node, nodeOffset){
+  const r=document.createRange(); r.selectNodeContents(container); r.setEnd(node, nodeOffset);
+  return r.toString().length;
+}
+
 function initSelectionMenu(edEl, scene, els){
   const menu = document.getElementById('selMenu');
   if(!menu) return;
-  const actions = [
-    ['Переписать','перепиши выделенный фрагмент'],
-    ['Сократить','сократи выделенный фрагмент'],
-    ['Усилить','усиль выделенный фрагмент, добавь напряжения'],
-    ['Деталь мира','добавь конкретную деталь мира в выделенный фрагмент'],
-    ['Продолжить','продолжи прозу от выделенного фрагмента'],
-  ];
+  let sel0=0, sel1=0;  // офсеты выделения в тексте редактора
   edEl.addEventListener('mouseup', ()=>{
     const sel=window.getSelection();
-    const text=sel.toString().trim();
-    if(!text){ menu.style.display='none'; return; }
-    const rect=sel.getRangeAt(0).getBoundingClientRect();
+    const text=sel.toString();
+    if(!text.trim()){ menu.style.display='none'; return; }
+    const range=sel.getRangeAt(0);
+    sel0 = charOffset(edEl, range.startContainer, range.startOffset);
+    sel1 = charOffset(edEl, range.endContainer, range.endOffset);
+    if(sel1<sel0){ const t=sel0; sel0=sel1; sel1=t; }
+    const rect=range.getBoundingClientRect();
     const appRect=document.getElementById('app').getBoundingClientRect();
     menu.style.display='flex';
     menu.style.top=(rect.top-appRect.top-38)+'px';
     menu.style.left=(rect.left-appRect.left)+'px';
-    menu.innerHTML=actions.map(([label,d])=>`<button class="sm-btn" data-d="${esc(d)}: «${esc(text.slice(0,60))}»">${label}</button>`).join('');
-    menu.querySelectorAll('.sm-btn').forEach(b=>b.onclick=()=>{ menu.style.display='none'; doRun(els, getState(), scene, b.dataset.d); });
+    menu.innerHTML=INLINE_ACTIONS.map(([label,key])=>`<button class="sm-btn" data-act="${key}">${label}</button>`).join('');
+    menu.querySelectorAll('.sm-btn').forEach(b=>b.onclick=()=>{ menu.style.display='none'; applyInlineEdit(scene, edEl, b.dataset.act, sel0, sel1); });
   });
   document.addEventListener('mousedown', e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; });
+}
+
+// Точечная правка: меняем ТОЛЬКО выделенный фрагмент и вставляем на место.
+async function applyInlineEdit(scene, edEl, action, start, end){
+  const s=getState();
+  if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+  const full = edEl.textContent;
+  const selected = full.slice(start, end);
+  if(!selected.trim()) return;
+  const before = full.slice(Math.max(0, start-400), start);
+  const after  = full.slice(end, end+400);
+  edEl.style.opacity='0.55'; edEl.setAttribute('aria-busy','1');
+  try{
+    const fresh = await transformSelection(s, action, selected, before, after);
+    if(!fresh){ return; }
+    const newText = action==='continue'
+      ? full.slice(0, end) + (full[end-1]==='\n'?'':' ') + fresh + full.slice(end)
+      : full.slice(0, start) + fresh + full.slice(end);
+    scene.proseVersions = scene.proseVersions || [];
+    scene.proseVersions.unshift(scene.text);            // прошлый вариант — для отката
+    if(scene.proseVersions.length>10) scene.proseVersions.length=10;
+    scene.text = newText; scene.words=(newText.match(/\S+/g)||[]).length;
+    save();
+  }catch(e){ edEl.style.opacity=''; alert('Не удалось: '+e.message); }
 }
