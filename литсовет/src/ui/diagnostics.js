@@ -82,15 +82,21 @@ function bindFlagFix(){
   });
 }
 
-export function renderDiagnostics(){
+// Анализ сцены (правая панель, верх): флаги Стражей.
+export function renderSceneAnalysis(){
+  const s = getState();
+  const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
+  setTimeout(bindFlagFix, 0);
+  return renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Флаги Стражей появятся после прогона.</div>`;
+}
+
+// Пайплайн агентов (тумблеры + настройки) + прогоны.
+export function renderAgentPipeline(){
   const s = getState();
   const agents = s.agents||[];
   const runs = getRuns();
-  const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
-  setTimeout(()=>{ bindToggles(); bindFlagFix(); }, 0);
+  setTimeout(bindToggles, 0);
   return `
-    ${renderFlags(activeScene)}
-    <div class="ph">Агенты <span style="font-weight:400;text-transform:none;letter-spacing:0">диагностика</span></div>
     <div class="diag-section">
       ${agents.map(a=>`
         <div class="agent-toggle" data-open="${a.id}">
@@ -101,11 +107,16 @@ export function renderDiagnostics(){
         ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`).join('')}
     </div>
     <div class="ph">Прогоны</div>
-    ${runs.length? runs.slice(0,5).map(renderRun).join('') : '<div class="empty-state">Прогонов ещё не было.</div>'}
+    ${runs.length? runs.slice(0,4).map(renderRun).join('') : '<div class="empty-state">Прогонов ещё не было.</div>'}
   `;
 }
 
-function rerenderDiag(){ const body=document.getElementById('rtabBody'); if(body) body.innerHTML=renderDiagnostics(); }
+export function renderDiagnostics(){ return renderSceneAnalysis() + renderAgentPipeline(); }
+
+function rerenderDiag(){
+  const host=document.getElementById('agentHost'); if(host){ host.innerHTML=renderAgentPipeline(); return; }
+  const body=document.getElementById('rtabBody'); if(body) body.innerHTML=renderDiagnostics();
+}
 
 function bindToggles(){
   document.querySelectorAll('.toggle[data-role]').forEach(t=>{

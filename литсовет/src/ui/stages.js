@@ -4,7 +4,7 @@
 import { getState, save, uid } from '../state.js';
 import { extractVoice } from '../voice.js';
 import { runScene } from '../pipeline.js';
-import { renderDiagnostics } from './diagnostics.js';
+import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton } from '../architect-book.js';
@@ -16,15 +16,27 @@ import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-let _rightTab = 'diag'; // diag | mem
-let _busy = false;       // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
+let _rightTab = 'roadmap'; // roadmap | agents | mem
+let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
+// Правая панель «Написания»: ВЕРХ — анализ сцены (флаги), НИЗ — вкладки Роадмап/Агенты/Память.
 function renderRightPanel(els){
+  const s=getState();
+  const bottom = _rightTab==='roadmap' ? renderRoadmap(s)
+    : _rightTab==='agents' ? `<div id="agentHost">${renderAgentPipeline()}</div>`
+    : renderMemory();
+  els.right.className='panel panel-right split';
   els.right.innerHTML = `
-    <div class="rtabs">
-      <button class="rtab ${_rightTab==='diag'?'active':''}" data-rt="diag">Диагностика</button>
-      <button class="rtab ${_rightTab==='mem'?'active':''}" data-rt="mem">Память</button>
+    <div class="sect sect-top">
+      <div class="sect-scroll">${renderSceneAnalysis()}</div>
     </div>
-    <div id="rtabBody">${_rightTab==='diag'?renderDiagnostics():renderMemory()}</div>`;
+    <div class="sect sect-bot">
+      <div class="rtabs">
+        <button class="rtab ${_rightTab==='roadmap'?'active':''}" data-rt="roadmap">Роадмап</button>
+        <button class="rtab ${_rightTab==='agents'?'active':''}" data-rt="agents">Агенты</button>
+        <button class="rtab ${_rightTab==='mem'?'active':''}" data-rt="mem">Память</button>
+      </div>
+      <div class="sect-scroll" id="rtabBody">${bottom}</div>
+    </div>`;
   els.right.querySelectorAll('.rtab').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
 }
 
@@ -402,64 +414,79 @@ export function renderWrite(els){
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
 const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['edit','Редактура']];
-export function renderEdit(els){
-  const s = getState();
+// Роадмап — переиспользуемая секция (правая панель «Написания» + стадия «Редактура»).
+export function renderRoadmap(s){
   const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
   const scenes = (s.structure||[]).filter(n=>n.type==='scene');
   const doneScenes = scenes.filter(sc=>sc.status==='done');
   const totalWords = doneScenes.reduce((a,sc)=>a+(sc.words||0),0);
   const cost = (s.diagnostics?.runs||[]).reduce((a,r)=>a+(r.totalCost||0),0);
   const avgVoice = (()=>{ const v=doneScenes.map(sc=>sc.lastEval?.scores?.voice).filter(Boolean); return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length*10)/10:'—'; })();
+  return `<div class="pad">
+    <div class="rm-section">
+      <div class="rm-h">Этапы производства</div>
+      ${STAGE_LABELS.map(([id,label])=>{
+        const done=stageDoneFor(s,id); const cur=s.ui.stage===id;
+        return `<div class="rm-stage"><span class="rm-dot ${done&&!cur?'done':cur?'cur':'todo'}">${done&&!cur?'✓':cur?'▶':'○'}</span>${label}</div>`;
+      }).join('')}
+    </div>
+    <div class="rm-section">
+      <div class="rm-h">Главы · прогресс</div>
+      ${chapters.length?chapters.map(ch=>{
+        const cs=scenesOfChapter(s,ch.id); const cd=cs.filter(x=>x.status==='done').length;
+        const pct=cs.length?Math.round(cd/cs.length*100):0;
+        return `<div class="rm-chap"><div class="rm-chap-row"><span>${esc(ch.title)}</span><span class="muted">${cd}/${cs.length}${ch.closed?' ✓':''}</span></div><div class="rm-bar"><div class="rm-fill" style="width:${pct}%;background:${ch.closed?'var(--ok)':'var(--accent)'}"></div></div></div>`;
+      }).join(''):'<div class="muted">Глав нет.</div>'}
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-val">${doneScenes.length}/${scenes.length}</div><div class="stat-lbl">сцен готово</div></div>
+      <div class="stat-card"><div class="stat-val">${totalWords.toLocaleString('ru')}</div><div class="stat-lbl">слов</div></div>
+      <div class="stat-card"><div class="stat-val">$${cost.toFixed(3)}</div><div class="stat-lbl">потрачено</div></div>
+      <div class="stat-card"><div class="stat-val">${avgVoice}</div><div class="stat-lbl">ср. голос</div></div>
+    </div>
+    <div class="rm-section">
+      <div class="rm-h">Контекст для агентов</div>
+      <div class="chips">
+        ${s.project.genre?`<span class="tag" style="background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)">${esc(s.project.genre)}</span>`:''}
+        ${s.project.era?`<span class="tag">${esc(s.project.era)}</span>`:''}
+        ${(s.style.refs||[]).map(r=>`<span class="tag" style="background:var(--ok-bg);color:var(--ok);border-color:var(--ok-border)">${esc(r)}</span>`).join('')}
+        ${(s.style.forbidden||[]).map(f=>`<span class="tag" style="background:var(--err-bg);color:var(--err);border-color:var(--err-border)">↯ ${esc(f)}</span>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
 
-  els.left.innerHTML = `<div class="ph">Прогресс</div>${renderSceneList(s)}`;
-  els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; s.ui.stage='write'; save(); });
-  els.right.innerHTML = '';
+// Редактура — чтение собранной книги целиком + экспорт. Роадмап теперь живёт
+// в правой панели «Написания», поэтому здесь — только книга как книга.
+export function renderEdit(els){
+  const s = getState();
+  const nodes = s.structure||[];
+  const doneScenes = nodes.filter(n=>n.type==='scene' && n.status==='done' && n.text);
+
+  els.left.innerHTML = `<div class="ph">Главы</div>${renderSceneList(s)}`;
+  els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{
+    const el=document.getElementById('read-'+r.dataset.sc); if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+  els.right.innerHTML = `<div class="ph">Готовность книги</div>${renderRoadmap(s)}`;
+  els.center.className='panel panel-center read-mode';
+
+  let body='';
+  nodes.forEach(n=>{
+    if(n.type==='chapter') body+=`<h2 class="read-ch">${esc(n.title)}</h2>`;
+    else if(n.type==='scene' && n.text) body+=`<div class="read-scene" id="read-${n.id}"><div class="read-scene-t">${esc(n.title)}</div><div class="read-prose">${esc(n.text)}</div></div>`;
+  });
 
   els.center.innerHTML = `
-    <div class="pad" style="max-width:680px">
-      <div class="rm-section">
-        <div class="rm-h">Этапы производства</div>
-        ${STAGE_LABELS.map(([id,label])=>{
-          const done = stageDoneFor(s,id); const cur = id==='edit';
-          return `<div class="rm-stage"><span class="rm-dot ${done?'done':cur?'cur':'todo'}">${done?'✓':cur?'▶':'○'}</span>${label}</div>`;
-        }).join('')}
-      </div>
-
-      <div class="rm-section">
-        <div class="rm-h">Главы · прогресс</div>
-        ${chapters.length?chapters.map(ch=>{
-          const cs=scenesOfChapter(s,ch.id); const cd=cs.filter(x=>x.status==='done').length;
-          const pct=cs.length?Math.round(cd/cs.length*100):0;
-          return `<div class="rm-chap"><div class="rm-chap-row"><span>${esc(ch.title)}</span><span class="muted">${cd}/${cs.length}${ch.closed?' ✓':''}</span></div><div class="rm-bar"><div class="rm-fill" style="width:${pct}%;background:${ch.closed?'var(--ok)':'var(--accent)'}"></div></div></div>`;
-        }).join(''):'<div class="muted">Глав нет.</div>'}
-      </div>
-
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val">${doneScenes.length}/${scenes.length}</div><div class="stat-lbl">сцен готово</div></div>
-        <div class="stat-card"><div class="stat-val">${totalWords.toLocaleString('ru')}</div><div class="stat-lbl">слов</div></div>
-        <div class="stat-card"><div class="stat-val">$${cost.toFixed(3)}</div><div class="stat-lbl">потрачено</div></div>
-        <div class="stat-card"><div class="stat-val">${avgVoice}</div><div class="stat-lbl">ср. голос</div></div>
-      </div>
-
-      <div class="rm-section">
-        <div class="rm-h">Контекст для агентов</div>
-        <div class="chips">
-          ${s.project.genre?`<span class="tag" style="background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)">${esc(s.project.genre)}</span>`:''}
-          ${s.project.era?`<span class="tag">${esc(s.project.era)}</span>`:''}
-          ${(s.style.refs||[]).map(r=>`<span class="tag" style="background:var(--ok-bg);color:var(--ok);border-color:var(--ok-border)">${esc(r)}</span>`).join('')}
-          ${(s.style.forbidden||[]).map(f=>`<span class="tag" style="background:var(--err-bg);color:var(--err);border-color:var(--err-border)">↯ ${esc(f)}</span>`).join('')}
-        </div>
-      </div>
-
-      <div class="rm-h">Экспорт книги</div>
-      <div class="chips">
-        <button class="btn" id="exMd">📕 .md</button>
-        <button class="btn" id="exDocx">📄 .doc (Word)</button>
-        <button class="btn" id="exEpub">📗 .epub</button>
-        <button class="btn" id="exJson">⬇ .json (проект)</button>
-      </div>
-      ${!doneScenes.length?'<div class="muted" style="margin-top:8px">Напишите хотя бы одну сцену, чтобы экспортировать.</div>':''}
-    </div>`;
+    <div class="read-bar">
+      <span class="read-title">${esc(s.project.title||'Книга')}</span>
+      <span class="read-meta">${doneScenes.length} сцен · ${doneScenes.reduce((a,x)=>a+(x.words||0),0).toLocaleString('ru')} сл.</span>
+      <span style="flex:1"></span>
+      <button class="btn" id="exMd">📕 .md</button>
+      <button class="btn" id="exDocx">📄 .doc</button>
+      <button class="btn" id="exEpub">📗 .epub</button>
+      <button class="btn" id="exJson">⬇ .json</button>
+    </div>
+    <div class="read-body">${doneScenes.length?body:'<div class="empty-state">Напишите сцены — здесь книга соберётся целиком для финального чтения.</div>'}</div>`;
 
   document.getElementById('exMd').onclick=()=>exportMd(s);
   document.getElementById('exDocx').onclick=()=>exportDocx(s);

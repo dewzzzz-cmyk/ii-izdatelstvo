@@ -52,6 +52,10 @@ function renderRail(){
 function renderStage(){
   const s = getState();
   const stage = s.ui.stage;
+  // сбрасываем классы панелей (split добавляют сами стадии)
+  els.left.className='panel panel-left';
+  els.right.className='panel panel-right';
+  els.center.className='panel panel-center';
   if(stage==='concept'){ renderConcept(els); }
   else if(stage==='voice'){ renderVoice(els); }
   else if(stage==='structure'){ renderStructure(els); }
