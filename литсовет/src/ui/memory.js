@@ -5,6 +5,8 @@ import { getState, save } from '../state.js';
 import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
+import { callLLM } from '../llm.js';
+import { rebuildBibleVecs } from '../bible.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -42,10 +44,17 @@ export function renderMemory(){
 
       ${driftBlock(scenes)}
 
-      ${s.bible&&s.bible.length?`
-        <div class="mem-h">Канон / Bible (${s.bible.length})</div>
-        ${s.bible.slice(0,8).map(b=>`<div class="mem-card"><div class="mem-title" style="color:var(--accent)">${esc(b.keys||'факт')}</div><div class="muted" style="font-size:12px">${esc(b.text)}</div></div>`).join('')}
-      `:''}
+      <div class="mem-h">Канон / Bible (${(s.bible||[]).length}) <button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button></div>
+      ${(s.bible||[]).map((b,i)=>`
+        <div class="mem-card bible-card" data-bi="${i}">
+          <div class="bible-actions">
+            <button class="bc-act" data-act="edit" data-bi="${i}" title="Редактировать">✏</button>
+            <button class="bc-act" data-act="expand" data-bi="${i}" title="✨ AI-расширить факт">✨</button>
+            <button class="bc-act" data-act="del" data-bi="${i}" title="Удалить">🗑</button>
+          </div>
+          <div class="mem-title" style="color:var(--accent)">${esc(b.keys||'факт')}</div>
+          <div class="muted" style="font-size:12px">${esc(b.text)}</div>
+        </div>`).join('') || '<div class="muted">Канон пуст — факты появятся при написании или добавьте вручную.</div>'}
     </div>`;
 }
 
@@ -101,6 +110,34 @@ function bindMemory(){
   });
   document.querySelectorAll('.mem-rb').forEach(b=>{
     b.onclick=()=>{ const s=getState(); if(rollback(s, b.dataset.level, b.dataset.id, 0)){ save(); } };
+  });
+  // Bible: добавить факт
+  const ba=document.getElementById('bibleAdd');
+  if(ba) ba.onclick=()=>{
+    const keys=prompt('Ключи факта (через запятую, напр.: «город, климат»):'); if(keys===null) return;
+    const text=prompt('Сам факт:'); if(!text) return;
+    const s=getState(); s.bible.push({keys:keys.trim(), text:text.trim()}); rebuildBibleVecs(s.bible); save();
+  };
+  // Bible: ред./AI-расширить/удалить
+  document.querySelectorAll('.bc-act').forEach(b=>b.onclick=async (e)=>{
+    e.stopPropagation();
+    const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
+    if(b.dataset.act==='del'){ s.bible.splice(i,1); rebuildBibleVecs(s.bible); save(); return; }
+    if(b.dataset.act==='edit'){
+      const keys=prompt('Ключи:', fact.keys||''); if(keys===null) return;
+      const text=prompt('Факт:', fact.text||''); if(text===null) return;
+      fact.keys=keys.trim(); fact.text=text.trim(); rebuildBibleVecs(s.bible); save(); return;
+    }
+    if(b.dataset.act==='expand'){
+      if(!s.global.apiKey){ alert('Задайте API-ключ (⚙).'); return; }
+      b.textContent='…'; b.disabled=true;
+      try{
+        const res=await callLLM({ baseURL:s.global.baseURL, apiKey:s.global.apiKey, model:s.global.model, temperature:0.6,
+          messages:[{role:'system',content:'Ты — архивариус мира книги. Расширь канонический факт конкретными деталями (1-2 предложения), не противореча исходному. Верни только текст факта.'},
+            {role:'user',content:`Жанр: ${s.project.genre||''}. Факт: ${fact.text}`}], maxTokens:300 });
+        if(res.text){ fact.text=res.text.trim(); rebuildBibleVecs(s.bible); save(); }
+      }catch(err){ alert('Не удалось: '+err.message); b.disabled=false; b.textContent='✨'; }
+    }
   });
   document.querySelectorAll('.mem-rs').forEach(b=>{
     b.onclick=async ()=>{

@@ -6,6 +6,7 @@ import { extractVoice } from '../voice.js';
 import { runScene } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
+import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
@@ -23,6 +24,7 @@ function renderRightPanel(els){
   const s=getState();
   const bottom = _rightTab==='roadmap' ? renderRoadmap(s)
     : _rightTab==='agents' ? `<div id="agentHost">${renderAgentPipeline()}</div>`
+    : _rightTab==='chat' ? renderChat()
     : renderMemory();
   els.right.className='panel panel-right split';
   els.right.innerHTML = `
@@ -34,8 +36,9 @@ function renderRightPanel(els){
         <button class="rtab ${_rightTab==='roadmap'?'active':''}" data-rt="roadmap">Роадмап</button>
         <button class="rtab ${_rightTab==='agents'?'active':''}" data-rt="agents">Агенты</button>
         <button class="rtab ${_rightTab==='mem'?'active':''}" data-rt="mem">Память</button>
+        <button class="rtab ${_rightTab==='chat'?'active':''}" data-rt="chat">Чат</button>
       </div>
-      <div class="sect-scroll" id="rtabBody">${bottom}</div>
+      <div class="sect-scroll ${_rightTab==='chat'?'no-pad-scroll':''}" id="rtabBody">${bottom}</div>
     </div>`;
   els.right.querySelectorAll('.rtab').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
 }

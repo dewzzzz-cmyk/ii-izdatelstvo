@@ -7,13 +7,13 @@ import { buildSceneContext } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
-         lineEditMessages, runGuardParse } from './guards.js';
+         lineEditMessages, runGuardParse, customGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 
-// Конфиг агента по роли (temp, maxTokens, strictness и т.п. — настраиваются ползунками).
-function ag(state, role){ return (state.agents||[]).find(a=>a.role===role) || {}; }
+// Конфиг агента по роли ИЛИ id (для кастомных). Настраивается ползунками.
+function ag(state, role){ return (state.agents||[]).find(a=>a.role===role || a.id===role) || {}; }
 function manual(state, role){ return ag(state, role).manual === true; }
 
 // Пауза на подтверждение в ручном режиме. Возвращает {approve} или {approve:false, note}.
@@ -131,6 +131,10 @@ export async function runScene(state, scene, opts={}, onProgress){
     if(agentEnabled('voiceguard')) guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples, ag(state,'voiceguard').strictness), flags));
     if(agentEnabled('logic'))      guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
     if(agentEnabled('events'))     guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
+    // кастомные стражи (добавленные автором)
+    (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
+      guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
+    });
     if(guardJobs.length){
       onProgress && onProgress({stage:'guards', text:'Стражи проверяют сцену…'});
       await Promise.all(guardJobs);

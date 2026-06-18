@@ -63,14 +63,35 @@ export function defaultState(){
 // Реестр агентов с дефолтами. Каждый включаем/отключаем (диагностический режим).
 export function defaultAgents(){
   return [
-    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:600, enabled:true, role:'architect' },
-    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:1600, enabled:true, role:'prose', loop:true },
-    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:700, enabled:true, role:'evaluator' },
-    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'voiceguard' },
-    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'logic' },
-    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'events' },
-    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:1600, enabled:false, role:'lineedit' },
+    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:600, enabled:true, role:'architect',
+      desc:'Планирует сцену: ключевые детали, шаги, запрещённые слова. Не пишет прозу — готовит каркас для Прозаика.' },
+    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:1600, enabled:true, role:'prose', loop:true,
+      desc:'Пишет прозу сцены по брифу и контексту. В петле с Оценщиком дорабатывает черновик, пока тот не примет.' },
+    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:700, enabled:true, role:'evaluator',
+      desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },
+    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'voiceguard',
+      desc:'Сверяет стиль и ритм с образцом вашего голоса, цитируя образец. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
+    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'logic',
+      desc:'Проверяет физику, время и причинность: возможно ли это в мире сцены. Видит только факты, не стиль. Параллельно.' },
+    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'events',
+      desc:'Проверяет, что персонаж знает/чувствует то, что должен по прошлым событиям. Видит только факты. Параллельно.' },
+    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:1600, enabled:false, role:'lineedit',
+      desc:'Лёгкая правка: убирает эмоциональные ярлыки, варьирует ритм, чистит клише. Единственный, кто меняет текст после Прозаика.' },
   ];
+}
+
+let _agc = 0;
+// Добавить кастомного агента-стража (флагует по своему промпту, безопасно).
+export function addCustomAgent(state, name, prompt){
+  const a = { id:'custom_'+(Date.now().toString(36))+(_agc++), name:name||'Свой страж', icon:'🛡',
+    temp:0.2, maxTokens:700, strictness:2, enabled:true, role:'custom', custom:true,
+    prompt: prompt||'Проверь сцену и отметь проблемы.', desc:'Кастомный страж: '+(prompt||'').slice(0,80) };
+  state.agents.push(a); return a;
+}
+export function removeAgent(state, id){
+  const a=(state.agents||[]).find(x=>x.id===id);
+  if(a && a.custom){ state.agents = state.agents.filter(x=>x.id!==id); return true; }
+  return false; // встроенных не удаляем — их можно только выключить тумблером
 }
 
 // ---- Глобальное состояние сессии ----
@@ -125,12 +146,14 @@ function migrate(s){
   else {
     const byId = Object.fromEntries(s.agents.map(a=>[a.id, a]));
     const KEEP = ['enabled','temp','maxTokens','strictness','manual'];
-    s.agents = d.agents.map(da => {
+    const builtins = d.agents.map(da => {
       if(!byId[da.id]) return da;
       const merged = Object.assign({}, da);
       KEEP.forEach(k=>{ if(byId[da.id][k]!==undefined) merged[k]=byId[da.id][k]; });
       return merged;
     });
+    const customs = s.agents.filter(a=>a.custom); // кастомные агенты сохраняем как есть
+    s.agents = [...builtins, ...customs];
   }
   s.ui = s.ui || { stage:'concept' };
   s.characters = s.characters || [];

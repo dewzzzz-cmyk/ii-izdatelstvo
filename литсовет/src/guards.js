@@ -76,6 +76,15 @@ function factsBlock(state, scene){
 
 export function runGuardParse(text){ return parseFlags(text); }
 
+// Кастомный страж: пользовательский промпт проверки. Только флагует.
+export function customGuardMessages(state, scene, draft, prompt, strictness){
+  const sys = 'Ты — кастомный страж сцены. Твоя задача от автора: ' + (prompt||'проверь сцену') +
+    '\nТы НЕ переписываешь текст, только отмечаешь проблемы.\n' + strictnessLine(strictness);
+  const user = ['СЦЕНА:', draft, '',
+    'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"кратко","detail":"что не так","quote":"фрагмент"}] }. Только JSON.'].join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
 // ── Линейный редактор (0.3): убирает ярлыки, варьирует ритм. ПРАВИТ текст. ──
 export function lineEditMessages(draft, forbidden){
   const sys = 'Ты — линейный редактор. Лёгкая правка: убери эмоциональные ярлыки (замени на действие/деталь), разнообразь ритм предложений, убери лишние наречия и клише. Сохрани смысл, сюжет и голос. Не добавляй новых событий.';

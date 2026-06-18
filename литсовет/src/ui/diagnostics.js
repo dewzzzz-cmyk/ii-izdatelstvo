@@ -1,6 +1,6 @@
 // Правая панель: диагностический режим — toggle агентов + трейс прогонов.
 
-import { getState, save } from '../state.js';
+import { getState, save, addCustomAgent, removeAgent } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 
@@ -39,6 +39,9 @@ function renderAgentParams(a, global){
       </div>
     </div>
     <div class="ap-hint" style="margin:-4px 0 8px">${a.manual?'пауза после агента — вы подтверждаете каждый шаг':'агент работает без остановок'}</div>
+    ${a.desc?`<div class="ap-desc">${esc(a.desc)}</div>`:''}
+    ${a.custom?`<div class="ap-row"><span class="ap-label">Что проверять (промпт)</span>
+      <textarea class="ap-prompt" data-aid="${a.id}" rows="2" placeholder="напр.: проверь, что даты и возраст персонажей не противоречат друг другу">${esc(a.prompt||'')}</textarea></div>`:''}
     ${specs.map(sp=>{
       const cur = sp.target==='agent' ? (a[sp.key]??sp.def) : (global[sp.key]??sp.def);
       return `<div class="ap-row">
@@ -48,6 +51,7 @@ function renderAgentParams(a, global){
         <div class="ap-hint">${sp.hint}</div>
       </div>`;
     }).join('')}
+    ${a.custom?`<button class="btn ag-remove" data-aid="${a.id}" style="font-size:11px;color:var(--err)">🗑 Удалить стража</button>`:''}
   </div>`;
 }
 const SEV_RANK = { critical:0, warning:1, ok:2 };
@@ -64,7 +68,7 @@ function renderFlags(scene){
     <div class="flags-list">
       ${all.map(f=>`<div class="flag-item">
         <div class="flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span>
-          <span class="flag-role">${GUARD_LABELS[f.role]||f.role}</span></div>
+          <span class="flag-role">${GUARD_LABELS[f.role] || (getState().agents.find(a=>a.id===f.role)?.name) || f.role}</span></div>
         <div class="flag-title">${esc(f.title)}</div>
         ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
         ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
@@ -90,22 +94,34 @@ export function renderSceneAnalysis(){
   return renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Флаги Стражей появятся после прогона.</div>`;
 }
 
-// Пайплайн агентов (тумблеры + настройки) + прогоны.
+// Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
+const PARALLEL_ROLES = new Set(['voiceguard','logic','events','custom']);
 export function renderAgentPipeline(){
   const s = getState();
   const agents = s.agents||[];
   const runs = getRuns();
-  setTimeout(bindToggles, 0);
+  setTimeout(bindAgents, 0);
+  let prevPar = false;
+  const rows = agents.map((a,i)=>{
+    const isPar = PARALLEL_ROLES.has(a.role) && a.enabled!==false;
+    const sep = (isPar && !prevPar) ? '<div class="par-sep" data-tip="Эти агенты-стражи работают одновременно (параллельно) — быстрее и независимо друг от друга.">∥ параллельный шаг</div>' : '';
+    prevPar = isPar;
+    const badges =
+      (a.role==='prose'&&a.loop?'<span class="ag-badge loop" data-tip="Петля с Оценщиком: Прозаик дорабатывает черновик, пока Оценщик не примет (до макс. итераций).">↻</span>':'') +
+      (isPar?'<span class="ag-badge par" data-tip="Идёт параллельно с другими стражами.">∥</span>':'') +
+      (a.manual?'<span class="ag-badge man" data-tip="Ручной режим: пауза после агента, вы подтверждаете каждый шаг.">✋</span>':'');
+    return `${sep}
+      <div class="agent-toggle ${isPar?'is-par':''}" data-open="${a.id}" draggable="true" data-drag="${a.id}" data-tip="${esc(a.desc||'')}">
+        <span class="ag-grip" title="перетащить">⋮⋮</span>
+        <span style="font-size:15px">${a.icon}</span>
+        <span class="at-name">${esc(a.name)} ${badges}<span class="at-temp">${_openAgents.has(a.id)?'▾':'⚙'}</span></span>
+        <div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}" data-id="${a.id}"></div>
+      </div>
+      ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`;
+  }).join('');
   return `
-    <div class="diag-section">
-      ${agents.map(a=>`
-        <div class="agent-toggle" data-open="${a.id}">
-          <span style="font-size:15px">${a.icon}</span>
-          <span class="at-name">${esc(a.name)} <span class="at-temp">${_openAgents.has(a.id)?'▾':'⚙'}</span></span>
-          <div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}"></div>
-        </div>
-        ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`).join('')}
-    </div>
+    <div class="diag-section" id="agentRows">${rows}</div>
+    <button class="btn btn-block" id="addAgentBtn" style="margin:6px 12px;width:calc(100% - 24px)" data-tip="Добавить своего стража: он проверит сцену по вашему описанию и поставит флаги. Не меняет текст.">+ Добавить стража</button>
     <div class="ph">Прогоны</div>
     ${runs.length? runs.slice(0,4).map(renderRun).join('') : '<div class="empty-state">Прогонов ещё не было.</div>'}
   `;
@@ -145,6 +161,40 @@ function bindToggles(){
   });
   document.querySelectorAll('.run-card .rc-head').forEach(h=>{
     h.onclick=()=>{ const b=h.nextElementSibling; if(b) b.style.display = b.style.display==='none'?'block':'none'; };
+  });
+}
+
+// Полная привязка панели агентов: тумблеры, раскрытие, ползунки, режим,
+// добавление/удаление, drag-and-drop, промпт кастомного агента.
+function bindAgents(){
+  bindToggles();
+  // тумблер вкл/выкл по id (включая кастомных)
+  document.querySelectorAll('.toggle[data-id]').forEach(t=>{
+    t.onclick=(e)=>{ e.stopPropagation(); const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.id); if(a){ a.enabled=!(a.enabled!==false); save(); } };
+  });
+  // промпт кастомного агента
+  document.querySelectorAll('.ap-prompt').forEach(t=>t.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.aid); if(a){ a.prompt=t.value; save(); } }));
+  // удалить кастомного агента
+  document.querySelectorAll('.ag-remove').forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); const s=getState(); if(removeAgent(s, b.dataset.aid)){ _openAgents.delete(b.dataset.aid); save(); } });
+  // добавить стража
+  const add=document.getElementById('addAgentBtn');
+  if(add) add.onclick=()=>{
+    const name=prompt('Название стража (напр.: «Страж дат»):'); if(name===null) return;
+    const p=prompt('Что он должен проверять? (напр.: даты и возраст персонажей не противоречат)'); if(p===null) return;
+    const s=getState(); const a=addCustomAgent(s, name.trim()||'Свой страж', p.trim()); _openAgents.add(a.id); save();
+  };
+  // drag-and-drop перестановка
+  let dragId=null;
+  document.querySelectorAll('.agent-toggle[data-drag]').forEach(row=>{
+    row.addEventListener('dragstart',()=>{ dragId=row.dataset.drag; row.classList.add('dragging'); });
+    row.addEventListener('dragend',()=>{ row.classList.remove('dragging'); document.querySelectorAll('.drag-over').forEach(x=>x.classList.remove('drag-over')); });
+    row.addEventListener('dragover',e=>{ e.preventDefault(); row.classList.add('drag-over'); });
+    row.addEventListener('dragleave',()=>row.classList.remove('drag-over'));
+    row.addEventListener('drop',e=>{ e.preventDefault(); row.classList.remove('drag-over');
+      const overId=row.dataset.drag; if(!dragId||dragId===overId) return;
+      const s=getState(); const arr=s.agents; const from=arr.findIndex(a=>a.id===dragId); const to=arr.findIndex(a=>a.id===overId);
+      if(from<0||to<0) return; const item=arr.splice(from,1)[0]; arr.splice(to,0,item); save();
+    });
   });
 }
 

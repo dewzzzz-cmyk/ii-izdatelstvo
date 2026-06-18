@@ -5,6 +5,7 @@ import { init, getState, subscribe, save, newProject } from '../state.js';
 import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } from './stages.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { exportCheckpoint } from '../storage.js';
+import { initTooltips } from './tooltips.js';
 
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -135,6 +136,7 @@ async function main(){
   subscribe(()=>rerender());
   document.getElementById('settingsBtn').onclick = openSettings;
   initDividers();
+  initTooltips();
   rerender();
 }
 main();
