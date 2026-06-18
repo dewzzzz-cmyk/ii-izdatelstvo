@@ -589,13 +589,17 @@ function openRegenSettings(s, scene){
 function approvalGate({role, label, output}){
   return new Promise(resolve=>{
     const root=document.getElementById('modalRoot');
+    const isEval = role==='evaluator';
+    const hint = isEval
+      ? '«Принять» — взять этот черновик как есть и завершить (петля остановится, даже если оценка «на доработку»). «На доработку» — вернуть Прозаику, и он перепишет с учётом замечаний Оценщика.'
+      : '«Принять» — продолжить дальше. «Переписать» — этот же агент попробует снова с вашей заметкой.';
     root.innerHTML=`<div class="modal-bg"><div class="modal" style="width:600px;max-width:92vw" onclick="event.stopPropagation()">
       <h2>Ручной режим · ${esc(label)}</h2>
-      <div class="muted" style="margin-bottom:8px">Проверьте результат агента. Принять — продолжить дальше; Переписать — этот же агент попробует снова.</div>
+      <div class="muted" style="margin-bottom:8px">${hint}</div>
       <div style="max-height:340px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output||'(пусто)')}</div>
-      <input type="text" id="apvNote" placeholder="заметка для переделки (необязательно)" style="margin-top:10px;width:100%">
+      <input type="text" id="apvNote" placeholder="${isEval?'что доработать Прозаику (по умолчанию — замечания Оценщика)':'заметка для переделки (необязательно)'}" style="margin-top:10px;width:100%">
       <div class="row" style="justify-content:flex-end;margin-top:10px;gap:8px">
-        <button class="btn" id="apvRedo">↻ Переписать</button>
+        <button class="btn" id="apvRedo">↻ ${isEval?'На доработку Прозаику':'Переписать'}</button>
         <button class="btn btn-primary" id="apvOk">✓ Принять</button>
       </div>
     </div></div>`;

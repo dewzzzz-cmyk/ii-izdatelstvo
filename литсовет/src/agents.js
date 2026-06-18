@@ -49,7 +49,7 @@ export const RUBRIC_AXES = [
   { key:'brief',     label:'Соответствие брифу', anti:'уход от задачи' },
 ];
 
-export function evaluatorMessages(scene, draft, voiceExamples){
+export function evaluatorMessages(scene, draft, voiceExamples, bookContext){
   const sys = [
     'Ты — строгий литературный оценщик. Ты НЕ переписываешь текст. Ты оцениваешь черновик по рубрике из 5 осей.',
     'Шкала каждой оси (используй весь диапазон, не жмись к 7-8):',
@@ -58,20 +58,23 @@ export function evaluatorMessages(scene, draft, voiceExamples){
     ...RUBRIC_AXES.map(a=>`  - ${a.label}: штрафуй за «${a.anti}».`),
     'Оси «Свежесть образа» и «Ритм» — защита от гладкой обезличенной ИИ-прозы. Если текст обтекаем, предсказуем, «правильный» но безжизненный — это 4–6, не 7.',
     'ВАЖНО: перед баллом за «Свежесть» процитируй 1–2 самых клишированных или штампованных оборота из черновика. Если клише нет — обоснуй одной фразой. Это защита от завышения.',
-  ].join('\n');
+    bookContext ? 'Тебе дан КОНТЕКСТ КНИГИ (сюжет, канон, персонажи). Ось «Соответствие брифу» и замечания оценивай С УЧЁТОМ него: предложения по правке не должны противоречить канону и сюжету, опирайся на конкретные детали мира и состояния персонажей. Сам контекст не оценивай — оценивай только черновик.' : '',
+  ].filter(Boolean).join('\n');
   const exBlock = voiceExamples && voiceExamples.length
     ? '\nОбразец голоса автора (для оси «Голос»):\n' + voiceExamples.map(e=>'  «'+e+'»').join('\n')
     : '';
+  const ctxBlock = bookContext ? '\nКОНТЕКСТ КНИГИ (учитывать, не оценивать):\n' + bookContext + '\n' : '';
   const user = [
     'Бриф сцены: ' + (scene.brief || scene.title || ''),
     scene.emotion ? 'Целевая эмоция: ' + scene.emotion : '',
+    ctxBlock,
     exBlock,
     '',
     'ЧЕРНОВИК:',
     draft,
     '',
     'Верни JSON: { "cliches": [процитированные клише из черновика, 0-2], "scores": {"freshness":n,"rhythm":n,"concrete":n,"voice":n,"brief":n}, "notes": [конкретные замечания для переработки с привязкой к фрагментам, 1-4], "verdict": "pass"|"revise" }',
-    'Баллы — целые 1-10. notes должны указывать ЧТО и ГДЕ исправить.',
+    'Баллы — целые 1-10. notes должны указывать ЧТО и ГДЕ исправить' + (bookContext ? ' и учитывать контекст книги (канон, сюжет, персонажей)' : '') + '.',
     'Только JSON.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];

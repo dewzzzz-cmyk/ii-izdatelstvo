@@ -7,6 +7,7 @@ import { callLLM } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse } from './guards.js';
+import { bookContextBlock } from './context.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
 //   kind:'evaluator' → { verdict }      (оценка по рубрике + клише + замечания)
@@ -23,7 +24,7 @@ export async function runAgentOnDemand(state, scene, agent){
   const role = agent.role;
 
   if(role==='evaluator'){
-    const msgs = evaluatorMessages(scene, draft, state.voice?.examples);
+    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene));
     const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
     return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7) };
   }

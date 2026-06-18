@@ -3,7 +3,7 @@
 // Каждый агент включаем/отключаем; всё пишется в диагностический трейс.
 
 import { callLLM } from './llm.js';
-import { buildSceneContext } from './context.js';
+import { buildSceneContext, bookContextBlock } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
@@ -102,7 +102,7 @@ export async function runScene(state, scene, opts={}, onProgress){
 
       // Оценщик
       onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
-      const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples);
+      const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene));
       const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??700 });
       const verdict = parseEvaluator(eRes.text, threshold);
       logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,

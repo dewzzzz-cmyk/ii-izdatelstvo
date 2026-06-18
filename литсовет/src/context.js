@@ -18,6 +18,23 @@ export function serializeCharacterStates(characters, presentNames){
   return present.filter(c=>c.stateNote).map(c=>`${c.name} — ${c.stateNote}`).join('\n');
 }
 
+// Компактный контекст книги для Оценщика: чтобы его замечания учитывали
+// сюжет, канон и состояния персонажей, а не висели в вакууме. Без блока голоса
+// (это отдельная ось) и без полной памяти — только грунтовка для замечаний.
+export function bookContextBlock(state, scene){
+  const proj = state.project || {};
+  const parts = [];
+  const head = [proj.genre && `Жанр: ${proj.genre}.`, proj.era && `Эпоха: ${proj.era}.`].filter(Boolean).join(' ');
+  if(head) parts.push(head);
+  const synopsis = runningSynopsis(state) || proj.synopsis || proj.idea;
+  if(synopsis) parts.push('Сюжет: ' + synopsis);
+  const chars = serializeCharacterStates(state.characters, scene.presentChars);
+  if(chars) parts.push('Персонажи в сцене:\n' + chars);
+  const bible = bibleForPrompt(state.bible, (scene.brief||scene.title||'') + ' ' + (proj.synopsis||''), 5);
+  if(bible) parts.push('Канон:\n' + bible);
+  return parts.join('\n');
+}
+
 // Собрать сообщения для Прозаика на одну сцену.
 // Возвращает {messages, layers} — layers для диагностики (что попало в промпт).
 export function buildSceneContext(state, scene, opts={}){
