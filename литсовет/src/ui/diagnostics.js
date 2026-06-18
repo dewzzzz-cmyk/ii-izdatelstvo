@@ -3,7 +3,7 @@
 import { getState, save, addCustomAgent, removeAgent } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
-import { runAgentOnDemand } from '../ondemand.js';
+import { runAgentOnDemand, patchScene } from '../ondemand.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -254,6 +254,15 @@ function toDirective(text){
   return true;
 }
 
+// Две кнопки на замечание: точечная правка (по умолчанию) и полная переработка.
+function fixActions(text){
+  const t = esc(text);
+  return `<div class="ares-acts">
+    <button class="ares-patch" data-fix="${t}" data-tip="Внести только эту правку в текущий текст. Остальное не трогается, цикл агентов не запускается. Можно откатить ↶.">✎ Поправить точечно</button>
+    <button class="ares-todir" data-dir="${t}" data-tip="Положить замечание в задачу Прозаику для полной переработки сцены через цикл (Прозаик → Оценщик → Стражи).">↻ Прозаику</button>
+  </div>`;
+}
+
 function renderResultBody(r){
   if(r.kind==='evaluator'){
     const v=r.verdict;
@@ -261,7 +270,7 @@ function renderResultBody(r){
     const axes=RUBRIC_AXES.map(a=>{ const val=v.scores[a.key]; const col=val>=7?'var(--ok)':val>=5?'var(--warn)':'var(--err)';
       return `<div class="ares-axis"><span>${a.label}</span><b style="color:${col}">${val}</b></div>`; }).join('');
     const cl=(v.cliches||[]).length?`<div class="ares-h">Клише в тексте</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}`:'';
-    const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span><button class="ares-todir" data-dir="${esc(n)}">→ Прозаику</button></div>`).join('')}`:'';
+    const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span>${fixActions(n)}</div>`).join('')}`:'';
     const all=((v.notes||[]).length||(v.cliches||[]).length)
       ? `<button class="btn btn-primary ares-all" style="margin-top:12px;width:100%">Все замечания → переписать сцену</button>`
       : `<div class="muted" style="margin-top:8px">Серьёзных замечаний нет — можно принимать.</div>`;
@@ -275,7 +284,7 @@ function renderResultBody(r){
       <div class="ares-flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span> ${esc(f.title)}</div>
       ${f.detail?`<div class="ares-flag-d">${esc(f.detail)}</div>`:''}
       ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
-      ${f.severity!=='ok'?`<button class="ares-todir" data-dir="${esc(f.title+': '+(f.detail||''))}">→ Прозаику</button>`:''}
+      ${f.severity!=='ok'?fixActions(f.title+': '+(f.detail||'')):''}
     </div>`).join('');
   }
   if(r.kind==='lineedit'){
@@ -309,6 +318,18 @@ function openAgentResult(agent, result, scene){
   document.getElementById('aresClose').onclick=close;
   document.querySelectorAll('.ares-todir').forEach(b=>b.onclick=()=>{
     if(toDirective(b.dataset.dir)) close(); else alert('Откройте сцену в редакторе, чтобы передать замечание Прозаику.\n\n'+b.dataset.dir);
+  });
+  // точечная правка: вносим только это замечание в текущий текст, без цикла. Модалка остаётся открытой.
+  document.querySelectorAll('.ares-patch').forEach(b=>b.onclick=async()=>{
+    const s=getState(); const sc=(s.structure||[]).find(n=>n.id===scene.id); if(!sc) return;
+    const prev=b.textContent; b.textContent='…'; b.disabled=true;
+    try{
+      const fixed=await patchScene(s, sc, b.dataset.fix);
+      sc.proseVersions=sc.proseVersions||[]; sc.proseVersions.unshift(sc.text);
+      if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+      sc.text=fixed; sc.words=(fixed.match(/\S+/g)||[]).length; save(); // перерисует редактор за модалкой
+      b.textContent='✓ применено'; b.classList.add('done'); b.disabled=true;
+    }catch(e){ b.textContent=prev; b.disabled=false; alert('Не удалось: '+e.message); }
   });
   const all=document.querySelector('.ares-all');
   if(all) all.onclick=()=>{ const v=result.verdict;
