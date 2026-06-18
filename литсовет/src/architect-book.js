@@ -71,6 +71,60 @@ export async function runBookArchitect(state, opts={}){
   throw new Error('Книжный архитектор вернул невалидный скелет: '+lastErr);
 }
 
+// Перегенерация ОДНОЙ сцены скелета с подсказкой автора о направлении.
+// Видит соседние сцены и главу — чтобы вписаться в дугу. Возвращает поля сцены.
+export async function regenerateScene(state, scene, hint){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  const nodes = state.structure||[];
+  const ch = nodes.find(n=>n.type==='chapter' && n.id===scene.chapterId);
+  const scenes = nodes.filter(n=>n.type==='scene');
+  const idx = scenes.findIndex(n=>n.id===scene.id);
+  const prev = scenes[idx-1], next = scenes[idx+1];
+  const p = state.project;
+  const sys = 'Ты — книжный архитектор. Перепроектируй ОДНУ сцену по подсказке автора, сохраняя её место в нарративной арке книги. Не пишешь прозу.';
+  const user = [
+    `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
+    ch?`Глава: «${ch.title}» (${ch.arc||''}).`:'',
+    prev?`Предыдущая сцена: «${prev.title}» — ${prev.brief}`:'',
+    next?`Следующая сцена: «${next.title}» — ${next.brief}`:'',
+    `Текущая сцена: «${scene.title}» — ${scene.brief}`,
+    '',
+    'ПОДСКАЗКА АВТОРА (в каком направлении переделать): ' + (hint||'сделай сильнее и конкретнее'),
+    '',
+    'Верни JSON одной сцены: { "title":"…", "brief":"что происходит, тон, чем заканчивается", "emotion":"эмоция читателя", "targetWords":число }. Только JSON.',
+  ].filter(Boolean).join('\n');
+  let lastErr='';
+  for(let attempt=0; attempt<=(g.retries??2); attempt++){
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:500 });
+    const j = extractJSON(res.text);
+    if(j && typeof j.brief==='string'){
+      return {
+        title:(j.title||scene.title).trim(),
+        brief:j.brief.trim(),
+        emotion:(j.emotion||scene.emotion||'').trim(),
+        targetWords: Number(j.targetWords)>0?Math.round(Number(j.targetWords)):(scene.targetWords||700),
+      };
+    }
+    lastErr='невалидный JSON';
+  }
+  throw new Error('Не удалось перегенерировать: '+lastErr);
+}
+
+// История версий сцены-скелета: сохранить текущие поля перед заменой / откатить.
+const SCENE_FIELDS = ['title','brief','emotion','targetWords'];
+export function pushSceneVersion(scene){
+  scene.briefVersions = scene.briefVersions || [];
+  scene.briefVersions.unshift(Object.fromEntries(SCENE_FIELDS.map(f=>[f, scene[f]])));
+  if(scene.briefVersions.length>10) scene.briefVersions.length=10;
+}
+export function revertScene(scene){
+  if(!scene.briefVersions || !scene.briefVersions.length) return false;
+  const v = scene.briefVersions.shift();
+  SCENE_FIELDS.forEach(f=>{ if(v[f]!==undefined) scene[f]=v[f]; });
+  return true;
+}
+
 // Применить скелет к плоскому state.structure[] (chapter|scene узлы).
 export function applySkeleton(state, skeleton, uid){
   const nodes = [];

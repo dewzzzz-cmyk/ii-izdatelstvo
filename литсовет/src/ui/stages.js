@@ -7,7 +7,7 @@ import { runScene } from '../pipeline.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
-import { runBookArchitect, applySkeleton } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, regenerateScene, pushSceneVersion, revertScene } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -233,6 +233,12 @@ function renderSkeletonEditor(s){
         ${open?`<div class="sk-scene-body">
           <textarea class="sk-brief" data-id="${n.id}" rows="2" placeholder="бриф">${esc(n.brief)}</textarea>
           <input type="text" class="sk-emo" data-id="${n.id}" value="${esc(n.emotion||'')}" placeholder="эмоция читателя">
+          <div class="sk-regen">
+            <input type="text" class="sk-hint" data-id="${n.id}" placeholder="в каком направлении переделать (подсказка ИИ)…">
+            <button class="sk-ic" data-regen="${n.id}" title="Перегенерировать сцену по подсказке">↻</button>
+            <button class="sk-ic" data-revert="${n.id}" title="Вернуть прошлую версию" ${(n.briefVersions&&n.briefVersions.length)?'':'disabled'}>↶${n.briefVersions&&n.briefVersions.length?' '+n.briefVersions.length:''}</button>
+            <span class="sk-st" data-st="${n.id}"></span>
+          </div>
         </div>`:''}
       </div>`;
     }
@@ -247,6 +253,24 @@ function bindSkeleton(s){
   });
   document.querySelectorAll('.sk-brief').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.brief=t.value;save();} }));
   document.querySelectorAll('.sk-emo').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.emotion=t.value;save();} }));
+
+  document.querySelectorAll('.sk-ic[data-regen]').forEach(b=>b.onclick=async ()=>{
+    const n=node(s, b.dataset.regen); if(!n) return;
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    const hint=(document.querySelector(`.sk-hint[data-id="${n.id}"]`)?.value||'').trim();
+    const st=document.querySelector(`.sk-st[data-st="${n.id}"]`);
+    b.disabled=true; if(st) st.innerHTML='<span class="spinner"></span>';
+    try{
+      const fresh=await regenerateScene(s, n, hint);
+      pushSceneVersion(n);                 // сохранить текущую версию перед заменой
+      Object.assign(n, fresh);
+      save();
+    }catch(e){ if(st) st.textContent='Ошибка: '+e.message; b.disabled=false; }
+  });
+  document.querySelectorAll('.sk-ic[data-revert]').forEach(b=>b.onclick=()=>{
+    const n=node(s, b.dataset.revert); if(!n) return;
+    if(revertScene(n)) save();
+  });
 }
 function node(s,id){ return (s.structure||[]).find(n=>n.id===id); }
 

@@ -123,6 +123,13 @@ textarea{resize:vertical;min-height:60px}
 .sk-scene-body{padding:0 10px 10px;display:flex;flex-direction:column;gap:6px}
 .sk-brief,.sk-emo{width:100%;font-size:12px;padding:5px 8px;border:1px solid var(--border-2);border-radius:6px}
 .sk-brief{resize:vertical}
+.sk-regen{display:flex;align-items:center;gap:6px;margin-top:2px}
+.sk-hint{flex:1;font-size:11px;padding:5px 8px;border:1px solid var(--border-2);border-radius:6px}
+.sk-ic{width:30px;height:30px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);font-size:14px;color:var(--text-2);flex-shrink:0;padding:0}
+.sk-ic:hover:not(:disabled){background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)}
+.sk-ic:disabled{opacity:0.4;cursor:not-allowed}
+.sk-ic[data-revert]{width:auto;padding:0 8px;font-size:13px}
+.sk-st{font-size:11px;color:var(--text-3)}
 
 /* ── Diagnostics panel (right) ── */
 .diag-section{border-bottom:1px solid var(--border)}
