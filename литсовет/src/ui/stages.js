@@ -7,7 +7,7 @@ import { runScene } from '../pipeline.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
-import { runBookArchitect, applySkeleton, regenerateScene, pushSceneVersion, revertScene } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, pushSceneVersion, revertScene } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -235,10 +235,11 @@ function renderSkeletonEditor(s){
           <input type="text" class="sk-emo" data-id="${n.id}" value="${esc(n.emotion||'')}" placeholder="эмоция читателя">
           <div class="sk-regen">
             <input type="text" class="sk-hint" data-id="${n.id}" placeholder="в каком направлении переделать (подсказка ИИ)…">
-            <button class="sk-ic" data-regen="${n.id}" title="Перегенерировать сцену по подсказке">↻</button>
+            <button class="sk-ic" data-regen="${n.id}" title="Перегенерировать эту сцену по подсказке">↻</button>
             <button class="sk-ic" data-revert="${n.id}" title="Вернуть прошлую версию" ${(n.briefVersions&&n.briefVersions.length)?'':'disabled'}>↶${n.briefVersions&&n.briefVersions.length?' '+n.briefVersions.length:''}</button>
-            <span class="sk-st" data-st="${n.id}"></span>
           </div>
+          <button class="sk-down" data-down="${n.id}" title="Если поворот сюжета — переписать все сцены после этой под изменение">↻↓ Перегенерировать дальнейшие сцены под это изменение</button>
+          <span class="sk-st" data-st="${n.id}"></span>
         </div>`:''}
       </div>`;
     }
@@ -270,6 +271,22 @@ function bindSkeleton(s){
   document.querySelectorAll('.sk-ic[data-revert]').forEach(b=>b.onclick=()=>{
     const n=node(s, b.dataset.revert); if(!n) return;
     if(revertScene(n)) save();
+  });
+  document.querySelectorAll('.sk-down[data-down]').forEach(b=>b.onclick=async ()=>{
+    const n=node(s, b.dataset.down); if(!n) return;
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    const after = (s.structure||[]).filter(x=>x.type==='scene');
+    const cnt = after.length - after.findIndex(x=>x.id===n.id) - 1;
+    if(cnt<=0){ const st=document.querySelector(`.sk-st[data-st="${n.id}"]`); if(st) st.textContent='Это последняя сцена.'; return; }
+    if(!confirm(`Переписать ${cnt} последующих сцен под изменение «${n.title}»? Их текущие версии сохранятся для отката.`)) return;
+    const hint=(document.querySelector(`.sk-hint[data-id="${n.id}"]`)?.value||'').trim();
+    const st=document.querySelector(`.sk-st[data-st="${n.id}"]`);
+    b.disabled=true; if(st) st.innerHTML='<span class="spinner"></span> Переписываю хвост книги…';
+    try{
+      const applied=await regenerateDownstream(s, n, hint);
+      save();
+      if(st) st.textContent=`Переписано сцен: ${applied.length}.`;
+    }catch(e){ if(st) st.textContent='Ошибка: '+e.message; b.disabled=false; }
   });
 }
 function node(s,id){ return (s.structure||[]).find(n=>n.id===id); }

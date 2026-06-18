@@ -130,6 +130,9 @@ textarea{resize:vertical;min-height:60px}
 .sk-ic:disabled{opacity:0.4;cursor:not-allowed}
 .sk-ic[data-revert]{width:auto;padding:0 8px;font-size:13px}
 .sk-st{font-size:11px;color:var(--text-3)}
+.sk-down{margin-top:6px;width:100%;font-size:11px;padding:6px 8px;border:1px dashed var(--accent-border);border-radius:6px;background:var(--accent-bg);color:var(--accent);text-align:left}
+.sk-down:hover:not(:disabled){background:var(--accent);color:#fff}
+.sk-down:disabled{opacity:0.5;cursor:not-allowed}
 
 /* ── Diagnostics panel (right) ── */
 .diag-section{border-bottom:1px solid var(--border)}

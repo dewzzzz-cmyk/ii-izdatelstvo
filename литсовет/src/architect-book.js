@@ -111,6 +111,58 @@ export async function regenerateScene(state, scene, hint){
   throw new Error('Не удалось перегенерировать: '+lastErr);
 }
 
+// Каскадная перегенерация ВСЕХ последующих сцен с учётом изменения текущей
+// (когда поворот сюжета сделал хвост книги несогласованным). Сохраняет число
+// сцен и привязку к главам; переписывает их брифы/эмоции консистентно.
+export async function regenerateDownstream(state, pivotScene, hint){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  const nodes = state.structure||[];
+  const scenes = nodes.filter(n=>n.type==='scene');
+  const pi = scenes.findIndex(n=>n.id===pivotScene.id);
+  const downstream = scenes.slice(pi+1);
+  if(!downstream.length) return [];
+
+  const chTitle = id => (nodes.find(n=>n.type==='chapter'&&n.id===id)||{}).title || '';
+  const p = state.project;
+  const sys = 'Ты — книжный архитектор. Изменилась одна сцена и повернула сюжет. Перепроектируй ВСЕ последующие сцены так, чтобы они логически следовали из изменения и не противоречили ему. Сохрани число сцен и их принадлежность главам. Не пишешь прозу.';
+  const list = downstream.map((s,i)=>`${i+1}. [${chTitle(s.chapterId)}] «${s.title}» — ${s.brief}`).join('\n');
+  const user = [
+    `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
+    '',
+    `ИЗМЕНЁННАЯ СЦЕНА (поворот): «${pivotScene.title}» — ${pivotScene.brief}` + (pivotScene.emotion?` (эмоция: ${pivotScene.emotion})`:''),
+    hint?`Направление автора: ${hint}`:'',
+    '',
+    `ПОСЛЕДУЮЩИЕ СЦЕНЫ (${downstream.length}) — перепиши каждую под новый поворот, по порядку:`,
+    list,
+    '',
+    `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"…","emotion":"…","targetWords":число} ] }. Ровно ${downstream.length} сцен. Только JSON.`,
+  ].filter(Boolean).join('\n');
+
+  let lastErr='';
+  for(let attempt=0; attempt<=(g.retries??2); attempt++){
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:3000 });
+    const j = extractJSON(res.text);
+    const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
+    if(arr && arr.length){
+      // применяем позиционно; число сцен не меняем (берём min для устойчивости)
+      const applied = [];
+      for(let i=0;i<Math.min(arr.length, downstream.length);i++){
+        const sc = downstream[i], fr = arr[i];
+        pushSceneVersion(sc);
+        sc.title=(fr.title||sc.title).trim();
+        sc.brief=fr.brief.trim();
+        sc.emotion=(fr.emotion||sc.emotion||'').trim();
+        if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
+        applied.push(sc.id);
+      }
+      return applied;
+    }
+    lastErr='невалидный JSON';
+  }
+  throw new Error('Каскадная перегенерация не удалась: '+lastErr);
+}
+
 // История версий сцены-скелета: сохранить текущие поля перед заменой / откатить.
 const SCENE_FIELDS = ['title','brief','emotion','targetWords'];
 export function pushSceneVersion(scene){
