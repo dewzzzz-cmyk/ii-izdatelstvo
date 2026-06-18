@@ -3,6 +3,7 @@
 import { getState, save, addCustomAgent, removeAgent } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
+import { runAgentOnDemand } from '../ondemand.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -115,6 +116,7 @@ export function renderAgentPipeline(){
         <span class="ag-grip" title="перетащить">⋮⋮</span>
         <span style="font-size:15px">${a.icon}</span>
         <span class="at-name">${esc(a.name)} ${badges}<span class="at-temp">${_openAgents.has(a.id)?'▾':'⚙'}</span></span>
+        ${a.role!=='prose'?`<button class="ag-run" data-runid="${a.id}" data-tip="Запустить «${esc(a.name)}» вручную на текущей сцене и получить разбор: замечания и предложения правок. Текст не меняется (кроме применения правки Линейного редактора).">▶</button>`:''}
         <div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}" data-id="${a.id}"></div>
       </div>
       ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`;
@@ -176,6 +178,17 @@ function bindAgents(){
   document.querySelectorAll('.ap-prompt').forEach(t=>t.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.aid); if(a){ a.prompt=t.value; save(); } }));
   // удалить кастомного агента
   document.querySelectorAll('.ag-remove').forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); const s=getState(); if(removeAgent(s, b.dataset.aid)){ _openAgents.delete(b.dataset.aid); save(); } });
+  // ручной запуск агента на текущей сцене → разбор с замечаниями
+  document.querySelectorAll('.ag-run').forEach(b=>b.onclick=async(e)=>{
+    e.stopPropagation();
+    const s=getState(); const a=s.agents.find(x=>x.id===b.dataset.runid); if(!a) return;
+    const scene=(s.structure||[]).find(n=>n.id===s.ui.activeScene);
+    if(!scene){ alert('Откройте сцену.'); return; }
+    const prev=b.textContent; b.textContent='…'; b.disabled=true;
+    try{ openAgentResult(a, await runAgentOnDemand(s, scene, a), scene); }
+    catch(err){ alert('Не удалось: '+err.message); }
+    finally{ b.textContent=prev; b.disabled=false; }
+  });
   // добавить стража
   const add=document.getElementById('addAgentBtn');
   if(add) add.onclick=()=>{
@@ -229,4 +242,84 @@ function renderScores(v){
     }).join('')}
     <div class="verdict ${v.pass?'pass':'revise'}">${v.pass?'✓ принято':'↻ доработка'} · ${v.weighted}/10</div>
   </div>`;
+}
+
+// ── Разбор ручного запуска агента (модалка) ──────────────────────────────
+// Кладёт замечание в поле директивы Прозаику (если оно есть на экране).
+function toDirective(text){
+  const inp=document.getElementById('directive');
+  if(!inp) return false;
+  inp.value=text; inp.focus(); inp.scrollIntoView({block:'center'});
+  const re=document.getElementById('reRun'); if(re) re.classList.add('btn-primary');
+  return true;
+}
+
+function renderResultBody(r){
+  if(r.kind==='evaluator'){
+    const v=r.verdict;
+    if(!v||!v.ok) return `<div class="muted">Оценщик не вернул разбор.</div>`;
+    const axes=RUBRIC_AXES.map(a=>{ const val=v.scores[a.key]; const col=val>=7?'var(--ok)':val>=5?'var(--warn)':'var(--err)';
+      return `<div class="ares-axis"><span>${a.label}</span><b style="color:${col}">${val}</b></div>`; }).join('');
+    const cl=(v.cliches||[]).length?`<div class="ares-h">Клише в тексте</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}`:'';
+    const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span><button class="ares-todir" data-dir="${esc(n)}">→ Прозаику</button></div>`).join('')}`:'';
+    const all=((v.notes||[]).length||(v.cliches||[]).length)
+      ? `<button class="btn btn-primary ares-all" style="margin-top:12px;width:100%">Все замечания → переписать сцену</button>`
+      : `<div class="muted" style="margin-top:8px">Серьёзных замечаний нет — можно принимать.</div>`;
+    return `<div class="ares-score ${v.pass?'pass':'revise'}">${v.weighted}/10 · ${v.pass?'принято':'на доработку'}<span class="muted"> · мин. ось ${v.minAxis}</span></div>
+      <div class="ares-axes">${axes}</div>${cl}${nt}${all}`;
+  }
+  if(r.kind==='guard'){
+    const flags=(r.flags||[]).filter(Boolean);
+    if(!flags.length) return `<div class="muted">Страж не нашёл проблем — флагов нет.</div>`;
+    return flags.map(f=>`<div class="ares-flag">
+      <div class="ares-flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span> ${esc(f.title)}</div>
+      ${f.detail?`<div class="ares-flag-d">${esc(f.detail)}</div>`:''}
+      ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
+      ${f.severity!=='ok'?`<button class="ares-todir" data-dir="${esc(f.title+': '+(f.detail||''))}">→ Прозаику</button>`:''}
+    </div>`).join('');
+  }
+  if(r.kind==='lineedit'){
+    if(!r.text) return `<div class="muted">Правок не предложено.</div>`;
+    return `<div class="ares-h">Предложенная правка</div>
+      <div class="ares-edit">${esc(r.text)}</div>
+      <div class="row" style="gap:8px;margin-top:10px;align-items:center">
+        <button class="btn btn-primary ares-apply">Применить правку</button>
+        <span class="muted" style="font-size:11px">прошлый вариант вернёте кнопкой ↶</span></div>`;
+  }
+  if(r.kind==='architect'){
+    const p=r.plan; if(!p) return `<div class="muted">План не получен.</div>`;
+    const dir='Учти план сцены: '+[...(p.anchors||[]),...(p.beats||[])].filter(Boolean).join('; ');
+    return `${p.anchors.length?`<div class="ares-h">Якоря</div><div class="ares-list">${esc(p.anchors.join('; '))}</div>`:''}
+      ${p.beats.length?`<div class="ares-h">Шаги сцены</div><div class="ares-list">${esc(p.beats.join(' → '))}</div>`:''}
+      ${p.forbiddenWords.length?`<div class="ares-h">Избегать слов</div><div class="ares-list">${esc(p.forbiddenWords.join(', '))}</div>`:''}
+      <button class="btn btn-primary ares-todir" data-dir="${esc(dir)}" style="margin-top:12px;width:100%">План → Прозаику</button>`;
+  }
+  return `<div class="muted">Готово.</div>`;
+}
+
+function openAgentResult(agent, result, scene){
+  const root=document.getElementById('modalRoot'); if(!root) return;
+  root.innerHTML=`<div class="modal-bg" id="aresBg"><div class="modal ares" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>${agent.icon||''} ${esc(agent.name)} · разбор сцены</h2>
+    <div class="ares-body">${renderResultBody(result)}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="aresClose">Закрыть</button></div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('aresBg').onclick=close;
+  document.getElementById('aresClose').onclick=close;
+  document.querySelectorAll('.ares-todir').forEach(b=>b.onclick=()=>{
+    if(toDirective(b.dataset.dir)) close(); else alert('Откройте сцену в редакторе, чтобы передать замечание Прозаику.\n\n'+b.dataset.dir);
+  });
+  const all=document.querySelector('.ares-all');
+  if(all) all.onclick=()=>{ const v=result.verdict;
+    const parts=[...(v.notes||[]), ...((v.cliches||[]).length?['убрать клише: '+v.cliches.join(', ')]:[])];
+    if(toDirective(parts.join('; '))) close(); else alert('Откройте сцену в редакторе.');
+  };
+  const apply=document.querySelector('.ares-apply');
+  if(apply) apply.onclick=()=>{
+    const s=getState(); const sc=(s.structure||[]).find(n=>n.id===scene.id); if(!sc) return;
+    sc.proseVersions=sc.proseVersions||[]; sc.proseVersions.unshift(sc.text);
+    if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+    sc.text=result.text; sc.words=(result.text.match(/\S+/g)||[]).length; save(); close();
+  };
 }

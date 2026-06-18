@@ -669,6 +669,26 @@ function initSelectionMenu(edEl, scene, els){
   document.addEventListener('mousedown', e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; });
 }
 
+// Границы фрагмента: окно ~500 симв. сверху/снизу, подрезанное до целых
+// предложений — чтобы агент видел чистые стыки, а не обрывки фраз, и сшивал
+// фрагмент с границей сверху и снизу без шва.
+function boundaryBefore(full, start, win=500){
+  let chunk = full.slice(Math.max(0, start-win), start);
+  if(start-win > 0){ // отбросить начатое в окне неполное предложение
+    const m = chunk.match(/[.!?…»"”)\]]\s+|\n+/);
+    if(m) chunk = chunk.slice(m.index + m[0].length);
+  }
+  return chunk.trim();
+}
+function boundaryAfter(full, end, win=500){
+  let chunk = full.slice(end, end+win);
+  if(end+win < full.length){ // оставить до последнего целого предложения в окне
+    const m = chunk.match(/^[\s\S]*[.!?…»"”)\]](?=\s|$)/);
+    if(m) chunk = m[0];
+  }
+  return chunk.trim();
+}
+
 // Точечная правка: меняем ТОЛЬКО выделенный фрагмент и вставляем на место.
 async function applyInlineEdit(scene, edEl, action, start, end){
   const s=getState();
@@ -676,8 +696,8 @@ async function applyInlineEdit(scene, edEl, action, start, end){
   const full = edEl.textContent;
   const selected = full.slice(start, end);
   if(!selected.trim()) return;
-  const before = full.slice(Math.max(0, start-400), start);
-  const after  = full.slice(end, end+400);
+  const before = boundaryBefore(full, start);
+  const after  = boundaryAfter(full, end);
   edEl.style.opacity='0.55'; edEl.setAttribute('aria-busy','1');
   try{
     const fresh = await transformSelection(s, action, selected, before, after);
