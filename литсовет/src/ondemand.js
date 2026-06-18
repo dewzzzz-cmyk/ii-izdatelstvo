@@ -7,7 +7,7 @@ import { callLLM } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
-         styleGuardMessages } from './guards.js';
+         styleGuardMessages, sceneQuestionMessages } from './guards.js';
 import { bookContextBlock } from './context.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
@@ -50,6 +50,18 @@ export async function runAgentOnDemand(state, scene, agent){
   }
   else                       msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
   const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
+  return { kind:'guard', flags: runGuardParse(res.text) };
+}
+
+// Разовый вопрос автора о сцене → ответ стража (флаги). Те же действия в разборе.
+export async function askSceneQuestion(state, scene, question){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  const draft = (scene.text||'').trim();
+  if(!draft) throw new Error('Сначала напишите текст сцены — вопрос задавать не к чему.');
+  if(!question || !question.trim()) throw new Error('Пустой вопрос.');
+  const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
+  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:700 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 

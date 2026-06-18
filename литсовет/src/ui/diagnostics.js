@@ -3,7 +3,7 @@
 import { getState, save, addCustomAgent, removeAgent, addRule } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
-import { runAgentOnDemand, patchScene } from '../ondemand.js';
+import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -87,12 +87,33 @@ function bindFlagFix(){
   });
 }
 
-// Анализ сцены (правая панель, верх): флаги Стражей.
+// Анализ сцены (правая панель, верх): строка вопроса + флаги Стражей.
 export function renderSceneAnalysis(){
   const s = getState();
   const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
-  setTimeout(bindFlagFix, 0);
-  return renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Флаги Стражей появятся после прогона.</div>`;
+  setTimeout(()=>{ bindFlagFix(); bindAskScene(activeScene); }, 0);
+  const ask = `<div class="ask-scene">
+    <input type="text" id="askInput" placeholder="Спросить о сцене: «где показано, что его заметили?»" data-tip="Разовый вопрос стражу о текущей сцене. Он ответит по тексту (с цитатой) и предложит правку — без создания агента.">
+    <button class="btn" id="askBtn">Спросить</button>
+  </div>`;
+  return ask + (renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Задайте вопрос о сцене выше или запустите агентов — флаги появятся здесь.</div>`);
+}
+
+function bindAskScene(scene){
+  const btn=document.getElementById('askBtn'), inp=document.getElementById('askInput');
+  if(!btn) return;
+  const go=async ()=>{
+    const q=inp.value.trim(); if(!q) return;
+    const s=getState();
+    const sc=scene || (s.structure||[]).find(n=>n.id===s.ui.activeScene);
+    if(!sc){ alert('Откройте сцену.'); return; }
+    btn.disabled=true; const lbl=btn.textContent; btn.innerHTML='<span class="spinner"></span>';
+    try{ const res=await askSceneQuestion(s, sc, q); openAgentResult({icon:'❓', name:'Вопрос: '+q.slice(0,48)}, res, sc); }
+    catch(e){ alert('Не удалось: '+e.message); }
+    finally{ btn.disabled=false; btn.textContent=lbl; }
+  };
+  btn.onclick=go;
+  inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } };
 }
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.

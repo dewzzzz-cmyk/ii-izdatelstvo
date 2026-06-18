@@ -102,6 +102,17 @@ function factsBlock(state, scene){
 
 export function runGuardParse(text){ return parseFlags(text); }
 
+// ── Разовый вопрос автора о сцене: страж отвечает по тексту. ──
+// Если по вопросу есть пробел/проблема — флаг с цитатой; если всё в порядке —
+// флаг severity "ok" с обоснованием. Не переписывает.
+export function sceneQuestionMessages(scene, draft, question){
+  const sys = 'Ты — страж сцены, отвечающий на КОНКРЕТНЫЙ вопрос автора о текущей сцене. Опирайся только на её текст и здравую логику повествования. Ты НЕ переписываешь текст. Если по вопросу есть пробел или проблема — верни флаг с цитатой проблемного места и развёрнутым ответом. Если всё в порядке — верни один флаг severity "ok" с кратким обоснованием.';
+  const user = ['ВОПРОС АВТОРА: '+question, '', 'ТЕКСТ СЦЕНЫ:', draft, '',
+    'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"суть ответа","detail":"ответ по тексту: что есть/чего не хватает и где","quote":"релевантный фрагмент сцены или пусто"}] }. 1-3 флага. Только JSON.'
+  ].join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
 // ── Страж стиля (0.2): ловит нарушения «Правил автора» (do/don't). Цитирует. ──
 export function styleGuardMessages(draft, rules, strictness){
   const list = (rules||[]).filter(Boolean);
