@@ -387,6 +387,9 @@ export function renderWrite(els){
       <span class="scene-title">${esc(scene.title)}</span>
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
+      <span style="flex:1"></span>
+      <button class="iconbtn" id="edUndo" data-tip="Отменить изменение в тексте (Ctrl+Z)">↶</button>
+      <button class="iconbtn" id="edRedo" data-tip="Вернуть изменение (Ctrl+Shift+Z)">↷</button>
     </div>
     <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?'contenteditable="true" spellcheck="false"':''}>${scene.text?esc(scene.text):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
@@ -404,8 +407,9 @@ export function renderWrite(els){
       </div>
     </div>
     <div class="run-row">
-      <button class="btn btn-primary btn-block" id="runBtn">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
-      ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" title="Вернуть прошлый вариант прозы">↶ ${scene.proseVersions.length}</button>`:''}
+      <button class="btn btn-primary" id="runBtn" style="flex:1">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
+      <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
+      ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
     </div>`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
 
@@ -423,16 +427,26 @@ export function renderWrite(els){
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
 
+  // Undo/redo ТЕКСТА в редакторе (правки рукой) — нативная история contenteditable
+  const edU=document.getElementById('edUndo'), edR=document.getElementById('edRedo');
+  if(edU) edU.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('undo'); scene.text=ed.innerText; scene._dirty=true; } };
+  if(edR) edR.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('redo'); scene.text=ed.innerText; scene._dirty=true; } };
+
+  // Откат ПЕРЕГЕНЕРАЦИИ (как было) — вернуть прошлый вариант прозы
   const rp=document.getElementById('revertProse');
   if(rp) rp.onclick = ()=>{
     if(!scene.proseVersions||!scene.proseVersions.length) return;
-    const prev = scene.proseVersions.shift();   // прошлый вариант прозы
-    scene.proseVersions.unshift(scene.text);     // текущее → в историю (свап, можно вернуться)
+    const prev = scene.proseVersions.shift();
+    scene.proseVersions.unshift(scene.text);
     scene.text = prev;
     scene.words=(prev.match(/\S+/g)||[]).length;
     scene.handDone=false;
     save();
   };
+
+  // Настройки перегенерации (иконка ⚙ внизу)
+  const rgs=document.getElementById('regenSettings');
+  if(rgs) rgs.onclick = ()=>openRegenSettings(s, scene);
 
   const cc=document.getElementById('closeChapter');
   if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
@@ -541,6 +555,34 @@ function renderEditorialStop(s, ch){
     ${needHand&&!handOk?'<div class="sb-warn">⚠ Пока ни один абзац не переписан автором — отредактируйте текст любой сцены главы.</div>':''}
     <button class="btn ${handOk?'btn-primary':''}" id="closeChapter" ${handOk?'':'disabled'}>Закрыть главу →</button>
   </div>`;
+}
+
+// Настройки перегенерации: креативность Прозаика (temp) + объём этой сцены.
+function openRegenSettings(s, scene){
+  const prose = (s.agents||[]).find(a=>a.role==='prose')||{};
+  const root=document.getElementById('modalRoot');
+  root.innerHTML=`<div class="modal-bg" id="rgsBg"><div class="modal" style="width:420px" onclick="event.stopPropagation()">
+    <h2>Настройки перегенерации</h2>
+    <div class="muted" style="margin-bottom:12px">Влияют на «Запустить снова», инлайн-директиву и правку выделенного фрагмента.</div>
+    <div class="field"><label>Креативность Прозаика <span class="hint">выше — смелее и неожиданнее, ниже — стабильнее</span></label>
+      <div class="row"><input type="range" id="rgsTemp" min="0" max="1" step="0.05" value="${prose.temp??0.85}" style="flex:1"><span id="rgsTempV" style="min-width:36px;text-align:right;font-weight:500">${(prose.temp??0.85).toFixed(2)}</span></div></div>
+    <div class="field"><label>Целевой объём сцены (слов)</label>
+      <input type="text" id="rgsWords" value="${scene.targetWords||700}"></div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:6px">
+      <button class="btn" id="rgsCancel">Отмена</button>
+      <button class="btn btn-primary" id="rgsOk">Сохранить</button>
+    </div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('rgsBg').onclick=close;
+  document.getElementById('rgsCancel').onclick=close;
+  const t=document.getElementById('rgsTemp');
+  t.oninput=()=>document.getElementById('rgsTempV').textContent=parseFloat(t.value).toFixed(2);
+  document.getElementById('rgsOk').onclick=()=>{
+    if(prose) prose.temp=parseFloat(t.value);
+    scene.targetWords=parseInt(document.getElementById('rgsWords').value)||scene.targetWords||700;
+    save(); close();
+  };
 }
 
 // Модалка ручного режима: показывает результат агента, ждёт «Принять» или «Переписать».
