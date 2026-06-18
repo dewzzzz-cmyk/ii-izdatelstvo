@@ -58,6 +58,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         if(plan && plan.presentChars.length) scene.presentChars = plan.presentChars;
         logStep({ agent:'architect', input:aMsgs[1].content, output:aRes.text,
           tokensIn:aRes.tokensIn, tokensOut:aRes.tokensOut, cost:aRes.cost });
+        onProgress && onProgress({log:{icon:'🏗', text:'Архитектор: план сцены готов'}});
         const gt = await gate(state,'architect','Архитектор сцены', architectText||aRes.text, opts);
         if(gt.approve) break;
         aMsgs.push({ role:'user', content:'Переделай план сцены. '+(gt.note||'') });
@@ -89,6 +90,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       prevDraft = pRes.text;
       logStep({ agent:'prose', iter, input:ctx.messages[1].content, output:pRes.text,
         layers:ctx.layers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
+      onProgress && onProgress({log:{icon:'✍️', text:`Прозаик: черновик ${iter} написан`}});
 
       // Ручная пауза после Прозаика: автор принимает черновик или просит переписать.
       if(manual(state,'prose')){
@@ -105,6 +107,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       const verdict = parseEvaluator(eRes.text, threshold);
       logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
         tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
+      onProgress && onProgress({log:{ icon:'⚖️',
+        text:`Оценщик: ${verdict.ok?verdict.weighted+'/10':'—'} ${verdict.pass?'✓ принято':'↻ на доработку'}`
+          + ((verdict.cliches&&verdict.cliches.length)?` · клише: ${verdict.cliches.join(', ')}`
+             : (verdict.notes&&verdict.notes.length?` · ${verdict.notes[0]}`:'')),
+        state: verdict.pass?'ok':'warn' }});
 
       // лучший по баллу вариант
       if(!bestEval || (verdict.ok && verdict.weighted > (bestEval.weighted||0))){ best=pRes.text; bestEval=verdict; }
@@ -138,6 +145,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     if(guardJobs.length){
       onProgress && onProgress({stage:'guards', text:'Стражи проверяют сцену…'});
       await Promise.all(guardJobs);
+      onProgress && onProgress({log:{icon:'🛡', text:`Стражи: ${Object.values(flags).reduce((a,b)=>a+(b?b.length:0),0)} флагов`}});
       // Ручная пауза: если хоть один Страж в ручном режиме — показать флаги и ждать.
       if(['voiceguard','logic','events'].some(r=>agentEnabled(r) && manual(state,r))){
         await gate(state, ['voiceguard','logic','events'].find(r=>manual(state,r)), 'Стражи · флаги сцены', flagsText(flags), opts);
@@ -153,6 +161,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:leAg.maxTokens??1600 });
           if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
             logStep({ agent:'lineedit', input:'(черновик)', output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
+            onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
             const gt = await gate(state,'lineedit','Линейный редактор', leRes.text, opts);
             if(gt.approve){ best = leRes.text; break; }
             // переписать: оставляем прежний best, просим иначе — но без note менять нечего, выходим

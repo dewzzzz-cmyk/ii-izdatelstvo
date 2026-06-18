@@ -17,8 +17,28 @@ import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-let _rightTab = 'roadmap'; // roadmap | agents | mem
+let _rightTab = 'roadmap'; // roadmap | agents | mem | chat
+let _topTab = 'analysis';  // analysis | process
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
+let _runLog = [];           // лента шагов текущего/последнего прогона
+let _runCurrent = '';       // что происходит прямо сейчас
+
+// Лента «Процесс»: пошагово что делают агенты и почему (особенно доработки).
+function renderProcess(){
+  if(!_runLog.length && !_runCurrent && !_busy)
+    return `<div class="ph">Процесс</div><div class="empty-state">Запустите агентов — здесь по шагам видно, что и почему они делают.</div>`;
+  return `<div class="ph">Процесс ${_busy?'<span style="font-weight:400;text-transform:none;letter-spacing:0">идёт…</span>':''}</div>
+    <div class="proc-feed">
+      ${_runLog.map(l=>`<div class="proc-step ${l.state||''}"><span class="proc-ic">${l.icon||'•'}</span><span class="proc-tx">${esc(l.text)}</span></div>`).join('')}
+      ${_busy&&_runCurrent?`<div class="proc-step run"><span class="proc-ic"><span class="spinner"></span></span><span class="proc-tx">${esc(_runCurrent)}</span></div>`:''}
+    </div>`;
+}
+// Живое обновление ленты во время прогона (без полного ре-рендера панели).
+function pushProc(ev){
+  if(ev.log){ _runLog.push(ev.log); }
+  else if(ev.text){ _runCurrent = ev.text; }
+  if(_topTab==='process'){ const b=document.getElementById('topBody'); if(b){ b.innerHTML=renderProcess(); b.scrollTop=b.scrollHeight; } }
+}
 // Правая панель «Написания»: ВЕРХ — анализ сцены (флаги), НИЗ — вкладки Роадмап/Агенты/Память.
 function renderRightPanel(els){
   const s=getState();
@@ -29,7 +49,11 @@ function renderRightPanel(els){
   els.right.className='panel panel-right split';
   els.right.innerHTML = `
     <div class="sect sect-top">
-      <div class="sect-scroll">${renderSceneAnalysis()}</div>
+      <div class="rtabs">
+        <button class="rtab ${_topTab==='analysis'?'active':''}" data-tt="analysis">Анализ сцены</button>
+        <button class="rtab ${_topTab==='process'?'active':''}" data-tt="process">Процесс</button>
+      </div>
+      <div class="sect-scroll" id="topBody">${_topTab==='process'?renderProcess():renderSceneAnalysis()}</div>
     </div>
     <div class="sect sect-bot">
       <div class="rtabs">
@@ -40,7 +64,8 @@ function renderRightPanel(els){
       </div>
       <div class="sect-scroll ${_rightTab==='chat'?'no-pad-scroll':''}" id="rtabBody">${bottom}</div>
     </div>`;
-  els.right.querySelectorAll('.rtab').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
+  els.right.querySelectorAll('.rtab[data-rt]').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
+  els.right.querySelectorAll('.rtab[data-tt]').forEach(b=>b.onclick=()=>{ _topTab=b.dataset.tt; renderRightPanel(els); });
 }
 
 // ─────────────────────────────── КОНЦЕПЦИЯ ───────────────────────────────
@@ -542,6 +567,8 @@ async function doRun(els, s, scene, directive){
   if(_busy) return;
   if(!g.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
   _busy = true;
+  _runLog = []; _runCurrent = 'Запуск…'; _topTab = 'process';   // показываем «Процесс» во время прогона
+  renderRightPanel(els);
   document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='0.5');
   scene.brief=document.getElementById('brief').value.trim();
   const wasDone = scene.status==='done' && !!scene.text;
@@ -553,8 +580,10 @@ async function doRun(els, s, scene, directive){
     runOpts.onApproval = approvalGate;   // ручной режим: пауза на подтверждение
     const result = await runScene(s, scene, runOpts, prog=>{
       if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
-      else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; }
+      else if(prog.log){ pushProc(prog); }
+      else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; pushProc(prog); }
     });
+    pushProc({log:{icon:'✓', text:`Готово · ${result.text? (result.text.match(/\S+/g)||[]).length+' сл.':''}${result.eval?' · оценка '+result.eval.weighted+'/10':''}`, state:'ok'}});
     if(wasDone && oldText){ scene.proseVersions=scene.proseVersions||[]; scene.proseVersions.unshift(oldText); if(scene.proseVersions.length>10)scene.proseVersions.length=10; }
     scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
     scene.lastEval=result.eval||null; scene.flags=result.flags||{}; scene.handDone=false; scene.stale=false;
@@ -564,8 +593,8 @@ async function doRun(els, s, scene, directive){
     btn.innerHTML='<span class="spinner"></span> Суммаризация…';
     try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }
     catch(e){ console.warn('summarize failed', e); }
-  }catch(e){ ed.textContent='Ошибка: '+e.message; }
-  finally{ btn.disabled=false; _busy=false; document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity=''); }
+  }catch(e){ ed.textContent='Ошибка: '+e.message; pushProc({log:{icon:'⚠', text:'Ошибка: '+e.message, state:'warn'}}); }
+  finally{ btn.disabled=false; _busy=false; _runCurrent=''; document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity=''); renderRightPanel(els); }
 }
 
 // Плавающее меню по выделению текста → директива, привязанная к фрагменту.
