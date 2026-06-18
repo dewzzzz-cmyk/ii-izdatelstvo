@@ -7,7 +7,7 @@ import { buildSceneContext, bookContextBlock } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
-         lineEditMessages, runGuardParse, customGuardMessages } from './guards.js';
+         lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -16,10 +16,11 @@ let _running = false; // защита от конкурентного прого
 function ag(state, role){ return (state.agents||[]).find(a=>a.role===role || a.id===role) || {}; }
 function manual(state, role){ return ag(state, role).manual === true; }
 
-// Пауза на подтверждение в ручном режиме. Возвращает {approve} или {approve:false, note}.
-async function gate(state, role, label, output, opts){
+// Пауза на подтверждение в ручном режиме. Возвращает {approve, note, text}.
+// extra может нести {draft, editable} — тогда автор правит текст прямо в окне.
+async function gate(state, role, label, output, opts, extra={}){
   if(!manual(state, role) || !opts.onApproval) return { approve:true };
-  return await opts.onApproval({ role, label, output });
+  return await opts.onApproval({ role, label, output, ...extra });
 }
 function formatVerdict(v){
   if(!v || !v.ok) return 'Оценщик не вернул оценку.';
@@ -76,26 +77,35 @@ export async function runScene(state, scene, opts={}, onProgress){
 
     while(iter < maxIter && safety++ < 20){
       iter++;
-      onProgress && onProgress({stage:'prose', text:`Прозаик пишет${iter>1?` (итерация ${iter})`:''}…`});
-      // На доработке (iter>1) даём Прозаику прошлый черновик + замечания, температура ниже (точечная правка).
+      // На доработке (iter>1) — ХИРУРГИЧЕСКАЯ правка прошлого черновика по замечаниям:
+      // меняем только нужные фразы, остальное сохраняем дословно (не переписываем всё).
       const isRevision = iter > 1 && prevDraft;
-      const ctx = buildSceneContext(state, scene, {
-        prevSceneText, architectOutput:architectText, directive,
-        prevDraft: isRevision ? prevDraft : '',
-      });
       let streamed = '';
-      const baseTemp = proseAg.temp ?? 0.85;
-      const pRes = await callLLM({ ...llmBase, temperature: isRevision?Math.max(0.2, baseTemp-0.15):baseTemp, messages:ctx.messages, maxTokens: proseAg.maxTokens ?? 1600 },
-        chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); });
+      const streamCb = chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); };
+      let pRes, logInput, logLayers;
+      if(isRevision){
+        onProgress && onProgress({stage:'prose', text:`Прозаик правит черновик по замечаниям (итерация ${iter})…`});
+        const cap = Math.min(4000, Math.max(1400, Math.round(prevDraft.length/2) + 800));
+        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive), maxTokens: proseAg.maxTokens ?? cap }, streamCb);
+        // защита от усечения: если ответ подозрительно короткий — оставляем прошлый черновик
+        if(pRes.text && pRes.text.length < prevDraft.length*0.6) pRes.text = prevDraft;
+        logInput = '(хирургическая доработка) ' + (directive||'');
+      } else {
+        onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
+        const ctx = buildSceneContext(state, scene, { prevSceneText, architectOutput:architectText, directive, prevDraft:'' });
+        pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseAg.maxTokens ?? 1600 }, streamCb);
+        logInput = ctx.messages[1].content; logLayers = ctx.layers;
+      }
       prevDraft = pRes.text;
-      logStep({ agent:'prose', iter, input:ctx.messages[1].content, output:pRes.text,
-        layers:ctx.layers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
-      onProgress && onProgress({log:{icon:'✍️', text:`Прозаик: черновик ${iter} написан`}});
+      logStep({ agent:'prose', iter, input:logInput, output:pRes.text,
+        layers:logLayers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
+      onProgress && onProgress({log:{icon:'✍️', text:isRevision?`Прозаик: черновик ${iter} (точечная правка)`:`Прозаик: черновик ${iter} написан`}});
 
-      // Ручная пауза после Прозаика: автор принимает черновик или просит переписать.
+      // Ручная пауза после Прозаика: автор может ПОПРАВИТЬ ТЕКСТ руками, принять или вернуть на переписывание.
       if(manual(state,'prose')){
-        const gt = await gate(state,'prose','Прозаик'+(iter>1?` · итерация ${iter}`:''), pRes.text, opts);
-        if(!gt.approve){ directive=gt.note||directive; prevDraft=''; iter--; continue; } // переписать, не считая итерацию
+        const gt = await gate(state,'prose','Прозаик'+(iter>1?` · итерация ${iter}`:''), '', opts, {draft:pRes.text, editable:true});
+        if(!gt.approve){ directive=gt.note||directive; prevDraft=''; iter--; continue; } // переписать с нуля, не считая итерацию
+        if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; } // принять с ручными правками
       }
 
       if(!agentEnabled('evaluator')){ best=pRes.text; bestEval=null; break; }
@@ -116,10 +126,12 @@ export async function runScene(state, scene, opts={}, onProgress){
       // лучший по баллу вариант
       if(!bestEval || (verdict.ok && verdict.weighted > (bestEval.weighted||0))){ best=pRes.text; bestEval=verdict; }
 
-      // Ручная пауза после Оценщика: автор сам решает — принять или ещё доработать.
+      // Ручная пауза после Оценщика: автор видит вердикт, может ПОПРАВИТЬ ТЕКСТ руками,
+      // принять как есть или вернуть Прозаику на точечную доработку по замечаниям.
       if(manual(state,'evaluator')){
-        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, formatVerdict(verdict), opts);
-        if(gt.approve){ best=pRes.text; bestEval=verdict; break; }
+        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, formatVerdict(verdict), opts, {draft:pRes.text, editable:true});
+        if(gt.approve){ best=(gt.text!=null && gt.text.trim())?gt.text.trim():pRes.text; bestEval=verdict; break; }
+        if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; } // правки автора → база для доработки
         directive = gt.note || [...(verdict.notes||[]), ...((verdict.cliches||[]).length?['убери клише: '+verdict.cliches.join(', ')]:[])].join('; ') || directive;
         continue;
       }
@@ -162,8 +174,8 @@ export async function runScene(state, scene, opts={}, onProgress){
           if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
             logStep({ agent:'lineedit', input:'(черновик)', output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
             onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
-            const gt = await gate(state,'lineedit','Линейный редактор', leRes.text, opts);
-            if(gt.approve){ best = leRes.text; break; }
+            const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
+            if(gt.approve){ best = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text; break; }
             // переписать: оставляем прежний best, просим иначе — но без note менять нечего, выходим
             if(!gt.note){ break; }
           } else break;

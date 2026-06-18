@@ -6,7 +6,7 @@
 import { callLLM } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
-         customGuardMessages, lineEditMessages, runGuardParse } from './guards.js';
+         customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages } from './guards.js';
 import { bookContextBlock } from './context.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
@@ -57,20 +57,9 @@ export async function patchScene(state, scene, instruction){
   if(!draft) throw new Error('Нет текста сцены.');
   if(!instruction || !instruction.trim()) throw new Error('Пустое замечание.');
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
-  const sys = [
-    'Ты — редактор-хирург. Тебе дают полный текст сцены и ОДНО конкретное замечание.',
-    'Внеси МИНИМАЛЬНУЮ правку, которая устраняет только это замечание: можешь добавить или изменить нужные фразы/короткий фрагмент.',
-    'Всё, что не относится к замечанию, оставь ДОСЛОВНО — те же предложения, тот же порядок, тот же голос и стиль.',
-    'Не переписывай сцену заново, не переставляй абзацы, не «улучшай» то, о чём не просили.',
-  ].join('\n');
-  const user = [
-    'ЗАМЕЧАНИЕ (что исправить):', instruction.trim(), '',
-    'ТЕКСТ СЦЕНЫ:', draft, '',
-    'Верни ВЕСЬ текст сцены целиком с внесённой правкой — без кавычек, заголовков и пояснений.',
-  ].join('\n');
   const cap = Math.min(4000, Math.max(1400, Math.round(draft.length/2) + 800));
   const res = await callLLM({ ...base, temperature:0.4,
-    messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:cap });
+    messages: surgicalReviseMessages(draft, instruction), maxTokens:cap });
   const out = (res.text||'').trim();
   if(out.length < draft.length*0.6) throw new Error('Ответ оборван — попробуйте ещё раз.');
   return out;

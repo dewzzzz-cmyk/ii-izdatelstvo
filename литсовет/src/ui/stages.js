@@ -586,25 +586,34 @@ function openRegenSettings(s, scene){
 }
 
 // Модалка ручного режима: показывает результат агента, ждёт «Принять» или «Переписать».
-function approvalGate({role, label, output}){
+function approvalGate({role, label, output, draft, editable}){
   return new Promise(resolve=>{
     const root=document.getElementById('modalRoot');
     const isEval = role==='evaluator';
     const hint = isEval
-      ? '«Принять» — взять этот черновик как есть и завершить (петля остановится, даже если оценка «на доработку»). «На доработку» — вернуть Прозаику, и он перепишет с учётом замечаний Оценщика.'
-      : '«Принять» — продолжить дальше. «Переписать» — этот же агент попробует снова с вашей заметкой.';
-    root.innerHTML=`<div class="modal-bg"><div class="modal" style="width:600px;max-width:92vw" onclick="event.stopPropagation()">
+      ? '«Принять» — взять текст как есть и завершить (петля остановится, даже если оценка «на доработку»). «На доработку» — вернуть Прозаику, он точечно поправит фразы по замечаниям.'
+      : '«Принять» — взять текст как есть и продолжить. «Переписать» — заново с вашей заметкой.';
+    const infoBlock = output
+      ? `<div style="max-height:200px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output)}</div>`
+      : '';
+    const editBlock = editable
+      ? `<div class="muted" style="margin:10px 0 4px">Текст черновика — можно поправить руками прямо здесь:</div>
+         <textarea id="apvDraft" class="apv-draft" spellcheck="false">${esc(draft||'')}</textarea>`
+      : '';
+    root.innerHTML=`<div class="modal-bg"><div class="modal" style="width:640px;max-width:94vw" onclick="event.stopPropagation()">
       <h2>Ручной режим · ${esc(label)}</h2>
       <div class="muted" style="margin-bottom:8px">${hint}</div>
-      <div style="max-height:340px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output||'(пусто)')}</div>
+      ${infoBlock}
+      ${editBlock}
       <input type="text" id="apvNote" placeholder="${isEval?'что доработать Прозаику (по умолчанию — замечания Оценщика)':'заметка для переделки (необязательно)'}" style="margin-top:10px;width:100%">
       <div class="row" style="justify-content:flex-end;margin-top:10px;gap:8px">
         <button class="btn" id="apvRedo">↻ ${isEval?'На доработку Прозаику':'Переписать'}</button>
         <button class="btn btn-primary" id="apvOk">✓ Принять</button>
       </div>
     </div></div>`;
-    document.getElementById('apvOk').onclick=()=>{ root.innerHTML=''; resolve({approve:true}); };
-    document.getElementById('apvRedo').onclick=()=>{ const note=document.getElementById('apvNote').value.trim(); root.innerHTML=''; resolve({approve:false, note}); };
+    const getText=()=>{ const t=document.getElementById('apvDraft'); return t? t.value : undefined; };
+    document.getElementById('apvOk').onclick=()=>{ const text=getText(); root.innerHTML=''; resolve({approve:true, text}); };
+    document.getElementById('apvRedo').onclick=()=>{ const note=document.getElementById('apvNote').value.trim(); const text=getText(); root.innerHTML=''; resolve({approve:false, note, text}); };
   });
 }
 
