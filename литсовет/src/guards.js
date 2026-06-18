@@ -64,6 +64,7 @@ export function eventsGuardMessages(state, scene, draft, strictness){
     '1) ПРОТИВОРЕЧИЕ — персонаж знает/чувствует/делает то, что не следует из прошлых событий или его состояния (severity: critical).',
     '2) НЕУСТАНОВЛЕННАЯ ПОСЫЛКА — сцена подразумевает событие/намерение, которого не показала: кто кого заметил, откуда стало известно, смена траектории или вектор на героя без триггера, перцепция без линии восприятия. Это пробел: задай вопрос автору (severity: warning).',
     'Пример пробела: нагнетание строится на том, что существа идут к герою, но в тексте они лишь «перетекают вдоль забора» — не показано, что они его заметили и сменили направление. Флаг-вопрос.',
+    'Переход и смену локации проверяй ТОЛЬКО относительно «непосредственно предыдущей сцены», если она указана. Не бери локацию из общего синопсиса или сводок других сцен. Если предыдущей сцены нет — переход не флагуй.',
     strictnessLine(strictness),
   ].join('\n');
   const user = [facts,'','СЦЕНА:',draft,'',
@@ -78,9 +79,20 @@ function factsBlock(state, scene){
   const parts = [];
   const syn = (mem.books&&mem.books.__running__)?mem.books.__running__.current:'';
   if(syn) parts.push('Ранее в книге: '+syn);
-  const sceneSums = (state.structure||[]).filter(n=>n.type==='scene'&&n.id!==scene.id&&!n.rolledUp)
-    .map(n=>(mem.scenes||{})[n.id]?.current).filter(Boolean);
-  if(sceneSums.length) parts.push('Предыдущие сцены:\n'+sceneSums.slice(-8).join('\n'));
+  // Только сцены ДО текущей (по порядку в структуре) — не «свалка» и без будущих сцен.
+  const scenes = (state.structure||[]).filter(n=>n.type==='scene');
+  const idx = scenes.findIndex(n=>n.id===scene.id);
+  const prior = (idx<0 ? scenes : scenes.slice(0, idx)).filter(n=>!n.rolledUp);
+  const priorSums = prior.map(n=>(mem.scenes||{})[n.id]?.current).filter(Boolean);
+  if(priorSums.length) parts.push('Предыдущие сцены (по порядку):\n'+priorSums.slice(-8).join('\n'));
+  // Непосредственно предыдущая сцена — явно, чтобы Страж сверял переход/локацию с ней, а не угадывал.
+  const prevScene = idx>0 ? [...scenes.slice(0, idx)].reverse().find(n=>(mem.scenes||{})[n.id]?.current || n.text) : null;
+  if(prevScene){
+    const ps = (mem.scenes||{})[prevScene.id]?.current || (prevScene.text? prevScene.text.slice(-400) : '');
+    if(ps) parts.push(`НЕПОСРЕДСТВЕННО ПРЕДЫДУЩАЯ СЦЕНА — «${prevScene.title||'без названия'}» (только с ней сверяй переход и смену локации):\n${ps}`);
+  } else if(idx===0){
+    parts.push('Это ПЕРВАЯ сцена книги — предыдущей сцены нет, переход и смену локации проверять не с чем.');
+  }
   const chars = serializeCharacterStates(state.characters, scene.presentChars);
   if(chars) parts.push('Состояния персонажей:\n'+chars);
   const bible = bibleForPrompt(state.bible, scene.brief||scene.title||'', 5);
