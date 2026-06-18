@@ -31,6 +31,14 @@ function paramSpecs(a){
 function renderAgentParams(a, global){
   const specs = paramSpecs(a);
   return `<div class="agent-params">
+    <div class="ap-mode">
+      <span class="ap-label">Режим</span>
+      <div class="mode-mini">
+        <button class="mm-btn ${!a.manual?'on':''}" data-mode="auto" data-aid="${a.id}">Авто</button>
+        <button class="mm-btn ${a.manual?'on':''}" data-mode="manual" data-aid="${a.id}">Ручной</button>
+      </div>
+    </div>
+    <div class="ap-hint" style="margin:-4px 0 8px">${a.manual?'пауза после агента — вы подтверждаете каждый шаг':'агент работает без остановок'}</div>
     ${specs.map(sp=>{
       const cur = sp.target==='agent' ? (a[sp.key]??sp.def) : (global[sp.key]??sp.def);
       return `<div class="ap-row">
@@ -108,6 +116,11 @@ function bindToggles(){
     row.onclick=(e)=>{ if(e.target.closest('.toggle')) return; const id=row.dataset.open; if(_openAgents.has(id))_openAgents.delete(id); else _openAgents.add(id); rerenderDiag(); };
   });
   // ползунки параметров — живо обновляем значение, сохраняем по отпусканию
+  document.querySelectorAll('.mm-btn').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const s=getState(); const a=s.agents.find(x=>x.id===b.dataset.aid);
+    if(a){ a.manual = b.dataset.mode==='manual'; save(); }
+  });
   document.querySelectorAll('.ap-slider').forEach(sl=>{
     const s=getState(); const a=s.agents.find(x=>x.id===sl.dataset.aid); if(!a) return;
     const spec=paramSpecs(a).find(x=>x.key===sl.dataset.key);

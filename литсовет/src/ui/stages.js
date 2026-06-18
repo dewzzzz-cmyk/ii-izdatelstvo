@@ -488,6 +488,25 @@ function renderEditorialStop(s, ch){
   </div>`;
 }
 
+// Модалка ручного режима: показывает результат агента, ждёт «Принять» или «Переписать».
+function approvalGate({role, label, output}){
+  return new Promise(resolve=>{
+    const root=document.getElementById('modalRoot');
+    root.innerHTML=`<div class="modal-bg"><div class="modal" style="width:600px;max-width:92vw" onclick="event.stopPropagation()">
+      <h2>Ручной режим · ${esc(label)}</h2>
+      <div class="muted" style="margin-bottom:8px">Проверьте результат агента. Принять — продолжить дальше; Переписать — этот же агент попробует снова.</div>
+      <div style="max-height:340px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output||'(пусто)')}</div>
+      <input type="text" id="apvNote" placeholder="заметка для переделки (необязательно)" style="margin-top:10px;width:100%">
+      <div class="row" style="justify-content:flex-end;margin-top:10px;gap:8px">
+        <button class="btn" id="apvRedo">↻ Переписать</button>
+        <button class="btn btn-primary" id="apvOk">✓ Принять</button>
+      </div>
+    </div></div>`;
+    document.getElementById('apvOk').onclick=()=>{ root.innerHTML=''; resolve({approve:true}); };
+    document.getElementById('apvRedo').onclick=()=>{ const note=document.getElementById('apvNote').value.trim(); root.innerHTML=''; resolve({approve:false, note}); };
+  });
+}
+
 async function doRun(els, s, scene, directive){
   const g=s.global;
   if(_busy) return;
@@ -500,7 +519,9 @@ async function doRun(els, s, scene, directive){
   const btn=document.getElementById('runBtn'); btn.disabled=true;
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
   try{
-    const result = await runScene(s, scene, directive?{directive}:{}, prog=>{
+    const runOpts = directive?{directive}:{};
+    runOpts.onApproval = approvalGate;   // ручной режим: пауза на подтверждение
+    const result = await runScene(s, scene, runOpts, prog=>{
       if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
       else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; }
     });

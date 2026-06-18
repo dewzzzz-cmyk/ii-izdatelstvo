@@ -124,7 +124,7 @@ function migrate(s){
   if(!s.agents || !s.agents.length){ s.agents = d.agents; }
   else {
     const byId = Object.fromEntries(s.agents.map(a=>[a.id, a]));
-    const KEEP = ['enabled','temp','maxTokens','strictness'];
+    const KEEP = ['enabled','temp','maxTokens','strictness','manual'];
     s.agents = d.agents.map(da => {
       if(!byId[da.id]) return da;
       const merged = Object.assign({}, da);

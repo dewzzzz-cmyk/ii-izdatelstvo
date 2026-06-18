@@ -149,6 +149,10 @@ textarea{resize:vertical;min-height:60px}
 .ap-val{font-size:12px;font-weight:500;color:var(--accent)}
 .ap-slider{width:100%;margin:2px 0}
 .ap-hint{font-size:10px;color:var(--text-3)}
+.ap-mode{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.mode-mini{display:flex;border:1px solid var(--border-2);border-radius:var(--radius);overflow:hidden}
+.mm-btn{font-size:11px;padding:3px 10px;border:none;background:var(--surface);color:var(--text-3)}
+.mm-btn.on{background:var(--accent);color:#fff;font-weight:500}
 .toggle{width:34px;height:20px;border-radius:10px;background:var(--border);border:1px solid var(--border-2);position:relative;flex-shrink:0;transition:background .15s}
 .toggle::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:var(--text-3);top:2px;left:2px;transition:all .15s}
 .toggle.on{background:var(--accent);border-color:var(--accent)}
