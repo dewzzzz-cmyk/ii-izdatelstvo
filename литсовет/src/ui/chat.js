@@ -12,11 +12,23 @@ export function renderChat(){
   const s = getState();
   s.chat = s.chat || [];
   setTimeout(bindChat, 0);
+  const scene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
+  const bits = [];
+  if(scene) bits.push(`открытую сцену «${esc(scene.title||'без названия')}»${scene.text?' (бриф + текст)':' (бриф)'}`);
+  if(s.project.genre) bits.push('жанр');
+  if(s.project.synopsis||s.project.idea) bits.push('синопсис');
+  if(s.characters&&s.characters.length) bits.push('персонажей');
+  if(s.bible&&s.bible.length) bits.push('канон');
+  const ctxLine = bits.length ? 'Видит: ' + bits.join(', ') + '.' : 'Контекст пуст — откройте сцену.';
   return `
     <div class="chat-wrap">
+      <div class="chat-ctx">
+        <span class="chat-ctx-tx" data-tip="Чат — это обсуждение, а не команда агентам. Он видит открытую сцену (бриф и до ~1500 знаков её текста), жанр, синопсис, персонажей и подходящий канон, и помнит последние сообщения переписки.">ℹ ${ctxLine}</span>
+        ${s.chat.length?`<button class="chat-clear" id="chatClear" title="Очистить переписку с ИИ">Очистить</button>`:''}
+      </div>
       <div class="chat-log" id="chatLog">
         ${s.chat.length? s.chat.map(m=>`<div class="chat-msg ${m.role}"><div class="chat-bubble">${esc(m.content)}</div></div>`).join('')
-          : '<div class="muted" style="padding:10px">Спросите ИИ о книге: «логично ли, что Анна знает про письма?», «предложи поворот для главы 3», «какой мотив у Мартина?». Он видит ваш жанр, синопсис, текущую сцену и канон.</div>'}
+          : '<div class="muted" style="padding:10px">Спросите ИИ о книге: «логично ли, что Анна знает про письма?», «предложи поворот для главы 3», «какой мотив у Мартина?». Он видит вашу открытую сцену (с текстом), жанр, синопсис и канон.</div>'}
       </div>
       <div class="chat-input-row">
         <textarea id="chatInput" rows="2" placeholder="Спросить о книге…"></textarea>
@@ -58,4 +70,6 @@ function bindChat(){
   };
   send.onclick=doSend;
   input.onkeydown=(e)=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); doSend(); } };
+  const clr=document.getElementById('chatClear');
+  if(clr) clr.onclick=()=>{ if(confirm('Очистить переписку с ИИ?')){ const s=getState(); s.chat=[]; save(); } };
 }
