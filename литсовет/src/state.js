@@ -63,13 +63,13 @@ export function defaultState(){
 // Реестр агентов с дефолтами. Каждый включаем/отключаем (диагностический режим).
 export function defaultAgents(){
   return [
-    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, enabled:true, role:'architect' },
-    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, enabled:true, role:'prose', loop:true },
-    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, enabled:true, role:'evaluator' },
-    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, enabled:false, role:'voiceguard' },
-    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, enabled:false, role:'logic' },
-    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, enabled:false, role:'events' },
-    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, enabled:false, role:'lineedit' },
+    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:600, enabled:true, role:'architect' },
+    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:1600, enabled:true, role:'prose', loop:true },
+    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:700, enabled:true, role:'evaluator' },
+    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'voiceguard' },
+    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'logic' },
+    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'events' },
+    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:1600, enabled:false, role:'lineedit' },
   ];
 }
 
@@ -124,7 +124,13 @@ function migrate(s){
   if(!s.agents || !s.agents.length){ s.agents = d.agents; }
   else {
     const byId = Object.fromEntries(s.agents.map(a=>[a.id, a]));
-    s.agents = d.agents.map(da => byId[da.id] ? Object.assign({}, da, { enabled:byId[da.id].enabled, temp:byId[da.id].temp }) : da);
+    const KEEP = ['enabled','temp','maxTokens','strictness'];
+    s.agents = d.agents.map(da => {
+      if(!byId[da.id]) return da;
+      const merged = Object.assign({}, da);
+      KEEP.forEach(k=>{ if(byId[da.id][k]!==undefined) merged[k]=byId[da.id][k]; });
+      return merged;
+    });
   }
   s.ui = s.ui || { stage:'concept' };
   s.characters = s.characters || [];

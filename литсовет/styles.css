@@ -138,7 +138,17 @@ textarea{resize:vertical;min-height:60px}
 .diag-section{border-bottom:1px solid var(--border)}
 .agent-toggle{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border)}
 .agent-toggle .at-name{flex:1;font-size:13px}
-.agent-toggle .at-temp{font-size:10px;color:var(--text-3)}
+.agent-toggle{cursor:pointer}
+.agent-toggle:hover{background:var(--surface-2)}
+.agent-toggle .at-temp{font-size:11px;color:var(--text-3)}
+.agent-params{padding:8px 12px 12px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.ap-row{margin-bottom:10px}
+.ap-row:last-child{margin-bottom:0}
+.ap-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}
+.ap-label{font-size:12px;color:var(--text)}
+.ap-val{font-size:12px;font-weight:500;color:var(--accent)}
+.ap-slider{width:100%;margin:2px 0}
+.ap-hint{font-size:10px;color:var(--text-3)}
 .toggle{width:34px;height:20px;border-radius:10px;background:var(--border);border:1px solid var(--border-2);position:relative;flex-shrink:0;transition:background .15s}
 .toggle::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:var(--text-3);top:2px;left:2px;transition:all .15s}
 .toggle.on{background:var(--accent);border-color:var(--accent)}

@@ -9,6 +9,14 @@ import { callLLM, extractJSON } from './llm.js';
 import { bibleForPrompt } from './bible.js';
 import { serializeCharacterStates } from './context.js';
 
+// Строгость 1-3 → инструкция для Стража (реально влияет на число и порог флагов).
+function strictnessLine(strictness){
+  const s = strictness||2;
+  if(s<=1) return 'Строгость: МЯГКАЯ — отмечай только грубые, явные проблемы; мелочи пропускай.';
+  if(s>=3) return 'Строгость: ВЫСОКАЯ — придирайся, отмечай даже мелкие и потенциальные проблемы.';
+  return 'Строгость: ОБЫЧНАЯ — отмечай заметные проблемы, не придирайся к мелочам.';
+}
+
 function parseFlags(text){
   const j = extractJSON(text);
   if(!j || !Array.isArray(j.flags)) return [];
@@ -21,8 +29,8 @@ function parseFlags(text){
 }
 
 // ── Страж голоса (0.2): стиль/ритм против образца. Цитирует образец. ──
-export function voiceGuardMessages(scene, draft, voiceExamples){
-  const sys = 'Ты — страж голоса. Ты НЕ переписываешь текст. Ты отмечаешь отклонения стиля/ритма от образца автора. По каждому флагу цитируй релевантное предложение из образца.';
+export function voiceGuardMessages(scene, draft, voiceExamples, strictness){
+  const sys = 'Ты — страж голоса. Ты НЕ переписываешь текст. Ты отмечаешь отклонения стиля/ритма от образца автора. По каждому флагу цитируй релевантное предложение из образца.\n'+strictnessLine(strictness);
   const ex = voiceExamples&&voiceExamples.length ? 'Образец голоса:\n'+voiceExamples.map(e=>'  «'+e+'»').join('\n') : '';
   const user = [ex,'','ЧЕРНОВИК:',draft,'',
     'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"кратко","detail":"что не так","quote":"цитата из образца"}] }. 1-4 флага. Только JSON.'
@@ -31,9 +39,9 @@ export function voiceGuardMessages(scene, draft, voiceExamples){
 }
 
 // ── Страж логики (0.2): причинность/время/пространство. ТОЛЬКО факты. ──
-export function logicGuardMessages(state, scene, draft){
+export function logicGuardMessages(state, scene, draft, strictness){
   const facts = factsBlock(state, scene);
-  const sys = 'Ты — страж логики. Проверяешь физическую/временну́ю/причинную непротиворечивость сцены фактам мира. Ты НЕ оцениваешь стиль и НЕ переписываешь. Вопрос: возможно ли это физически, логически, хронологически?';
+  const sys = 'Ты — страж логики. Проверяешь физическую/временну́ю/причинную непротиворечивость сцены фактам мира. Ты НЕ оцениваешь стиль и НЕ переписываешь. Вопрос: возможно ли это физически, логически, хронологически?\n'+strictnessLine(strictness);
   const user = [facts,'','СЦЕНА:',draft,'',
     'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"кратко","detail":"противоречие и с чем","quote":"фрагмент сцены"}] }. Только реальные противоречия. Только JSON.'
   ].join('\n');
@@ -41,9 +49,9 @@ export function logicGuardMessages(state, scene, draft){
 }
 
 // ── Страж событий (0.2): кто что знает / состояния. ТОЛЬКО факты. ──
-export function eventsGuardMessages(state, scene, draft){
+export function eventsGuardMessages(state, scene, draft, strictness){
   const facts = factsBlock(state, scene);
-  const sys = 'Ты — страж событий. Проверяешь: может ли персонаж знать/чувствовать/делать это сейчас, учитывая прошлые события и его состояние. Ты НЕ оцениваешь стиль. Вопрос: знает ли персонаж то, что говорит/делает? Следуют ли эмоции из событий?';
+  const sys = 'Ты — страж событий. Проверяешь: может ли персонаж знать/чувствовать/делать это сейчас, учитывая прошлые события и его состояние. Ты НЕ оцениваешь стиль. Вопрос: знает ли персонаж то, что говорит/делает? Следуют ли эмоции из событий?\n'+strictnessLine(strictness);
   const user = [facts,'','СЦЕНА:',draft,'',
     'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"кратко","detail":"что не так со знанием/состоянием","quote":"фрагмент сцены"}] }. Только JSON.'
   ].join('\n');

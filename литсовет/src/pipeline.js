@@ -12,6 +12,9 @@ import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 
+// Конфиг агента по роли (temp, maxTokens, strictness и т.п. — настраиваются ползунками).
+function ag(state, role){ return (state.agents||[]).find(a=>a.role===role) || {}; }
+
 // Запустить пайплайн для одной сцены. Возвращает {text, eval, runId}.
 // onProgress({stage, text}) — для UI стрима.
 export async function runScene(state, scene, opts={}, onProgress){
@@ -26,9 +29,10 @@ export async function runScene(state, scene, opts={}, onProgress){
     // ── 1. Архитектор сцены (опц.) ──
     let architectText = '';
     if(agentEnabled('architect')){
+      const ac = ag(state,'architect');
       onProgress && onProgress({stage:'architect', text:'Архитектор планирует сцену…'});
       const aMsgs = architectMessages(state, scene);
-      const aRes = await callLLM({ ...llmBase, temperature:0.4, messages:aMsgs, maxTokens:600 });
+      const aRes = await callLLM({ ...llmBase, temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??600 });
       const plan = parseArchitect(aRes.text);
       architectText = architectToText(plan);
       if(plan && plan.presentChars.length) scene.presentChars = plan.presentChars;
@@ -37,6 +41,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     }
 
     // ── 2. Прозаик ⇄ Оценщик (петля) ──
+    const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     let best = null, bestEval = null;
@@ -52,7 +57,8 @@ export async function runScene(state, scene, opts={}, onProgress){
         prevDraft: isRevision ? prevDraft : '',
       });
       let streamed = '';
-      const pRes = await callLLM({ ...llmBase, temperature: isRevision?0.7:0.85, messages:ctx.messages, maxTokens:1600 },
+      const baseTemp = proseAg.temp ?? 0.85;
+      const pRes = await callLLM({ ...llmBase, temperature: isRevision?Math.max(0.2, baseTemp-0.15):baseTemp, messages:ctx.messages, maxTokens: proseAg.maxTokens ?? 1600 },
         chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); });
       prevDraft = pRes.text;
       logStep({ agent:'prose', iter, input:ctx.messages[1].content, output:pRes.text,
@@ -63,7 +69,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       // Оценщик
       onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
       const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples);
-      const eRes = await callLLM({ ...llmBase, temperature:0.2, messages:eMsgs, maxTokens:700 });
+      const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??700 });
       const verdict = parseEvaluator(eRes.text, threshold);
       logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
         tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
@@ -83,9 +89,9 @@ export async function runScene(state, scene, opts={}, onProgress){
     // ── 3. Стражи (параллельно) — только флагуют, не переписывают ──
     const flags = {};
     const guardJobs = [];
-    if(agentEnabled('voiceguard')) guardJobs.push(guardJob('voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples), flags));
-    if(agentEnabled('logic'))      guardJobs.push(guardJob('logic', llmBase, logicGuardMessages(state, scene, best), flags));
-    if(agentEnabled('events'))     guardJobs.push(guardJob('events', llmBase, eventsGuardMessages(state, scene, best), flags));
+    if(agentEnabled('voiceguard')) guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples, ag(state,'voiceguard').strictness), flags));
+    if(agentEnabled('logic'))      guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
+    if(agentEnabled('events'))     guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
     if(guardJobs.length){
       onProgress && onProgress({stage:'guards', text:'Стражи проверяют сцену…'});
       await Promise.all(guardJobs);
@@ -93,9 +99,10 @@ export async function runScene(state, scene, opts={}, onProgress){
 
     // ── 4. Линейный редактор (опц.) — единственный, кто правит текст ──
     if(agentEnabled('lineedit')){
+      const leAg = ag(state,'lineedit');
       onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
       try{
-        const leRes = await callLLM({ ...llmBase, temperature:0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:1600 });
+        const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:leAg.maxTokens??1600 });
         if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
           logStep({ agent:'lineedit', input:'(черновик)', output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
           best = leRes.text;
@@ -115,9 +122,10 @@ export async function runScene(state, scene, opts={}, onProgress){
 }
 
 // Запуск одного Стража с устойчивостью к падению (спека 11: не валим весь прогон).
-async function guardJob(role, llmBase, messages, flagsOut){
+async function guardJob(state, role, llmBase, messages, flagsOut){
+  const a = ag(state, role);
   try{
-    const res = await callLLM({ ...llmBase, temperature:0.2, messages, maxTokens:700 });
+    const res = await callLLM({ ...llmBase, temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??700 });
     const flags = runGuardParse(res.text);
     flagsOut[role] = flags;
     logStep({ agent:role, input:'(черновик)', output:res.text, flags, tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost });

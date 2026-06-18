@@ -7,6 +7,41 @@ import { RUBRIC_AXES } from '../agents.js';
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий' };
+const _openAgents = new Set();
+
+// Параметры агента (реально влияют на прогон). target:'agent' пишет в агента, 'global' — в state.global.
+function paramSpecs(a){
+  const specs = [
+    { key:'temp', label:'Температура', hint:'выше — креативнее, ниже — стабильнее', min:0, max:1, step:0.05, target:'agent', def:0.5, fmt:v=>v.toFixed(2) },
+    { key:'maxTokens', label:'Макс. токенов', hint:'потолок длины ответа', min:200, max:2400, step:100, target:'agent', def:700, fmt:v=>Math.round(v) },
+  ];
+  if(a.role==='evaluator'){
+    specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля', min:5, max:9, step:0.5, target:'global', def:7, fmt:v=>v.toFixed(1) });
+    specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать', min:1, max:5, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
+  }
+  if(['voiceguard','logic','events'].includes(a.role)){
+    specs.push({ key:'strictness', label:'Строгость', hint:'1 мягко · 3 придирчиво', min:1, max:3, step:1, target:'agent', def:2, fmt:v=>['','мягко','обычно','строго'][Math.round(v)]||v });
+  }
+  if(a.role==='prose'){
+    specs.push({ key:'retries', label:'Повторов при сбое', hint:'устойчивость к ошибкам сети', min:0, max:4, step:1, target:'global', def:2, fmt:v=>Math.round(v) });
+  }
+  return specs;
+}
+
+function renderAgentParams(a, global){
+  const specs = paramSpecs(a);
+  return `<div class="agent-params">
+    ${specs.map(sp=>{
+      const cur = sp.target==='agent' ? (a[sp.key]??sp.def) : (global[sp.key]??sp.def);
+      return `<div class="ap-row">
+        <div class="ap-head"><span class="ap-label">${sp.label}</span><span class="ap-val" data-valfor="${a.id}-${sp.key}">${sp.fmt(cur)}</span></div>
+        <input type="range" class="ap-slider" min="${sp.min}" max="${sp.max}" step="${sp.step}" value="${cur}"
+          data-aid="${a.id}" data-key="${sp.key}" data-target="${sp.target}">
+        <div class="ap-hint">${sp.hint}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
 const SEV_RANK = { critical:0, warning:1, ok:2 };
 
 function renderFlags(scene){
@@ -50,20 +85,39 @@ export function renderDiagnostics(){
     <div class="ph">Агенты <span style="font-weight:400;text-transform:none;letter-spacing:0">диагностика</span></div>
     <div class="diag-section">
       ${agents.map(a=>`
-        <div class="agent-toggle">
+        <div class="agent-toggle" data-open="${a.id}">
           <span style="font-size:15px">${a.icon}</span>
-          <span class="at-name">${esc(a.name)} <span class="at-temp">${a.temp}</span></span>
+          <span class="at-name">${esc(a.name)} <span class="at-temp">${_openAgents.has(a.id)?'▾':'⚙'}</span></span>
           <div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}"></div>
-        </div>`).join('')}
+        </div>
+        ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`).join('')}
     </div>
     <div class="ph">Прогоны</div>
     ${runs.length? runs.slice(0,5).map(renderRun).join('') : '<div class="empty-state">Прогонов ещё не было.</div>'}
   `;
 }
 
+function rerenderDiag(){ const body=document.getElementById('rtabBody'); if(body) body.innerHTML=renderDiagnostics(); }
+
 function bindToggles(){
   document.querySelectorAll('.toggle[data-role]').forEach(t=>{
-    t.onclick=()=>{ const role=t.dataset.role; const s=getState(); const a=s.agents.find(x=>x.role===role); toggleAgent(role, !(a.enabled!==false)); };
+    t.onclick=(e)=>{ e.stopPropagation(); const role=t.dataset.role; const s=getState(); const a=s.agents.find(x=>x.role===role); toggleAgent(role, !(a.enabled!==false)); };
+  });
+  // клик по строке агента (не по тумблеру) — раскрыть/свернуть настройки
+  document.querySelectorAll('.agent-toggle[data-open]').forEach(row=>{
+    row.onclick=(e)=>{ if(e.target.closest('.toggle')) return; const id=row.dataset.open; if(_openAgents.has(id))_openAgents.delete(id); else _openAgents.add(id); rerenderDiag(); };
+  });
+  // ползунки параметров — живо обновляем значение, сохраняем по отпусканию
+  document.querySelectorAll('.ap-slider').forEach(sl=>{
+    const s=getState(); const a=s.agents.find(x=>x.id===sl.dataset.aid); if(!a) return;
+    const spec=paramSpecs(a).find(x=>x.key===sl.dataset.key);
+    const apply=(v)=>{
+      let val=parseFloat(v); if(spec.step>=1) val=Math.round(val);
+      if(sl.dataset.target==='agent') a[sl.dataset.key]=val; else s.global[sl.dataset.key]=val;
+      const lbl=document.querySelector(`[data-valfor="${a.id}-${sl.dataset.key}"]`); if(lbl) lbl.textContent=spec.fmt(val);
+    };
+    sl.addEventListener('input',()=>apply(sl.value));
+    sl.addEventListener('change',()=>{ apply(sl.value); save(); });
   });
   document.querySelectorAll('.run-card .rc-head').forEach(h=>{
     h.onclick=()=>{ const b=h.nextElementSibling; if(b) b.style.display = b.style.display==='none'?'block':'none'; };
