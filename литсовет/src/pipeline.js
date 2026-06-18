@@ -160,7 +160,8 @@ export async function runScene(state, scene, opts={}, onProgress){
     if(guardJobs.length){
       onProgress && onProgress({stage:'guards', text:'Стражи проверяют сцену…'});
       await Promise.all(guardJobs);
-      onProgress && onProgress({log:{icon:'🛡', text:`Стражи: ${Object.values(flags).reduce((a,b)=>a+(b?b.length:0),0)} флагов`}});
+      const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role, severity:f.severity, title:f.title, detail:f.detail||''})));
+      onProgress && onProgress({log:{icon:'🛡', text: flagList.length?`Стражи: ${flagList.length} ${flagList.length===1?'замечание':'замечаний'}`:'Стражи: замечаний нет', flags:flagList, state: flagList.length?'warn':'ok'}});
       // Ручная пауза: если хоть один Страж в ручном режиме — показать флаги и ждать.
       if(['voiceguard','logic','events','styleguard'].some(r=>agentEnabled(r) && manual(state,r))){
         await gate(state, ['voiceguard','logic','events','styleguard'].find(r=>manual(state,r)), 'Стражи · флаги сцены', flagsText(flags), opts);

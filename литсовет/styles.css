@@ -321,7 +321,8 @@ textarea{resize:vertical;min-height:60px}
 
 /* ── Process feed ── */
 .proc-feed{padding:6px 0}
-.proc-step{display:flex;gap:8px;align-items:flex-start;padding:6px 12px;font-size:12px;line-height:1.45;border-left:2px solid var(--border)}
+.proc-step{display:flex;flex-direction:column;padding:6px 12px;font-size:12px;line-height:1.45;border-left:2px solid var(--border)}
+.proc-line{display:flex;gap:8px;align-items:flex-start}
 .proc-step.ok{border-left-color:var(--ok)}
 .proc-step.warn{border-left-color:var(--warn)}
 .proc-step.run{border-left-color:var(--accent);background:var(--surface-2)}
@@ -329,6 +330,10 @@ textarea{resize:vertical;min-height:60px}
 .proc-tx{color:var(--text-2)}
 .proc-step.ok .proc-tx{color:var(--text)}
 .proc-step.warn .proc-tx{color:var(--warn)}
+.proc-flags{margin:5px 0 2px 24px;display:flex;flex-direction:column;gap:5px}
+.proc-flag{font-size:12px;color:var(--text);line-height:1.45}
+.proc-flag-d{color:var(--text-2);font-size:11px;margin-top:1px}
+.proc-toanalysis{align-self:flex-start;font-size:11px;margin-top:2px}
 
 /* ── Chat ── */
 .chat-wrap{display:flex;flex-direction:column;height:100%;min-height:0}

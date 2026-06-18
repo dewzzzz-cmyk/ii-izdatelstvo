@@ -27,10 +27,18 @@ let _runCurrent = '';       // что происходит прямо сейча
 function renderProcess(){
   if(!_runLog.length && !_runCurrent && !_busy)
     return `<div class="ph">Процесс</div><div class="empty-state">Запустите агентов — здесь по шагам видно, что и почему они делают.</div>`;
+  const s=getState();
+  const guardName=(role)=>{ const a=(s.agents||[]).find(x=>x.role===role||x.id===role); return a?a.name:role; };
   return `<div class="ph">Процесс ${_busy?'<span style="font-weight:400;text-transform:none;letter-spacing:0">идёт…</span>':''}</div>
     <div class="proc-feed">
-      ${_runLog.map(l=>`<div class="proc-step ${l.state||''}"><span class="proc-ic">${l.icon||'•'}</span><span class="proc-tx">${esc(l.text)}</span></div>`).join('')}
-      ${_busy&&_runCurrent?`<div class="proc-step run"><span class="proc-ic"><span class="spinner"></span></span><span class="proc-tx">${esc(_runCurrent)}</span></div>`:''}
+      ${_runLog.map(l=>`<div class="proc-step ${l.state||''}">
+        <div class="proc-line"><span class="proc-ic">${l.icon||'•'}</span><span class="proc-tx">${esc(l.text)}</span></div>
+        ${l.flags&&l.flags.length?`<div class="proc-flags">
+          ${l.flags.map(f=>`<div class="proc-flag"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':'предупр'}</span> <b>${esc(guardName(f.role))}:</b> ${esc(f.title)}${f.detail?`<div class="proc-flag-d">${esc(f.detail)}</div>`:''}</div>`).join('')}
+          <button class="linklike proc-toanalysis" type="button">→ открыть и исправить во вкладке «Анализ сцены»</button>
+        </div>`:''}
+      </div>`).join('')}
+      ${_busy&&_runCurrent?`<div class="proc-step run"><div class="proc-line"><span class="proc-ic"><span class="spinner"></span></span><span class="proc-tx">${esc(_runCurrent)}</span></div></div>`:''}
     </div>`;
 }
 // Живое обновление ленты во время прогона (без полного ре-рендера панели).
@@ -66,6 +74,7 @@ function renderRightPanel(els){
     </div>`;
   els.right.querySelectorAll('.rtab[data-rt]').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
   els.right.querySelectorAll('.rtab[data-tt]').forEach(b=>b.onclick=()=>{ _topTab=b.dataset.tt; renderRightPanel(els); });
+  els.right.querySelectorAll('.proc-toanalysis').forEach(b=>b.onclick=()=>{ _topTab='analysis'; renderRightPanel(els); });
 }
 
 // ─────────────────────────────── КОНЦЕПЦИЯ ───────────────────────────────
