@@ -381,7 +381,7 @@ textarea{resize:vertical;min-height:60px}
   .chip{padding:4px 9px;font-size:11px;flex-shrink:0;scroll-snap-align:start}
 
   /* Основное тело: одна панель за раз */
-  .body{display:block!important;position:relative;overflow:hidden}
+  .body{display:block!important;position:relative;overflow:hidden;height:100%}
   .divider{display:none!important}
 
   /* Все панели скрыты по умолчанию */
@@ -411,7 +411,7 @@ textarea{resize:vertical;min-height:60px}
   /* Более крупные цели касания */
   .scene-row{padding:10px 12px;min-height:44px}
   .agent-toggle{min-height:44px}
-  .iconbtn{min-height:32px;padding:5px 10px}
+  .iconbtn{min-height:44px;padding:8px 10px}
   .btn{min-height:36px}
 
   /* Убрать ручку перетаскивания (нет drag-reorder на тач) */

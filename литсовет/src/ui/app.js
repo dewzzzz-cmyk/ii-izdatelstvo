@@ -79,6 +79,9 @@ function renderMobNav(activePanelKey){
   const nav = document.getElementById('mobNav');
   if(!nav) return;
   const cur = activePanelKey || getMobPanel();
+  // не перестраивать если активная вкладка не изменилась
+  const existing = nav.querySelector('.mob-tab.active');
+  if(existing && existing.dataset.panel === cur) return;
   nav.innerHTML = MOB_TABS.map(t =>
     `<button class="mob-tab${cur===t.key?' active':''}" data-panel="${t.key}">
       <span class="mt-ic">${t.ic}</span><span>${t.label}</span>
@@ -99,7 +102,7 @@ function applyMobileLayout(){
   let cur = getMobPanel();
   // если выбранная панель пуста — автоматически показать центр
   const chosen = cur==='left' ? els.left : cur==='right' ? els.right : els.center;
-  if(!chosen.innerHTML.trim()) cur = 'center';
+  if(!chosen.children.length) cur = 'center';
   els.left.classList.toggle('mob-active', cur==='left');
   els.center.classList.toggle('mob-active', cur==='center');
   els.right.classList.toggle('mob-active', cur==='right');
@@ -178,7 +181,11 @@ async function main(){
   document.getElementById('settingsBtn').onclick = openSettings;
   initDividers();
   initTooltips();
-  window.addEventListener('resize', applyMobileLayout);
+  let _resizeRaf = null;
+  window.addEventListener('resize', ()=>{
+    if(_resizeRaf) cancelAnimationFrame(_resizeRaf);
+    _resizeRaf = requestAnimationFrame(rerender);
+  });
   rerender();
 }
 main();
