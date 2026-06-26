@@ -65,7 +65,48 @@ function renderStage(){
   else { els.left.innerHTML=''; els.center.innerHTML=''; els.right.innerHTML=''; }
 }
 
-function rerender(){ renderRail(); renderStage(); }
+// ── Мобильная навигация ──
+const MOB_TABS = [
+  { key:'left',   ic:'≡', label:'Список'   },
+  { key:'center', ic:'✎', label:'Редактор' },
+  { key:'right',  ic:'◈', label:'Агенты'   },
+];
+
+function isMob(){ return window.innerWidth <= 767; }
+function getMobPanel(){ return getState().ui.mobPanel || 'center'; }
+
+function renderMobNav(activePanelKey){
+  const nav = document.getElementById('mobNav');
+  if(!nav) return;
+  const cur = activePanelKey || getMobPanel();
+  nav.innerHTML = MOB_TABS.map(t =>
+    `<button class="mob-tab${cur===t.key?' active':''}" data-panel="${t.key}">
+      <span class="mt-ic">${t.ic}</span><span>${t.label}</span>
+    </button>`
+  ).join('');
+  nav.querySelectorAll('.mob-tab').forEach(btn => {
+    btn.onclick = () => { const s=getState(); s.ui.mobPanel=btn.dataset.panel; save(); };
+  });
+}
+
+function applyMobileLayout(){
+  if(!isMob()){
+    els.left.classList.remove('mob-active');
+    els.center.classList.remove('mob-active');
+    els.right.classList.remove('mob-active');
+    return;
+  }
+  let cur = getMobPanel();
+  // если выбранная панель пуста — автоматически показать центр
+  const chosen = cur==='left' ? els.left : cur==='right' ? els.right : els.center;
+  if(!chosen.innerHTML.trim()) cur = 'center';
+  els.left.classList.toggle('mob-active', cur==='left');
+  els.center.classList.toggle('mob-active', cur==='center');
+  els.right.classList.toggle('mob-active', cur==='right');
+  renderMobNav(cur);
+}
+
+function rerender(){ renderRail(); renderStage(); applyMobileLayout(); }
 
 // ── Изменяемые границы панелей ──
 function initDividers(){
@@ -137,6 +178,7 @@ async function main(){
   document.getElementById('settingsBtn').onclick = openSettings;
   initDividers();
   initTooltips();
+  window.addEventListener('resize', applyMobileLayout);
   rerender();
 }
 main();
