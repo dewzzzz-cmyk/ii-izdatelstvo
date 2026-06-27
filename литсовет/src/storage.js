@@ -100,7 +100,10 @@ export async function storageEstimate(){
   return null;
 }
 
-// Экспорт-чекпоинт: полный проект как .json (секреты вычищены).
+// Экспорт-чекпоинт: полный проект как .json (секреты и UI-состояние вычищены).
 export function exportCheckpoint(state){
-  return JSON.stringify(state, safeReplacer, 2);
+  const clean = JSON.parse(JSON.stringify(state, safeReplacer));
+  // UI-флаги не нужны в экспорте: они восстанавливаются при открытии
+  if(clean.ui){ delete clean.ui.mobPanel; delete clean.ui.rightTab; delete clean.ui.chatEditMode; }
+  return JSON.stringify(clean, null, 2);
 }

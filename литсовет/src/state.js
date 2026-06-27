@@ -123,25 +123,42 @@ export function save(){
   _state.updated = Date.now();
   emit();
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(()=>{ saveProject(_state).catch(e=>console.error('save failed', e)); }, 400);
+  _saveTimer = setTimeout(()=>{
+    saveProject(_state).catch(e=>{
+      console.error('save failed', e);
+      // Видимый баннер при ошибке сохранения (IndexedDB quota exceeded и т.п.)
+      let b = document.getElementById('_saveBanner');
+      if(!b){
+        b = document.createElement('div');
+        b.id='_saveBanner';
+        b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
+        b.onclick=()=>b.remove();
+        document.body?.appendChild(b);
+      }
+      b.textContent='⚠ Не удалось сохранить: '+e.message+' · нажмите чтобы скрыть';
+    });
+  }, 400);
 }
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch{ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch{} }
 
 export async function init(){
   // последний проект или новый. apiKey всегда пустой при старте (только память).
-  const lastId = localStorage.getItem('litsovet_last');
+  const lastId = lsGet('litsovet_last');
   if(lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
     if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey=''; _state = migrate(loaded); emit(); return _state; }
   }
   _state = defaultState();
-  localStorage.setItem('litsovet_last', _state.id);
+  lsSet('litsovet_last', _state.id);
   emit();
   return _state;
 }
 
 export function newProject(){
   _state = defaultState();
-  localStorage.setItem('litsovet_last', _state.id);
+  lsSet('litsovet_last', _state.id);
   save();
   return _state;
 }
@@ -169,7 +186,7 @@ function migrate(s){
     const customs = s.agents.filter(a=>a.custom); // кастомные агенты сохраняем как есть
     s.agents = [...builtins, ...customs];
   }
-  s.ui = s.ui || { stage:'concept' };
+  s.ui = Object.assign({}, d.ui, s.ui);
   s.characters = s.characters || [];
   s.series = s.series || [];
   // Bible-векторы не сериализуются — восстанавливаем после загрузки

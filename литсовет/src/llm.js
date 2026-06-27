@@ -9,12 +9,15 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
   const tokensIn = messages.reduce((s,m)=>s+estimateTokens(m.content), 0);
   let lastErr = null;
   for(let attempt=0; attempt<=retries; attempt++){
+    const controller = new AbortController();
+    const timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s)')), 90000);
     try{
       const res = await fetch('/api/generate', {
         method:'POST',
         headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({ baseURL, apiKey, model, temperature, messages,
           ...(maxTokens?{max_tokens:maxTokens}:{}) }),
+        signal: controller.signal,
       });
       if(!res.ok){
         const body = await res.text().catch(()=> '');
@@ -43,6 +46,8 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       lastErr = e.message;
       if(attempt>=retries) throw new Error(lastErr);
       await sleep(500 * Math.pow(2, attempt));
+    }finally{
+      clearTimeout(timeoutId);
     }
   }
   throw new Error(lastErr || 'LLM call failed');
