@@ -18,6 +18,7 @@ export function bookArchitectMessages(state, opts={}){
     p.era ? `Эпоха: ${p.era}.` : '',
     p.audience ? `Аудитория: ${p.audience}.` : '',
     `Идея/синопсис: ${p.synopsis || p.idea || '(не задан)'}`,
+    p.type==='series' ? `Серия: «${p.seriesTitle||'(без названия)'}» — книга ${p.seriesBook||1} из ${p.seriesTotal||3}.` : '',
     `Целевой объём: ${p.targetWords||80000} слов (~${targetScenes} сцен).`,
     opts.chapters ? `Желаемое число глав: ${opts.chapters}.` : '',
     '',

@@ -26,6 +26,9 @@ export function defaultState(){
       synopsis: '',
       targetWords: 80000,
       type: 'single',          // single | series
+      seriesTitle: '',
+      seriesTotal: 3,
+      seriesBook: 1,
       mode: 'director',         // director (режиссёр) | factory (фабрика)
     },
     style: {

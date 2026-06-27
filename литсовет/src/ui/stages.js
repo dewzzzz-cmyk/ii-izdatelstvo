@@ -101,6 +101,23 @@ export function renderConcept(els){
 
       <button class="adv-toggle" id="advBtn">▾ Дополнительные настройки</button>
       <div id="adv" style="display:none">
+        <div class="field"><label>Формат</label>
+          <div class="mode-switch" id="typeSwitch">
+            <div class="mode-opt${p.type==='single'?' sel':''}" data-type="single">Отдельная книга<small>самостоятельное произведение</small></div>
+            <div class="mode-opt${p.type==='series'?' sel':''}" data-type="series">Серия<small>несколько книг</small></div>
+          </div>
+        </div>
+        <div id="seriesFields" style="${p.type==='series'?'':'display:none'}">
+          <div class="field"><label>Название серии</label>
+            <input type="text" id="seriesTitle" value="${esc(p.seriesTitle||'')}" placeholder="например: Северная трилогия"></div>
+          <div class="field"><label>Книга в серии</label>
+            <div class="row" style="gap:8px;align-items:center">
+              <input type="number" id="seriesBook" value="${p.seriesBook||1}" min="1" style="width:70px">
+              <span class="muted">из</span>
+              <input type="number" id="seriesTotal" value="${p.seriesTotal||3}" min="2" style="width:70px">
+            </div>
+          </div>
+        </div>
         <div class="field"><label>Жанр</label><input type="text" id="genre" value="${esc(p.genre)}" placeholder="роман, повесть, сказка…"></div>
         <div class="field"><label>Эпоха / сеттинг</label><input type="text" id="era" value="${esc(p.era)}" placeholder="наши дни, XX век…"></div>
         <div class="field"><label>Целевой объём (слов)</label><input type="text" id="tw" value="${esc(p.targetWords)}"></div>
@@ -117,7 +134,16 @@ export function renderConcept(els){
   bind('genre', e=>{ p.genre=e.target.value; });
   bind('era', e=>{ p.era=e.target.value; });
   bind('tw', e=>{ p.targetWords=parseInt(e.target.value)||80000; });
+  bind('seriesTitle', e=>{ p.seriesTitle=e.target.value; });
+  bind('seriesBook',  e=>{ p.seriesBook=Math.max(1,parseInt(e.target.value)||1); });
+  bind('seriesTotal', e=>{ p.seriesTotal=Math.max(2,parseInt(e.target.value)||2); });
   document.getElementById('advBtn').onclick = (ev)=>{ const a=document.getElementById('adv'); const open=a.style.display!=='none'; a.style.display=open?'none':'block'; ev.target.textContent=(open?'▾':'▴')+' Дополнительные настройки'; };
+  document.getElementById('typeSwitch').onclick = (ev)=>{
+    const o=ev.target.closest('.mode-opt'); if(!o) return;
+    p.type=o.dataset.type;
+    document.querySelectorAll('#typeSwitch .mode-opt').forEach(el=>el.classList.toggle('sel',el.dataset.type===p.type));
+    document.getElementById('seriesFields').style.display=p.type==='series'?'':'none';
+  };
   document.getElementById('modeSwitch').onclick = (ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; p.mode=o.dataset.mode; save(); };
   document.getElementById('toVoice').onclick = ()=>{ save(); s.ui.stage='voice'; save(); };
 }
