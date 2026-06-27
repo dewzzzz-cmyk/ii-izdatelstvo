@@ -181,10 +181,14 @@ async function main(){
   document.getElementById('settingsBtn').onclick = openSettings;
   initDividers();
   initTooltips();
-  let _resizeRaf = null;
+  let _resizeRaf = null, _lastW = window.innerWidth;
   window.addEventListener('resize', ()=>{
     if(_resizeRaf) cancelAnimationFrame(_resizeRaf);
-    _resizeRaf = requestAnimationFrame(rerender);
+    _resizeRaf = requestAnimationFrame(()=>{
+      const w = window.innerWidth;
+      if(w !== _lastW){ _lastW = w; rerender(); } // смена ширины/ориентации
+      else { applyMobileLayout(); }               // только высота = клавиатура, не трогать DOM
+    });
   });
   rerender();
 }
