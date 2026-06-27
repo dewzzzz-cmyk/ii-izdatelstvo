@@ -586,7 +586,7 @@ export function renderWrite(els){
   if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
 
   const nx=document.getElementById('nextScene');
-  if(nx){ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nextSc=scenes[idx+1]; if(nextSc) nx.onclick=()=>{ s.ui.activeScene=nextSc.id; save(); }; }
+  if(nx){ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nextSc=scenes[idx+1]; if(nextSc) nx.onclick=()=>{ if(_busy) return; s.ui.activeScene=nextSc.id; save(); }; }
 
   renderRightPanel(els);
 }
