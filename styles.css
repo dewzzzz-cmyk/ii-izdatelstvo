@@ -1428,11 +1428,11 @@ body:not([data-view="reader"]) #left-rail{padding-top:36px}
 .wiz-concept-empty{font-size:13px;color:var(--faint);text-align:center;padding:20px;border:1px dashed var(--line2);border-radius:10px;line-height:1.5}
 .wcs-row{display:flex;gap:10px;align-items:flex-start}
 .wcs-label{flex:0 0 90px;font-size:10.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;padding-top:2px}
-.wcs-val{flex:1;font-size:13px;color:var(--txt);line-height:1.5}
+.wcs-val{flex:1;min-width:0;font-size:13px;color:var(--txt);line-height:1.5;word-break:break-word;overflow-wrap:break-word}
 .wc-chips{display:flex;flex-wrap:wrap;gap:5px}
 .wc-chip{background:rgba(99,102,241,.15);color:var(--accent);border-radius:6px;padding:3px 9px;font-size:12px;font-weight:600}
-.wcs-turns{flex:1;display:flex;flex-direction:column;gap:3px}
-.wc-turn{font-size:12.5px;color:var(--txt);line-height:1.4}
+.wcs-turns{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.wc-turn{font-size:12.5px;color:var(--txt);line-height:1.4;word-break:break-word;overflow-wrap:break-word}
 .wiz-edit-concept-btn{width:100%;justify-content:center;margin-top:4px}
 .lr-nav-group{padding:6px 8px 4px;border-bottom:1px solid var(--line)}
 .lr-nav-section{border-bottom:1px solid var(--line)}
@@ -1736,13 +1736,14 @@ body.zen-mode[data-view="reader"] .reader-inner{max-width:680px;margin:0 auto;pa
 .ce-axis{display:flex;flex-direction:column;gap:3px}
 .ce-ax-top{display:flex;justify-content:space-between;align-items:baseline}
 .ce-ax-label{font-size:.85rem;font-weight:600;color:var(--txt)}
-.ce-ax-stars{font-size:.78rem;letter-spacing:1px;font-family:monospace}
+.ce-ax-stars{font-size:.78rem;letter-spacing:2px;color:var(--accent)}
 .ce-bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:2px 0}
 .ce-bar-fill{height:100%;border-radius:2px;transition:width .5s ease}
-.ce-ax-comment{font-size:.78rem;color:var(--dim);line-height:1.45}
-.ce-improve{margin-top:5px;font-size:.75rem!important;padding:3px 10px!important;opacity:.85}
+.ce-ax-comment{font-size:.78rem;color:var(--dim);line-height:1.45;word-break:break-word;overflow-wrap:break-word}
+.ce-tip{font-size:.76rem;color:var(--dim);line-height:1.45;margin-top:5px;font-style:italic;word-break:break-word;overflow-wrap:break-word}
+.ce-improve{margin-top:4px;font-size:.75rem!important;padding:3px 10px!important;opacity:.85}
 .ce-improve:hover{opacity:1}
-.ce-summary{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:.8rem;color:var(--dim);line-height:1.55;font-style:italic}
+.ce-summary{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:.8rem;color:var(--dim);line-height:1.55;font-style:italic;word-break:break-word;overflow-wrap:break-word}
 .ce-loading{font-size:.8rem;color:var(--faint);padding:12px 0;text-align:center}
 
 /* ── Таблица глав в wizard шаг 1 ───────────────── */

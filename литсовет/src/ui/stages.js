@@ -543,7 +543,8 @@ export function renderWrite(els){
       <button class="btn btn-primary" id="runBtn" style="flex:1">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
       <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
       ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
-    </div>`;
+    </div>
+    ${(()=>{ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nx=idx>=0&&idx<scenes.length-1?scenes[idx+1]:null; return nx?`<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="btn" id="nextScene">→ ${esc(nx.title)}</button></div>`:''; })()}`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
 
   // редактирование текста автором → отметка «рука автора»
@@ -583,6 +584,9 @@ export function renderWrite(els){
 
   const cc=document.getElementById('closeChapter');
   if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
+
+  const nx=document.getElementById('nextScene');
+  if(nx){ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nextSc=scenes[idx+1]; if(nextSc) nx.onclick=()=>{ s.ui.activeScene=nextSc.id; save(); }; }
 
   renderRightPanel(els);
 }
@@ -814,8 +818,9 @@ function charOffset(container, node, nodeOffset){
 function initSelectionMenu(edEl, scene, els){
   const menu = document.getElementById('selMenu');
   if(!menu) return;
-  let sel0=0, sel1=0;  // офсеты выделения в тексте редактора
-  edEl.addEventListener('mouseup', ()=>{
+  let sel0=0, sel1=0;
+
+  const showMenu = ()=>{
     const sel=window.getSelection();
     const text=sel.toString();
     if(!text.trim()){ menu.style.display='none'; return; }
@@ -823,25 +828,49 @@ function initSelectionMenu(edEl, scene, els){
     sel0 = charOffset(edEl, range.startContainer, range.startOffset);
     sel1 = charOffset(edEl, range.endContainer, range.endOffset);
     if(sel1<sel0){ const t=sel0; sel0=sel1; sel1=t; }
-    const rect=range.getBoundingClientRect();
-    const appRect=document.getElementById('app').getBoundingClientRect();
+
     menu.style.display='flex';
-    menu.style.top=(rect.top-appRect.top-38)+'px';
-    menu.style.left=(rect.left-appRect.left)+'px';
+    if(window.innerWidth<=767){
+      // Мобайл: фиксируем меню внизу над навигацией
+      menu.style.position='fixed';
+      menu.style.bottom='66px';
+      menu.style.top='auto';
+      menu.style.left='50%';
+      menu.style.transform='translateX(-50%)';
+      menu.style.flexWrap='wrap';
+      menu.style.maxWidth='calc(100vw - 16px)';
+    } else {
+      const rect=range.getBoundingClientRect();
+      const appRect=document.getElementById('app').getBoundingClientRect();
+      menu.style.position='absolute';
+      menu.style.transform='';
+      menu.style.top=(rect.top-appRect.top-38)+'px';
+      menu.style.left=(rect.left-appRect.left)+'px';
+      menu.style.bottom='auto';
+      menu.style.flexWrap='';
+      menu.style.maxWidth='';
+    }
     menu.innerHTML=INLINE_ACTIONS.map(([label,key])=>`<button class="sm-btn" data-act="${key}">${label}</button>`).join('')
-      + `<button class="sm-btn sm-rule" data-act="__rule" title="Сделать правилом автора — впредь избегать подобного">⊕ В правило</button>`;
+      + `<button class="sm-btn sm-rule" data-act="__rule" title="Сделать правилом автора">⊕ В правило</button>`;
     menu.querySelectorAll('.sm-btn').forEach(b=>b.onclick=()=>{
       menu.style.display='none';
       if(b.dataset.act==='__rule'){
         const sel=edEl.textContent.slice(sel0, sel1).trim();
-        const t=prompt('Правило автора (как принцип, не привязка к сцене):', 'избегай оборотов вроде «'+sel.slice(0,80)+'»');
+        const t=prompt('Правило автора:', 'избегай оборотов вроде «'+sel.slice(0,80)+'»');
         if(t&&t.trim()){ addRule(getState(), t.trim()); save(); }
         return;
       }
       applyInlineEdit(scene, edEl, b.dataset.act, sel0, sel1);
     });
-  });
-  document.addEventListener('mousedown', e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; });
+  };
+
+  edEl.addEventListener('mouseup', showMenu);
+  // Мобайл: touchend не всегда = mouseup; даём 120мс чтобы selection устоялось
+  edEl.addEventListener('touchend', ()=>{ setTimeout(showMenu, 120); });
+
+  const hideMenu = e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; };
+  document.addEventListener('mousedown', hideMenu);
+  document.addEventListener('touchstart', hideMenu, {passive:true});
 }
 
 // Границы фрагмента: окно ~500 симв. сверху/снизу, подрезанное до целых

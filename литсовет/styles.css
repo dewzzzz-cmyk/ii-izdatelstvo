@@ -422,4 +422,11 @@ textarea{resize:vertical;min-height:60px}
 
   /* Модал — почти на весь экран */
   .modal{width:calc(100vw - 20px)!important;max-height:85vh;overflow-y:auto}
+
+  /* Инлайн-меню выделения — фикс над нав-баром */
+  .sel-menu{flex-wrap:wrap;gap:4px;padding:6px 8px;max-width:calc(100vw - 16px)}
+  .sm-btn{font-size:13px;padding:7px 14px;min-height:36px}
+
+  /* Кнопка «Следующая →» в Написании */
+  .run-row .btn{min-height:44px}
 }
