@@ -352,6 +352,14 @@ textarea{resize:vertical;min-height:60px}
 .chat-msg.assistant .chat-bubble{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:3px}
 .chat-input-row{display:flex;gap:6px;padding:8px;border-top:1px solid var(--border);flex-shrink:0}
 .chat-input-row textarea{flex:1;font-size:13px;padding:6px 9px;border:1px solid var(--border-2);border-radius:var(--radius);resize:none}
+/* Чат: переключатель режима */
+.chat-mode-btns{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.chat-mode-btn{padding:4px 8px;font-size:13px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;line-height:1.2}
+.chat-mode-btn:hover{border-color:var(--accent);color:var(--accent)}
+.chat-mode-btn.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent);font-weight:500}
+/* Кнопка «Применить к сцене» */
+.apply-to-scene{display:block;margin-top:6px;padding:7px 14px;font-size:12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--font);font-weight:500}
+.apply-to-scene:hover{opacity:.85}
 .no-pad-scroll{padding:0;display:flex;flex-direction:column}
 
 /* ── Calibration ── */
@@ -405,8 +413,10 @@ textarea{resize:vertical;min-height:60px}
     color:var(--text-3);font-size:10px;font-family:var(--font);cursor:pointer;
     padding:4px 0 6px;transition:color .15s,border-color .15s;
   }
-  .mob-tab .mt-ic{font-size:19px;line-height:1}
+  .mob-tab .mt-ic{font-size:17px;line-height:1}
   .mob-tab.active{color:var(--accent);border-top-color:var(--accent);background:var(--accent-bg)}
+  /* 4 вкладки — чуть компактнее */
+  .mob-tab{font-size:9px;padding:3px 0 5px}
 
   /* Более крупные цели касания */
   .scene-row{padding:10px 12px;min-height:44px}

@@ -18,7 +18,6 @@ import { runHistoricalResearch } from '../historian.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-let _rightTab = 'roadmap'; // roadmap | agents | mem | chat
 let _topTab = 'analysis';  // analysis | process
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
 let _runLog = [];           // лента шагов текущего/последнего прогона
@@ -51,9 +50,10 @@ function pushProc(ev){
 // Правая панель «Написания»: ВЕРХ — анализ сцены (флаги), НИЗ — вкладки Роадмап/Агенты/Память.
 function renderRightPanel(els){
   const s=getState();
-  const bottom = _rightTab==='roadmap' ? renderRoadmap(s)
-    : _rightTab==='agents' ? `<div id="agentHost">${renderAgentPipeline()}</div>`
-    : _rightTab==='chat' ? renderChat()
+  const rt = s.ui.rightTab || 'roadmap';
+  const bottom = rt==='roadmap' ? renderRoadmap(s)
+    : rt==='agents' ? `<div id="agentHost">${renderAgentPipeline()}</div>`
+    : rt==='chat' ? renderChat()
     : renderMemory();
   els.right.className='panel panel-right split';
   els.right.innerHTML = `
@@ -66,14 +66,14 @@ function renderRightPanel(els){
     </div>
     <div class="sect sect-bot">
       <div class="rtabs">
-        <button class="rtab ${_rightTab==='roadmap'?'active':''}" data-rt="roadmap">Роадмап</button>
-        <button class="rtab ${_rightTab==='agents'?'active':''}" data-rt="agents">Агенты</button>
-        <button class="rtab ${_rightTab==='mem'?'active':''}" data-rt="mem">Память</button>
-        <button class="rtab ${_rightTab==='chat'?'active':''}" data-rt="chat">Чат</button>
+        <button class="rtab ${rt==='roadmap'?'active':''}" data-rt="roadmap">Роадмап</button>
+        <button class="rtab ${rt==='agents'?'active':''}" data-rt="agents">Агенты</button>
+        <button class="rtab ${rt==='mem'?'active':''}" data-rt="mem">Память</button>
+        <button class="rtab ${rt==='chat'?'active':''}" data-rt="chat">Чат</button>
       </div>
-      <div class="sect-scroll ${_rightTab==='chat'?'no-pad-scroll':''}" id="rtabBody">${bottom}</div>
+      <div class="sect-scroll ${rt==='chat'?'no-pad-scroll':''}" id="rtabBody">${bottom}</div>
     </div>`;
-  els.right.querySelectorAll('.rtab[data-rt]').forEach(b=>b.onclick=()=>{ _rightTab=b.dataset.rt; renderRightPanel(els); });
+  els.right.querySelectorAll('.rtab[data-rt]').forEach(b=>b.onclick=()=>{ const s=getState(); s.ui.rightTab=b.dataset.rt; save(); });
   els.right.querySelectorAll('.rtab[data-tt]').forEach(b=>b.onclick=()=>{ _topTab=b.dataset.tt; renderRightPanel(els); });
   els.right.querySelectorAll('.proc-toanalysis').forEach(b=>b.onclick=()=>{ _topTab='analysis'; renderRightPanel(els); });
 }

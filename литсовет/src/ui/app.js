@@ -70,6 +70,7 @@ const MOB_TABS = [
   { key:'left',   ic:'≡', label:'Список'   },
   { key:'center', ic:'✎', label:'Редактор' },
   { key:'right',  ic:'◈', label:'Агенты'   },
+  { key:'chat',   ic:'💬', label:'Чат'     },
 ];
 
 function isMob(){ return window.innerWidth <= 767; }
@@ -88,7 +89,12 @@ function renderMobNav(activePanelKey){
     </button>`
   ).join('');
   nav.querySelectorAll('.mob-tab').forEach(btn => {
-    btn.onclick = () => { const s=getState(); s.ui.mobPanel=btn.dataset.panel; save(); };
+    btn.onclick = () => {
+      const s=getState();
+      s.ui.mobPanel=btn.dataset.panel;
+      if(btn.dataset.panel==='chat') s.ui.rightTab='chat';
+      save();
+    };
   });
 }
 
@@ -100,12 +106,14 @@ function applyMobileLayout(){
     return;
   }
   let cur = getMobPanel();
+  const isRight = cur === 'right' || cur === 'chat';
   // если выбранная панель пуста — автоматически показать центр
-  const chosen = cur==='left' ? els.left : cur==='right' ? els.right : els.center;
+  const chosen = cur==='left' ? els.left : isRight ? els.right : els.center;
   if(!chosen.children.length) cur = 'center';
-  els.left.classList.toggle('mob-active', cur==='left');
-  els.center.classList.toggle('mob-active', cur==='center');
-  els.right.classList.toggle('mob-active', cur==='right');
+  const curIsRight = cur === 'right' || cur === 'chat';
+  els.left.classList.toggle('mob-active', cur === 'left');
+  els.center.classList.toggle('mob-active', cur === 'center');
+  els.right.classList.toggle('mob-active', curIsRight);
   renderMobNav(cur);
 }
 
