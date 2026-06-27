@@ -14,6 +14,7 @@ import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
 import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
+import { runHistoricalResearch } from '../historian.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -261,13 +262,74 @@ function renderVoicePanel(v, s){
     </div>`;
 }
 
+// ─────────────────── ИСТОРИЧЕСКАЯ РАЗВЕДКА (правая панель Структуры) ───────────────────
+let _historianFacts = []; // кэш последних найденных фактов для рендера карточек
+
+function renderHistorianPanel(s){
+  const era = s.project.era || '';
+  const hint = era ? `Эпоха: «${esc(era)}»` : 'Заполните «Эпоха / сеттинг» в Концепции для точного поиска.';
+  return `<div class="ph">Историческая разведка</div>
+    <div class="pad">
+      <div class="muted" style="margin-bottom:10px;font-size:12px">Находит реальные факты через Википедию и добавляет их в Канон — Прозаик автоматически использует их при написании сцен.</div>
+      <div class="muted" style="font-size:11px;margin-bottom:12px">${hint}</div>
+      <button class="btn btn-primary" id="btnResearch" ${s.global.apiKey?'':'disabled'} title="${s.global.apiKey?'':'Задайте API-ключ в настройках'}">🔍 Найти факты эпохи</button>
+      <div id="researchStatus" class="muted" style="margin-top:10px;font-size:12px"></div>
+      <div id="researchResults" style="margin-top:12px"></div>
+    </div>`;
+}
+
+function renderFactCards(facts, s){
+  const el = document.getElementById('researchResults');
+  if(!el) return;
+  if(!facts.length){ el.innerHTML='<div class="muted" style="font-size:12px">Факты не найдены.</div>'; return; }
+  el.innerHTML = facts.map((f,i)=>`
+    <div class="card" style="margin-bottom:8px;padding:10px 12px">
+      <div style="font-size:11px;color:var(--accent);font-weight:500;margin-bottom:4px">${esc(f.keys)}</div>
+      <div style="font-size:12px;line-height:1.5;margin-bottom:5px">${esc(f.text)}</div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:7px">💡 ${esc(f.plotHook||'')}</div>
+      <button class="btn fact-add" data-i="${i}" style="font-size:11px;padding:3px 9px">${s.bible.some(b=>b.text===f.text)?'✓ В каноне':'+  В канон'}</button>
+    </div>`).join('');
+  el.querySelectorAll('.fact-add').forEach(btn=>{
+    btn.onclick=()=>{
+      const f = facts[+btn.dataset.i];
+      if(!f) return;
+      if(!s.bible.some(b=>b.text===f.text)){
+        s.bible.push({ keys: f.keys, text: f.text + (f.plotHook ? '\n💡 ' + f.plotHook : '') });
+        save();
+      }
+      btn.textContent='✓ В каноне'; btn.disabled=true;
+    };
+  });
+}
+
+function bindHistorianPanel(s){
+  const btn = document.getElementById('btnResearch');
+  if(!btn) return;
+  btn.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    btn.disabled=true;
+    const st=document.getElementById('researchStatus');
+    const res=document.getElementById('researchResults');
+    res.innerHTML='';
+    try{
+      const result = await runHistoricalResearch(s, msg=>{ if(st) st.innerHTML='<span class="spinner"></span> '+esc(msg); });
+      _historianFacts = result.facts;
+      if(st) st.textContent=`Найдено ${result.articleCount} статей Википедии · ${result.facts.length} фактов`;
+      renderFactCards(_historianFacts, s);
+    }catch(e){
+      if(st) st.textContent='Ошибка: '+e.message;
+    }finally{ btn.disabled=false; }
+  };
+}
+
 // ─────────────────────────────── СТРУКТУРА (мин.) ───────────────────────────────
 export function renderStructure(els){
   const s = getState();
   const scenes = (s.structure||[]).filter(n=>n.type==='scene');
   els.left.innerHTML = `<div class="ph">Структура</div>${renderSceneList(s)}`;
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; s.ui.stage='write'; save(); });
-  els.right.innerHTML = '';
+  els.right.innerHTML = renderHistorianPanel(s);
+  bindHistorianPanel(s);
 
   const hasSkeleton = (s.structure||[]).some(n=>n.type==='chapter');
   els.center.innerHTML = `

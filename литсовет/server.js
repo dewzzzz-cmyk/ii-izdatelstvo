@@ -93,6 +93,36 @@ async function handleGenerate(req, res){
   });
 }
 
+async function handleWiki(req, res){
+  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>5e3) req.destroy(); });
+  req.on('end', async ()=>{
+    let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
+    const query=(b.query||'').trim().slice(0,200);
+    const lang=/^[a-z]{2}$/.test(b.lang||'ru')?(b.lang||'ru'):'ru';
+    const limit=Math.min(parseInt(b.limit)||3,5);
+    if(!query) return send(res,400,'NO_QUERY');
+    try{
+      const searchUrl=`https://${lang}.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srsearch=${encodeURIComponent(query)}&srlimit=${limit}`;
+      const sr=await fetch(searchUrl,{headers:{'User-Agent':'Litsovet/1.0'}});
+      if(!sr.ok) return send(res,502,'WIKI_SEARCH_FAIL '+sr.status);
+      const sd=await sr.json();
+      const pages=(sd.query?.search||[]).slice(0,3);
+      const summaries=[];
+      for(const page of pages){
+        try{
+          const enc=encodeURIComponent(page.title.replace(/ /g,'_'));
+          const su=await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${enc}`,{headers:{'User-Agent':'Litsovet/1.0'}});
+          if(!su.ok) continue;
+          const s=await su.json();
+          if(s.extract) summaries.push({title:s.title,extract:s.extract.slice(0,2000)});
+        }catch{}
+      }
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+      res.end(JSON.stringify({summaries}));
+    }catch(e){ send(res,502,'WIKI_ERROR: '+e.message); }
+  });
+}
+
 function safeFile(name){ return (name||'').replace(/[/\\]/g,'').replace(/[^a-zA-Zа-яА-Я0-9_.-]/g,'_'); }
 
 function handleCheckpointSave(req,res){
@@ -136,6 +166,7 @@ http.createServer(async (req,res)=>{
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
   if(req.method==='OPTIONS') return send(res,204,'');
   if(req.method==='POST' && req.url==='/api/generate')    return handleGenerate(req,res);
+  if(req.method==='POST' && req.url==='/api/wiki')         return handleWiki(req,res);
   if(req.method==='POST' && req.url==='/api/checkpoint')  return handleCheckpointSave(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/checkpoints')) return handleCheckpointList(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/checkpoint?')) return handleCheckpointRead(req,res);

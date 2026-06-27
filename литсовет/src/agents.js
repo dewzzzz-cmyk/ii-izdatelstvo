@@ -15,7 +15,7 @@ export function architectMessages(state, scene){
     scene.emotion ? 'Эмоция читателя в финале: ' + scene.emotion : '',
     '',
     'Верни JSON со схемой:',
-    '{ "anchors": [строки — ключевые детали/образы, 2-4], "presentChars": [имена персонажей в сцене], "forbiddenWords": [слова которых избегать, 0-5], "beats": [краткие шаги развития сцены, 2-4] }',
+    '{ "anchors": [ключевые детали/образы, 2-4], "presentChars": [имена персонажей], "forbiddenWords": [слова избегать, 0-5], "beats": [шаги развития, 2-4], "goal": "чего хочет ПОВ-персонаж в этой сцене", "obstacle": "что конкретно мешает", "historicalDetail": "одна точная деталь эпохи (одежда/предмет/обычай/технология) для достоверности" }',
     'Только JSON, без пояснений.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -28,6 +28,9 @@ export function parseArchitect(text){
     presentChars: Array.isArray(j.presentChars)? j.presentChars : [],
     forbiddenWords: Array.isArray(j.forbiddenWords)? j.forbiddenWords : [],
     beats: Array.isArray(j.beats)? j.beats : [],
+    goal: typeof j.goal==='string'? j.goal : '',
+    obstacle: typeof j.obstacle==='string'? j.obstacle : '',
+    historicalDetail: typeof j.historicalDetail==='string'? j.historicalDetail : '',
   };
 }
 export function architectToText(plan){
@@ -35,6 +38,9 @@ export function architectToText(plan){
   const lines = [];
   if(plan.anchors.length) lines.push('Якоря (обязательно отрази): ' + plan.anchors.join('; '));
   if(plan.beats.length) lines.push('Шаги сцены: ' + plan.beats.join(' → '));
+  if(plan.goal) lines.push('Цель ПОВ-персонажа в сцене: ' + plan.goal);
+  if(plan.obstacle) lines.push('Препятствие: ' + plan.obstacle);
+  if(plan.historicalDetail) lines.push('Деталь эпохи (вставь в текст): ' + plan.historicalDetail);
   if(plan.forbiddenWords.length) lines.push('Избегай слов: ' + plan.forbiddenWords.join(', '));
   return lines.join('\n');
 }
