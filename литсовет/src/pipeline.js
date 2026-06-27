@@ -12,6 +12,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
+export function isRunning(){ return _running; }
 
 // Конфиг агента по роли ИЛИ id (для кастомных). Настраивается ползунками.
 function ag(state, role){ return (state.agents||[]).find(a=>a.role===role || a.id===role) || {}; }

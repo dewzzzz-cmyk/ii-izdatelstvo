@@ -60,7 +60,7 @@ export function defaultState(){
       evaluatorMaxIter: 3,
     },
     log: [],
-    ui: { stage: 'concept' },
+    ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false },
   };
 }
 

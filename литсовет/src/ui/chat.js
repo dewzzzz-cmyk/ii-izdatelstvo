@@ -11,7 +11,7 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;',
 export function renderChat(){
   const s = getState();
   s.chat = s.chat || [];
-  const editMode = !!s.chat_editMode;
+  const editMode = !!(s.ui && s.ui.chatEditMode);
   setTimeout(bindChat, 0);
   const scene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
   const bits = [];
@@ -80,30 +80,36 @@ function bindChat(){
   const input = document.getElementById('chatInput');
   if(!send) return;
 
-  document.getElementById('chatModeDiscuss')?.addEventListener('click', ()=>{
-    const s=getState(); s.chat_editMode=false; save();
-  });
-  document.getElementById('chatModeEdit')?.addEventListener('click', ()=>{
-    const s=getState(); s.chat_editMode=true; save();
-  });
+  const discBtn = document.getElementById('chatModeDiscuss');
+  if(discBtn) discBtn.onclick = ()=>{ const s=getState(); s.ui.chatEditMode=false; save(); };
+  const editBtn = document.getElementById('chatModeEdit');
+  if(editBtn) editBtn.onclick = ()=>{ const s=getState(); s.ui.chatEditMode=true; save(); };
 
-  document.getElementById('applyToScene')?.addEventListener('click', ()=>{
+  const applyBtn = document.getElementById('applyToScene');
+  if(applyBtn) applyBtn.onclick = ()=>{
     const s=getState();
     const scene=(s.structure||[]).find(n=>n.id===s.ui.activeScene);
     if(!scene){ alert('Нет активной сцены.'); return; }
     const lastAI=[...s.chat].reverse().find(m=>m.role==='assistant');
     if(!lastAI) return;
-    if(!confirm(`Заменить текст сцены «${scene.title}»?\n\nЭто перезапишет текущий текст.`)) return;
+    // Двухшаговое подтверждение вместо confirm() (не работает в iOS PWA)
+    if(applyBtn.dataset.armed !== 'yes'){
+      applyBtn.dataset.armed='yes';
+      applyBtn.textContent='⚠ Подтвердить замену →';
+      applyBtn.style.background='var(--err,#c0392b)';
+      setTimeout(()=>{ if(applyBtn.dataset.armed==='yes'){ applyBtn.dataset.armed=''; applyBtn.textContent='✎ Применить к сцене'; applyBtn.style.background=''; } }, 3000);
+      return;
+    }
     scene.text = lastAI.content;
-    scene.words = lastAI.content.trim().split(/\s+/).length;
+    scene.words = (lastAI.content.match(/\S+/g)||[]).length;
     save();
-  });
+  };
 
   const doSend = async ()=>{
     const s=getState(); const text=input.value.trim();
     if(!text) return;
     if(!s.global.apiKey){ alert('Задайте API-ключ (⚙).'); return; }
-    const editMode = !!s.chat_editMode;
+    const editMode = !!(s.ui && s.ui.chatEditMode);
     s.chat=s.chat||[]; s.chat.push({role:'user', content:text}); save();
     input.value=''; send.disabled=true;
     const log=document.getElementById('chatLog');

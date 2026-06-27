@@ -3,7 +3,7 @@
 
 import { getState, save, uid, addRule } from '../state.js';
 import { extractVoice } from '../voice.js';
-import { runScene } from '../pipeline.js';
+import { runScene, isRunning } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
@@ -21,6 +21,8 @@ export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'
 let _topTab = 'analysis';  // analysis | process
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
 let _runLog = [];           // лента шагов текущего/последнего прогона
+let _selMenuHide = null;    // ссылки на document-слушатели initSelectionMenu (снимаем перед повторным навешиванием)
+let _selMenuScroll = null;  // scroll-listener на panel-center для скрытия меню при прокрутке
 let _runCurrent = '';       // что происходит прямо сейчас
 
 // Лента «Процесс»: пошагово что делают агенты и почему (особенно доработки).
@@ -503,6 +505,8 @@ function renderSceneList(s){
 // ─────────────────────────────── НАПИСАНИЕ ───────────────────────────────
 export function renderWrite(els){
   const s = getState();
+  // Если pipeline завершился пока мы были на другой стадии — флаг мог зависнуть
+  if(_busy && !isRunning()) _busy = false;
   const scenes=(s.structure||[]).filter(n=>n.type==='scene');
   if(!scenes.length){ els.left.innerHTML=`<div class="ph">Сцены</div>`; els.center.innerHTML=`<div class="empty-state">Сначала добавьте сцену на стадии «Структура».</div>`; els.right.innerHTML=''; return; }
   if(!s.ui.activeScene || !scenes.find(x=>x.id===s.ui.activeScene)) s.ui.activeScene=scenes[0].id;
@@ -831,9 +835,11 @@ function initSelectionMenu(edEl, scene, els){
 
     menu.style.display='flex';
     if(window.innerWidth<=767){
-      // Мобайл: фиксируем меню внизу над навигацией
+      // Мобайл: фиксируем меню внизу над навигацией (учитываем safe area)
+      const navEl = document.getElementById('mobNav');
+      const navH = navEl ? navEl.getBoundingClientRect().height : 56;
       menu.style.position='fixed';
-      menu.style.bottom='66px';
+      menu.style.bottom=(navH+10)+'px';
       menu.style.top='auto';
       menu.style.left='50%';
       menu.style.transform='translateX(-50%)';
@@ -869,8 +875,23 @@ function initSelectionMenu(edEl, scene, els){
   edEl.addEventListener('touchend', ()=>{ setTimeout(showMenu, 120); });
 
   const hideMenu = e=>{ if(!menu.contains(e.target) && e.target!==edEl && !edEl.contains(e.target)) menu.style.display='none'; };
+  // Снимаем старые слушатели перед навешиванием новых (предотвращаем накопление при каждом рендере)
+  if(_selMenuHide){
+    document.removeEventListener('mousedown', _selMenuHide);
+    document.removeEventListener('touchstart', _selMenuHide);
+  }
+  _selMenuHide = hideMenu;
   document.addEventListener('mousedown', hideMenu);
   document.addEventListener('touchstart', hideMenu, {passive:true});
+
+  // Скрываем меню при прокрутке редактора (иначе меню зависает на старом месте)
+  if(_selMenuScroll){
+    const oldPanel = document.querySelector('.panel-center');
+    if(oldPanel) oldPanel.removeEventListener('scroll', _selMenuScroll);
+  }
+  _selMenuScroll = ()=>{ menu.style.display='none'; };
+  const panelCenter = document.querySelector('.panel-center');
+  if(panelCenter) panelCenter.addEventListener('scroll', _selMenuScroll, {passive:true});
 }
 
 // Границы фрагмента: окно ~500 симв. сверху/снизу, подрезанное до целых

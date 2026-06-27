@@ -341,11 +341,11 @@ textarea{resize:vertical;min-height:60px}
 /* ── Chat ── */
 .chat-wrap{display:flex;flex-direction:column;height:100%;min-height:0}
 .chat-ctx{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0}
-.chat-ctx-tx{font-size:11px;color:var(--text-3);line-height:1.4;cursor:help}
+.chat-ctx-tx{font-size:11px;color:var(--text-3);line-height:1.4;cursor:help;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-clear{flex-shrink:0;font-size:11px;padding:3px 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;white-space:nowrap}
 .chat-clear:hover{border-color:var(--err);color:var(--err)}
 .chat-log{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0}
-.chat-msg{display:flex}
+.chat-msg{display:flex;flex-wrap:wrap}
 .chat-msg.user{justify-content:flex-end}
 .chat-bubble{max-width:85%;font-size:13px;line-height:1.5;padding:7px 11px;border-radius:12px;white-space:pre-wrap}
 .chat-msg.user .chat-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:3px}
@@ -358,7 +358,7 @@ textarea{resize:vertical;min-height:60px}
 .chat-mode-btn:hover{border-color:var(--accent);color:var(--accent)}
 .chat-mode-btn.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent);font-weight:500}
 /* Кнопка «Применить к сцене» */
-.apply-to-scene{display:block;margin-top:6px;padding:7px 14px;font-size:12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--font);font-weight:500}
+.apply-to-scene{display:block;flex-basis:100%;margin-top:6px;padding:7px 14px;font-size:12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--font);font-weight:500;transition:background .15s}
 .apply-to-scene:hover{opacity:.85}
 .no-pad-scroll{padding:0;display:flex;flex-direction:column}
 
@@ -392,14 +392,16 @@ textarea{resize:vertical;min-height:60px}
   .body{display:block!important;position:relative;overflow:hidden;height:100%}
   .divider{display:none!important}
 
-  /* Все панели скрыты по умолчанию */
-  .panel{position:absolute!important;inset:0!important;min-width:0!important;display:none!important;overflow-y:auto}
+  /* Все панели скрыты по умолчанию; bottom оставляет место под нав-бар (56px + safe area) */
+  .panel{position:absolute!important;inset:0 0 calc(56px + env(safe-area-inset-bottom,0px)) 0!important;min-width:0!important;display:none!important;overflow-y:auto}
   .panel.mob-active{display:block!important}
   .panel.split.mob-active{display:flex!important}
 
   /* Нижняя навигация */
   .mob-nav{
     display:flex;
+    position:relative;
+    z-index:30;
     height:56px;
     background:var(--surface);
     border-top:1px solid var(--border);
@@ -415,8 +417,8 @@ textarea{resize:vertical;min-height:60px}
   }
   .mob-tab .mt-ic{font-size:17px;line-height:1}
   .mob-tab.active{color:var(--accent);border-top-color:var(--accent);background:var(--accent-bg)}
-  /* 4 вкладки — чуть компактнее */
-  .mob-tab{font-size:9px;padding:3px 0 5px}
+  /* 4 вкладки — чуть компактнее, минимум тап-зоны 44px (Apple HIG) */
+  .mob-tab{font-size:9px;padding:3px 0 5px;min-height:44px}
 
   /* Более крупные цели касания */
   .scene-row{padding:10px 12px;min-height:44px}
@@ -433,8 +435,8 @@ textarea{resize:vertical;min-height:60px}
   /* Модал — почти на весь экран */
   .modal{width:calc(100vw - 20px)!important;max-height:85vh;overflow-y:auto}
 
-  /* Инлайн-меню выделения — фикс над нав-баром */
-  .sel-menu{flex-wrap:wrap;gap:4px;padding:6px 8px;max-width:calc(100vw - 16px)}
+  /* Инлайн-меню выделения — фикс над нав-баром; z-index выше nav */
+  .sel-menu{flex-wrap:wrap;gap:4px;padding:6px 8px;max-width:calc(100vw - 16px);z-index:40}
   .sm-btn{font-size:13px;padding:7px 14px;min-height:36px}
 
   /* Кнопка «Следующая →» в Написании */
