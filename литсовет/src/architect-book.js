@@ -66,14 +66,17 @@ export function validateSkeleton(raw){
   const chapters = [];
   for(const ch of j.chapters){
     if(!ch || typeof ch.title!=='string') continue;
-    const scenes = Array.isArray(ch.scenes) ? ch.scenes.filter(s=>s && typeof s.brief==='string') : [];
+    // Принимаем любую сцену, у которой есть title (brief может быть null/undefined — LLM иногда
+    // использует "description" или вовсе не заполняет поле; не выбрасываем главу из-за этого).
+    const scenes = Array.isArray(ch.scenes) ? ch.scenes.filter(s=>s && s.title) : [];
     if(!scenes.length) continue;
     chapters.push({
       title: ch.title.trim(),
       arc: ARCS.includes(ch.arc) ? ch.arc : 'развитие',
       scenes: scenes.map(s=>({
         title: (s.title||'Без названия').trim(),
-        brief: s.brief.trim(),
+        // Fallback: brief → description → summary → пустая строка
+        brief: (typeof s.brief==='string' ? s.brief : typeof s.description==='string' ? s.description : typeof s.summary==='string' ? s.summary : '').trim(),
         emotion: (s.emotion||'').trim(),
         targetWords: Number(s.targetWords)>0 ? Math.round(Number(s.targetWords)) : 700,
       })),

@@ -480,20 +480,28 @@ export function renderStructure(els){
   document.getElementById('genSkeleton').onclick = async (ev)=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     if(hasSkeleton && !confirm('Перегенерировать скелет? Текущая структура (и тексты сцен) будут заменены.')) return;
-    const btn=ev.target; btn.disabled=true; const st=document.getElementById('genStatus');
-    st.innerHTML='<span class="spinner"></span> Архитектор проектирует…';
+    const btn=ev.target; btn.disabled=true;
+    document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор проектирует…';
     try{
       const chCount = parseInt(document.getElementById('chCount').value)||0;
       const skeleton = await runBookArchitect(s, chCount?{chapters:chCount}:{});
       applySkeleton(s, skeleton, uid);
       s.structureEval = null; // сбрасываем старую оценку
       save();
-      // Авто-оценка структуры
-      st.innerHTML='<span class="spinner"></span> Оценщик проверяет структуру…';
+      // После save() DOM пересобирается — берём свежие ссылки на элементы
+      const st2 = document.getElementById('genStatus');
+      const btn2 = document.getElementById('genSkeleton');
+      if(st2) st2.innerHTML='<span class="spinner"></span> Оценщик проверяет структуру…';
+      if(btn2) btn2.disabled=true;
       const evalResult = await runStructureEval(s, skeleton);
       s.structureEval = evalResult;
       save();
-    }catch(e){ st.textContent='Ошибка: '+e.message; btn.disabled=false; }
+    }catch(e){
+      const stE = document.getElementById('genStatus');
+      const btnE = document.getElementById('genSkeleton');
+      if(stE) stE.textContent='Ошибка: '+e.message;
+      if(btnE) btnE.disabled=false;
+    }
   };
 
   const rs=document.getElementById('revertSkeleton');
@@ -511,19 +519,27 @@ export function renderStructure(els){
     const hint = [issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
     if(!hint) return;
     regenWithEval.disabled=true;
-    const st=document.getElementById('genStatus');
-    st.innerHTML='<span class="spinner"></span> Архитектор перерабатывает структуру…';
+    document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор перерабатывает структуру…';
     try{
       const chCount = parseInt(document.getElementById('chCount')?.value)||0;
       const skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint });
       applySkeleton(s, skeleton, uid);
       s.structureEval = null;
       save();
-      st.innerHTML='<span class="spinner"></span> Оценщик проверяет новую структуру…';
+      // DOM пересобран — берём свежие ссылки
+      const st2 = document.getElementById('genStatus');
+      const btn2 = document.getElementById('genSkeleton');
+      if(st2) st2.innerHTML='<span class="spinner"></span> Оценщик проверяет новую структуру…';
+      if(btn2) btn2.disabled=true;
       const evalResult = await runStructureEval(s, skeleton);
       s.structureEval = evalResult;
       save();
-    }catch(e){ st.textContent='Ошибка: '+e.message; regenWithEval.disabled=false; }
+    }catch(e){
+      const stE = document.getElementById('genStatus');
+      if(stE) stE.textContent='Ошибка: '+e.message;
+      const btnE = document.getElementById('genSkeleton');
+      if(btnE) btnE.disabled=false;
+    }
   };
 
   const add=document.getElementById('addScene');
