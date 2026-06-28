@@ -53,8 +53,14 @@ export function bookArchitectMessages(state, opts={}){
 
 // Валидация + нормализация скелета. Возвращает {ok, skeleton|error}.
 export function validateSkeleton(raw){
-  const j = extractJSON(raw);
-  if(!j || !Array.isArray(j.chapters) || !j.chapters.length){
+  let j = extractJSON(raw);
+  if(!j) return { ok:false, error:'не удалось распарсить JSON' };
+  // Модель иногда оборачивает ответ: { "skeleton": {...} } или { "data": {...} }
+  if(!Array.isArray(j.chapters)){
+    const nested = Object.values(j).find(v => v && Array.isArray(v.chapters));
+    if(nested) j = nested;
+  }
+  if(!Array.isArray(j.chapters) || !j.chapters.length){
     return { ok:false, error:'нет массива chapters' };
   }
   const chapters = [];
@@ -82,20 +88,25 @@ export async function runBookArchitect(state, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ.');
   const msgs = bookArchitectMessages(state, opts);
-  // maxTokens масштабируется с числом сцен: ~80 токенов на сцену + накладные расходы
+  // ~140 токенов на сцену (русский бриф 1-2 предложения + поля) + накладные
   const p = state.project;
   const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / Math.max(700, Math.round((p.targetWords||80000)/60))));
-  const archMaxTokens = Math.max(3000, Math.min(8000, targetScenes * 90 + 500));
+  const archMaxTokens = Math.max(4000, Math.min(16000, targetScenes * 140 + 1500));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:archMaxTokens });
     const v = validateSkeleton(res.text);
     if(v.ok) return v.skeleton;
     lastErr = v.error;
-    // подсказка модели на ретрае
-    msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Верни СТРОГО JSON по схеме, только объект.` });
+    const preview = (res.text||'').slice(0, 120).replace(/\n/g,' ');
+    // на ретрае — сообщаем модели что конкретно не так
+    if((res.text||'').trim().endsWith('"') || (res.text||'').trim().endsWith(',') || !(res.text||'').trim().endsWith('}')){
+      msgs.push({ role:'user', content:`JSON обрезан (ответ не закончен). Повтори запрос: верни ТОЛЬКО полный JSON-объект с chapters, без пояснений. Пример начала: {"chapters":[{"title":"...` });
+    } else {
+      msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[...]} без лишнего текста.` });
+    }
   }
-  throw new Error('Книжный архитектор вернул невалидный скелет: '+lastErr);
+  throw new Error(`Книжный архитектор вернул невалидный скелет: ${lastErr}`);
 }
 
 // Перегенерация ОДНОЙ сцены скелета с подсказкой автора о направлении.
