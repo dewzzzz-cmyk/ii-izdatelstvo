@@ -100,6 +100,48 @@ export async function storageEstimate(){
   return null;
 }
 
+// ── Серверная синхронизация (cross-device) ──
+
+export async function listServerProjects(){
+  try{ const r=await fetch('/api/sync'); if(!r.ok) return []; return r.json(); }
+  catch{ return []; }
+}
+
+export async function getServerProject(id){
+  try{ const r=await fetch('/api/sync/'+encodeURIComponent(id)); if(!r.ok) return null; return r.json(); }
+  catch{ return null; }
+}
+
+export async function pushToServer(state){
+  if(!state?.id) return;
+  try{
+    const body = JSON.stringify(state, safeReplacer);
+    await fetch('/api/sync/'+encodeURIComponent(state.id),{
+      method:'POST', headers:{'Content-Type':'application/json'}, body,
+    });
+  }catch(e){ console.warn('sync push failed',e); }
+}
+
+export async function deleteFromServer(id){
+  try{ await fetch('/api/sync/'+encodeURIComponent(id),{method:'DELETE'}); }catch{}
+}
+
+// Синхронизировать все проекты с сервера в локальный IndexedDB.
+// Сервер — источник правды при конфликте (более свежая версия побеждает).
+export async function syncFromServer(){
+  const serverList = await listServerProjects();
+  if(!serverList.length) return false;
+  let imported = 0;
+  for(const {id, updated} of serverList){
+    const local = await loadProject(id).catch(()=>null);
+    if(!local || (local.updated||0) < (updated||0)){
+      const proj = await getServerProject(id);
+      if(proj){ await saveProject(proj); imported++; }
+    }
+  }
+  return imported > 0;
+}
+
 // Экспорт-чекпоинт: полный проект как .json (секреты и UI-состояние вычищены).
 export function exportCheckpoint(state){
   const clean = JSON.parse(JSON.stringify(state, safeReplacer));

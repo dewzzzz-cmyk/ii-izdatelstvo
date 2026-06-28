@@ -1,7 +1,7 @@
 // Модель состояния проекта Литсовет + дефолты.
 // Единый объект state, персистентный в IndexedDB (storage.js).
 
-import { saveProject, loadProject } from './storage.js';
+import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject } from './storage.js';
 import { rebuildBibleVecs } from './bible.js';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
@@ -124,19 +124,19 @@ export function save(){
   emit();
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(()=>{
-    saveProject(_state).catch(e=>{
-      console.error('save failed', e);
-      // Видимый баннер при ошибке сохранения (IndexedDB quota exceeded и т.п.)
-      let b = document.getElementById('_saveBanner');
-      if(!b){
-        b = document.createElement('div');
-        b.id='_saveBanner';
-        b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
-        b.onclick=()=>b.remove();
-        document.body?.appendChild(b);
-      }
-      b.textContent='⚠ Не удалось сохранить: '+e.message+' · нажмите чтобы скрыть';
-    });
+    saveProject(_state)
+      .then(()=>{ pushToServer(_state); setSyncStatus('ok'); })
+      .catch(e=>{
+        console.error('save failed', e);
+        setSyncStatus('err');
+        let b = document.getElementById('_saveBanner');
+        if(!b){
+          b = document.createElement('div'); b.id='_saveBanner';
+          b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
+          b.onclick=()=>b.remove(); document.body?.appendChild(b);
+        }
+        b.textContent='⚠ Не удалось сохранить: '+e.message+' · нажмите чтобы скрыть';
+      });
   }, 400);
 }
 
@@ -144,14 +144,24 @@ function lsGet(k){ try{ return localStorage.getItem(k); }catch{ return null; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch{} }
 
 export async function init(){
-  // последний проект или новый. apiKey всегда пустой при старте (только память).
+  // Синхронизируем с сервером в фоне ДО загрузки активного проекта
+  // чтобы сразу иметь актуальные данные при первом открытии
+  setSyncStatus('syncing');
+  const hadNew = await syncFromServer().catch(()=>false);
+
   const lastId = lsGet('litsovet_last');
   if(lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey=''; _state = migrate(loaded); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey=''; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+  }
+  // Если lastId не нашёлся локально — мог прийти с сервера
+  if(hadNew && lastId){
+    const loaded = await loadProject(lastId).catch(()=>null);
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey=''; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   _state = defaultState();
   lsSet('litsovet_last', _state.id);
+  setSyncStatus('ok');
   emit();
   return _state;
 }
@@ -162,6 +172,26 @@ export function newProject(){
   save();
   return _state;
 }
+
+// Переключиться на другой проект по id (из IndexedDB или сервера)
+export async function switchProject(id){
+  let proj = await loadProject(id).catch(()=>null);
+  if(!proj){
+    proj = await getServerProject(id).catch(()=>null);
+    if(proj) await saveProject(proj).catch(()=>{});
+  }
+  if(!proj) return false;
+  proj.global = proj.global||{}; proj.global.apiKey = _state?.global?.apiKey||'';
+  _state = migrate(proj);
+  lsSet('litsovet_last', id);
+  emit();
+  return true;
+}
+
+// Индикатор статуса синхронизации (обновляется в шапке)
+let _syncStatus = 'ok'; // 'ok' | 'syncing' | 'err'
+export function getSyncStatus(){ return _syncStatus; }
+export function setSyncStatus(s){ _syncStatus=s; const el=document.getElementById('_syncDot'); if(el) el.textContent=s==='ok'?'●':s==='syncing'?'◌':'⚠'; el&&(el.style.color=s==='ok'?'var(--ok)':s==='syncing'?'var(--text-3)':'var(--err)'); }
 
 // Мягкая миграция отсутствующих полей (версионирование схемы).
 function migrate(s){

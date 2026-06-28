@@ -20,6 +20,8 @@ const path = require('node:path');
 const PORT = process.env.PORT || 8788;
 const ROOT = __dirname;
 const CHECKPOINT_DIR = path.join(ROOT, 'checkpoints');
+const SYNC_DIR = path.join(ROOT, 'data', 'projects');
+ensureDir(SYNC_DIR);
 
 const MIME = { '.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8',
   '.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml',
@@ -125,6 +127,50 @@ async function handleWiki(req, res){
 
 function safeFile(name){ return (name||'').replace(/[/\\]/g,'').replace(/[^a-zA-Zа-яА-Я0-9_.-]/g,'_'); }
 
+// ── Синхронизация проектов между устройствами ──
+// Данные хранятся в ./data/projects/{id}.json
+// Без Railway Volume сбрасываются при рестарте контейнера (настройте Volume на /app/data)
+
+function handleSyncList(req, res){
+  ensureDir(SYNC_DIR);
+  try{
+    const files = fs.readdirSync(SYNC_DIR).filter(f=>f.endsWith('.json'));
+    const list = files.map(f=>{
+      try{
+        const d = JSON.parse(fs.readFileSync(path.join(SYNC_DIR,f),'utf8'));
+        return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length };
+      }catch{ return null; }
+    }).filter(Boolean);
+    send(res,200,JSON.stringify(list),'application/json; charset=utf-8');
+  }catch(e){ send(res,500,'LIST_ERROR: '+e.message); }
+}
+
+function handleSyncGet(req, res, id){
+  const fp = path.join(SYNC_DIR, safeFile(id)+'.json');
+  if(!fp.startsWith(SYNC_DIR)) return send(res,403,'FORBIDDEN');
+  fs.readFile(fp,'utf8',(e,d)=> e ? send(res,404,'NOT_FOUND') : send(res,200,d,'application/json; charset=utf-8'));
+}
+
+function handleSyncSave(req, res, id){
+  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>50e6) req.destroy(); });
+  req.on('end',()=>{
+    try{
+      const parsed = JSON.parse(raw);
+      if(!parsed.id) return send(res,400,'NO_ID');
+      ensureDir(SYNC_DIR);
+      fs.writeFileSync(path.join(SYNC_DIR,safeFile(id)+'.json'), raw, 'utf8');
+      send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
+    }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
+  });
+}
+
+function handleSyncDelete(req, res, id){
+  const fp = path.join(SYNC_DIR, safeFile(id)+'.json');
+  if(!fp.startsWith(SYNC_DIR)) return send(res,403,'FORBIDDEN');
+  try{ fs.unlinkSync(fp); }catch{}
+  send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
+}
+
 function handleCheckpointSave(req,res){
   let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>30e6) req.destroy(); });
   req.on('end',()=>{
@@ -170,6 +216,15 @@ http.createServer(async (req,res)=>{
   if(req.method==='POST' && req.url==='/api/checkpoint')  return handleCheckpointSave(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/checkpoints')) return handleCheckpointList(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/checkpoint?')) return handleCheckpointRead(req,res);
+  // Синхронизация проектов
+  const syncId = req.url.match(/^\/api\/sync\/([^?/]+)/);
+  if(syncId){
+    const id = decodeURIComponent(syncId[1]);
+    if(req.method==='GET')    return handleSyncGet(req,res,id);
+    if(req.method==='POST')   return handleSyncSave(req,res,id);
+    if(req.method==='DELETE') return handleSyncDelete(req,res,id);
+  }
+  if(req.method==='GET' && req.url==='/api/sync') return handleSyncList(req,res);
   if(req.method==='GET') return serveStatic(req,res);
   send(res,405,'Method not allowed');
 }).listen(PORT, ()=>{

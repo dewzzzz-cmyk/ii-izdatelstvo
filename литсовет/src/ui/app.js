@@ -1,10 +1,10 @@
 // Точка входа UI: инициализация, рейл, изменяемые границы, настройки,
 // диспетчеризация стадий.
 
-import { init, getState, subscribe, save, newProject } from '../state.js';
+import { init, getState, subscribe, save, newProject, switchProject } from '../state.js';
 import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } from './stages.js';
 import { renderDiagnostics } from './diagnostics.js';
-import { exportCheckpoint } from '../storage.js';
+import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
 import { initTooltips } from './tooltips.js';
 
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -145,9 +145,38 @@ function initDividers(){
 }
 
 // ── Настройки (API-ключ только в памяти) ──
-function openSettings(){
+async function openSettings(){
   const s = getState();
   const g = s.global;
+  const curId = s.id;
+
+  // Загружаем список проектов параллельно
+  const [localList, serverList] = await Promise.all([
+    listProjects().catch(()=>[]),
+    listServerProjects().catch(()=>[]),
+  ]);
+  // Мерж: строим Map id → {id, title, updated, onServer}
+  const map = new Map();
+  localList.forEach(p=>map.set(p.id,{...p, onServer:false}));
+  serverList.forEach(p=>{
+    const ex = map.get(p.id);
+    if(!ex) map.set(p.id,{...p, onServer:true});
+    else ex.onServer=true;
+  });
+  const projects = [...map.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
+
+  const projListHtml = projects.length<2 ? '' : `
+    <div class="field" style="margin-top:12px">
+      <label>Мои книги <span class="hint">(нажмите чтобы открыть)</span></label>
+      <div id="projList" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;margin-top:4px">
+        ${projects.map(p=>`
+          <button class="proj-item${p.id===curId?' proj-item-active':''}" data-pid="${escAttr(p.id)}">
+            <span class="proj-item-title">${escAttr(p.title||'(без названия)')}</span>
+            ${p.onServer?'<span class="proj-item-badge">☁</span>':''}
+          </button>`).join('')}
+      </div>
+    </div>`;
+
   els.modalRoot.innerHTML = `
     <div class="modal-bg" id="mbg">
       <div class="modal" onclick="event.stopPropagation()">
@@ -158,8 +187,9 @@ function openSettings(){
           <input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
         <div class="field"><label>Модель</label>
           <input type="text" id="setModel" value="${escAttr(g.model)}"></div>
-        <div class="row" style="justify-content:space-between;margin-top:6px">
-          <button class="btn" id="setNew">Новый проект</button>
+        ${projListHtml}
+        <div class="row" style="justify-content:space-between;margin-top:12px">
+          <button class="btn" id="setNew">+ Новый проект</button>
           <div class="row">
             <button class="btn" id="setExport">Экспорт .json</button>
             <button class="btn btn-primary" id="setSave">Готово</button>
@@ -175,12 +205,23 @@ function openSettings(){
     g.model = document.getElementById('setModel').value.trim();
     save(); close();
   };
-  document.getElementById('setNew').onclick = ()=>{ if(confirm('Создать новый проект? Текущий сохранён в IndexedDB.')){ newProject(); close(); } };
+  document.getElementById('setNew').onclick = ()=>{
+    if(confirm('Создать новый проект? Текущий сохранён.')){ newProject(); close(); }
+  };
   document.getElementById('setExport').onclick = ()=>{
     const blob = new Blob([exportCheckpoint(getState())], {type:'application/json'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = (getState().project.title||'litsovet')+'.json'; a.click();
   };
+  document.getElementById('projList')?.querySelectorAll('.proj-item').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const pid = btn.dataset.pid;
+      if(pid === curId){ close(); return; }
+      btn.disabled = true; btn.textContent = '⏳ Загрузка…';
+      const ok = await switchProject(pid);
+      if(ok){ close(); } else { btn.textContent = '⚠ Не найден'; btn.disabled=false; }
+    };
+  });
 }
 
 async function main(){
