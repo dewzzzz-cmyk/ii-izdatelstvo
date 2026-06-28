@@ -121,6 +121,9 @@ let _saveTimer = null;
 export function save(){
   if(!_state) return;
   _state.updated = Date.now();
+  // API-ключ хранится отдельно в localStorage браузера (не уходит на сервер)
+  const k = _state.global?.apiKey;
+  if(typeof k === 'string') lsSet('litsovet_apikey', k);
   emit();
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(()=>{
@@ -149,15 +152,16 @@ export async function init(){
   setSyncStatus('syncing');
   const hadNew = await syncFromServer().catch(()=>false);
 
+  const savedKey = lsGet('litsovet_apikey') || '';
   const lastId = lsGet('litsovet_last');
   if(lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey=''; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   // Если lastId не нашёлся локально — мог прийти с сервера
   if(hadNew && lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey=''; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   _state = defaultState();
   lsSet('litsovet_last', _state.id);
