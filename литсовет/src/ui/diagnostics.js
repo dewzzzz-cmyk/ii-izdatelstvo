@@ -116,6 +116,58 @@ function bindAskScene(scene){
   inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } };
 }
 
+const GUARD_PRESETS = [
+  { name:'Страж дат',    prompt:'Проверь хронологию: даты, возраст персонажей и временны́е промежутки между событиями не противоречат друг другу и предыдущим сценам.' },
+  { name:'Страж имён',   prompt:'Проверь единообразие имён персонажей: написание, форма обращения и прозвища должны совпадать с библией и предыдущими сценами.' },
+  { name:'Страж места',  prompt:'Проверь описания локаций: расположение предметов, размеры помещений и маршруты персонажей не должны противоречить предыдущим сценам.' },
+  { name:'Страж знаний', prompt:'Проверь, что персонажи не знают и не упоминают информацию, которую они ещё не могли получить по ходу сюжета.' },
+];
+
+function openAddGuardModal(){
+  const root=document.getElementById('modalRoot'); if(!root) return;
+  root.innerHTML=`<div class="modal-bg" id="agdBg"><div class="modal" style="width:460px;max-width:93vw" onclick="event.stopPropagation()">
+    <h2>🛡 Свой страж</h2>
+    <div style="font-size:13px;color:var(--text-2);margin-bottom:12px;line-height:1.6">
+      Страж — агент, который читает вашу сцену и ставит флаги по вашему критерию.
+      Он <b>не переписывает текст</b> — только сообщает о нарушениях, как остальные стражи.
+      Запускается параллельно с ними при каждом прогоне.
+    </div>
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-bottom:6px">Примеры — нажмите, чтобы заполнить</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px" id="agdPresets">
+      ${GUARD_PRESETS.map((p,i)=>`<button class="agd-preset btn" data-i="${i}" style="font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg);cursor:pointer">${esc(p.name)}</button>`).join('')}
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">Название</label>
+      <input id="agdName" class="ares-input" style="width:100%;box-sizing:border-box" placeholder="Страж дат" maxlength="40" value="">
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">Что проверять</label>
+      <textarea id="agdPrompt" class="apv-draft" rows="3" style="min-height:70px" placeholder="напр.: даты и возраст персонажей не противоречат друг другу между сценами"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="agdCancel">Отмена</button>
+      <button class="btn btn-primary" id="agdOk">Создать стража</button>
+    </div>
+  </div></div>`;
+  root.querySelector('#agdBg').onclick=()=>root.innerHTML='';
+  root.querySelector('#agdCancel').onclick=()=>root.innerHTML='';
+  root.querySelectorAll('.agd-preset').forEach(b=>b.onclick=()=>{
+    const p=GUARD_PRESETS[+b.dataset.i];
+    root.querySelector('#agdName').value=p.name;
+    root.querySelector('#agdPrompt').value=p.prompt;
+    root.querySelectorAll('.agd-preset').forEach(x=>x.style.background='var(--bg)');
+    b.style.background='var(--accent)'; b.style.color='#fff'; b.style.borderColor='var(--accent)';
+  });
+  root.querySelector('#agdOk').onclick=()=>{
+    const name=(root.querySelector('#agdName').value||'').trim()||'Свой страж';
+    const prompt=(root.querySelector('#agdPrompt').value||'').trim();
+    if(!prompt){ root.querySelector('#agdPrompt').focus(); return; }
+    const s=getState(); const a=addCustomAgent(s, name, prompt);
+    _openAgents.add(a.id); save(); root.innerHTML='';
+  };
+  setTimeout(()=>root.querySelector('#agdName').focus(),50);
+}
+
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
 const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom']);
 export function renderAgentPipeline(){
@@ -212,11 +264,7 @@ function bindAgents(){
   });
   // добавить стража
   const add=document.getElementById('addAgentBtn');
-  if(add) add.onclick=()=>{
-    const name=prompt('Название стража (напр.: «Страж дат»):'); if(name===null) return;
-    const p=prompt('Что он должен проверять? (напр.: даты и возраст персонажей не противоречат)'); if(p===null) return;
-    const s=getState(); const a=addCustomAgent(s, name.trim()||'Свой страж', p.trim()); _openAgents.add(a.id); save();
-  };
+  if(add) add.onclick=()=>openAddGuardModal();
   // drag-and-drop перестановка
   let dragId=null;
   document.querySelectorAll('.agent-toggle[data-drag]').forEach(row=>{
