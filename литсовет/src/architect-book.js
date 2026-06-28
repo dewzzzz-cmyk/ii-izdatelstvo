@@ -17,9 +17,13 @@ export function bookArchitectMessages(state, opts={}){
   const targetChapters = opts.chapters || Math.max(3, Math.min(25, Math.round(targetScenes / 3.5)));
   const scenesPerCh = Math.max(2, Math.round(targetScenes / targetChapters));
 
+  const wMin = Math.round(wPerScene * 0.80);
+  const wMax = Math.round(wPerScene * 1.20);
   const sys = [
     'Ты — книжный архитектор. Ты проектируешь скелет книги: главы и сцены. Ты НЕ пишешь прозу.',
-    `Каждая сцена — это единица письма (~${wPerScene} слов). Думай о нарративной арке: завязка → развитие → кульминация → развязка.`,
+    `Каждая сцена — единица письма. Базовый объём: ${wPerScene} слов. Диапазон: ${wMin}–${wMax} слов (±20%).`,
+    `Варьируй targetWords по событию: переход/экспозиция → ${wMin}–${Math.round(wPerScene*0.9)} сл; стандартная сцена → ${Math.round(wPerScene*0.9)}–${Math.round(wPerScene*1.1)} сл; кульминация/откровение → ${Math.round(wPerScene*1.1)}–${wMax} сл.`,
+    'НЕ выходи за пределы диапазона. Общая сумма targetWords должна быть близка к целевому объёму.',
   ].join('\n');
   // Нарративная инструкция по позиции в серии
   let seriesArcNote = '';
@@ -110,12 +114,17 @@ export async function runBookArchitect(state, opts={}){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:archMaxTokens });
     const v = validateSkeleton(res.text);
     if(v.ok){
-      // Нормализация: ЛЛМ часто занижает targetWords (~700 вместо 1333).
-      // Если сцена меньше половины нормы — заменяем на целевой объём.
-      const minW = Math.round(wPerScene * 0.6);
-      v.skeleton.chapters.forEach(ch=>(ch.scenes||[]).forEach(sc=>{
-        if(!sc.targetWords || sc.targetWords < minW) sc.targetWords = wPerScene;
-      }));
+      // Нормализация targetWords: база = totalWords / фактич. число сцен.
+      // ЛЛМ может варьировать ±20% по событию — принимаем; за диапазон → клэмп.
+      const allScenes = v.skeleton.chapters.flatMap(ch=>ch.scenes||[]);
+      const norm = Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/Math.max(1,allScenes.length))));
+      const minW = Math.round(norm * 0.80);
+      const maxW = Math.round(norm * 1.20);
+      allScenes.forEach(sc=>{
+        const tw = Number(sc.targetWords)||0;
+        if(tw < minW) sc.targetWords = norm;
+        else if(tw > maxW) sc.targetWords = maxW;
+      });
       return v.skeleton;
     }
     lastErr = v.error;
