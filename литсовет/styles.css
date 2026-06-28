@@ -133,9 +133,10 @@ textarea{resize:vertical;min-height:60px}
 
 /* ── Skeleton editor (Structure) ── */
 .chapter-head{padding:7px 12px 2px;font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.05em}
-.sk-chapter{font-size:13px;font-weight:500;margin:14px 0 6px;display:flex;align-items:center;gap:8px}
+.sk-chapter{font-size:13px;font-weight:600;margin:18px 0 6px;padding:8px 12px;display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--radius)}
+.sk-chapter:first-child{margin-top:6px}
 .sk-arc{font-size:10px;background:var(--accent-bg);color:var(--accent);border-radius:8px;padding:1px 7px;font-weight:500}
-.sk-scene{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:5px;background:var(--surface)}
+.sk-scene{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:5px;margin-left:10px;background:var(--surface)}
 .sk-scene.open{border-color:var(--accent-border)}
 .sk-scene-head{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer}
 .sk-scene-head:hover{background:var(--surface-2)}
