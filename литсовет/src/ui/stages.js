@@ -8,7 +8,7 @@ import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './d
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
-import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -407,6 +407,34 @@ function bindHistorianPanel(s){
   };
 }
 
+// ─────────── Панель оценки структуры ───────────
+function renderStructureEval(ev){
+  const score = ev.score ?? 0;
+  const color = score >= 8 ? 'var(--ok)' : score >= 6 ? '#e6a817' : 'var(--err)';
+  const axisNames = { arc:'Дуга', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
+  const axesBadges = Object.entries(axisNames).map(([k,label])=>{
+    const v = ev.axes?.[k] ?? score;
+    const c = v>=8?'var(--ok)':v>=6?'#e6a817':'var(--err)';
+    return `<span style="font-size:11px;padding:2px 7px;border-radius:10px;background:${c}22;color:${c};white-space:nowrap">${label} ${v.toFixed(0)}</span>`;
+  }).join('');
+  const issuesList = (ev.issues||[]).map(t=>`<li style="color:var(--err)">⚠ ${esc(t)}</li>`).join('');
+  const suggList = (ev.suggestions||[]).map(t=>`<li style="color:var(--text-2)">→ ${esc(t)}</li>`).join('');
+  return `
+    <div id="structEvalPanel" style="margin-top:18px;border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:var(--surface-2)">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px">
+        <b style="font-size:13px">Оценка структуры</b>
+        <span style="font-size:22px;font-weight:700;color:${color}">${score.toFixed(1)}<span style="font-size:13px;color:var(--text-3)">/10</span></span>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${axesBadges}</div>
+      ${issuesList ? `<ul style="margin:0 0 8px;padding-left:18px;font-size:13px">${issuesList}</ul>` : ''}
+      ${suggList ? `<ul style="margin:0 0 10px;padding-left:18px;font-size:13px">${suggList}</ul>` : ''}
+      <div class="row" style="justify-content:flex-end;gap:8px">
+        <button class="btn" id="evalDismiss" style="font-size:12px">Скрыть</button>
+        ${score < 8 ? `<button class="btn btn-primary" id="regenWithEval" style="font-size:12px">♻ Улучшить структуру по замечаниям</button>` : ''}
+      </div>
+    </div>`;
+}
+
 // ─────────────────────────────── СТРУКТУРА (мин.) ───────────────────────────────
 export function renderStructure(els){
   const s = getState();
@@ -444,6 +472,8 @@ export function renderStructure(els){
         <button class="btn" id="addScene">Добавить сцену</button>
       `}
 
+      ${s.structureEval ? renderStructureEval(s.structureEval) : ''}
+
       ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
     </div>`;
 
@@ -456,12 +486,45 @@ export function renderStructure(els){
       const chCount = parseInt(document.getElementById('chCount').value)||0;
       const skeleton = await runBookArchitect(s, chCount?{chapters:chCount}:{});
       applySkeleton(s, skeleton, uid);
+      s.structureEval = null; // сбрасываем старую оценку
+      save();
+      // Авто-оценка структуры
+      st.innerHTML='<span class="spinner"></span> Оценщик проверяет структуру…';
+      const evalResult = await runStructureEval(s, skeleton);
+      s.structureEval = evalResult;
       save();
     }catch(e){ st.textContent='Ошибка: '+e.message; btn.disabled=false; }
   };
 
   const rs=document.getElementById('revertSkeleton');
   if(rs) rs.onclick = ()=>{ if(revertSkeleton(s)) save(); };
+
+  // Кнопки оценщика структуры
+  const evalDismiss = document.getElementById('evalDismiss');
+  if(evalDismiss) evalDismiss.onclick = ()=>{ s.structureEval=null; save(); };
+
+  const regenWithEval = document.getElementById('regenWithEval');
+  if(regenWithEval) regenWithEval.onclick = async ()=>{
+    if(!s.structureEval) return;
+    const suggestions = (s.structureEval.suggestions||[]).join('\n');
+    const issues = (s.structureEval.issues||[]).join('\n');
+    const hint = [issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
+    if(!hint) return;
+    regenWithEval.disabled=true;
+    const st=document.getElementById('genStatus');
+    st.innerHTML='<span class="spinner"></span> Архитектор перерабатывает структуру…';
+    try{
+      const chCount = parseInt(document.getElementById('chCount')?.value)||0;
+      const skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint });
+      applySkeleton(s, skeleton, uid);
+      s.structureEval = null;
+      save();
+      st.innerHTML='<span class="spinner"></span> Оценщик проверяет новую структуру…';
+      const evalResult = await runStructureEval(s, skeleton);
+      s.structureEval = evalResult;
+      save();
+    }catch(e){ st.textContent='Ошибка: '+e.message; regenWithEval.disabled=false; }
+  };
 
   const add=document.getElementById('addScene');
   if(add) add.onclick = ()=>{

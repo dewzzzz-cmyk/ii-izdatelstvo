@@ -1,6 +1,7 @@
 // Книжный архитектор (спека 5.3) — один запуск на стадии Структура.
 // Возвращает скелет: главы → сцены (название, бриф, эмоция, объём, арка).
 // Temp 0.6. Выход валидируется по схеме с ретраем (спека 11).
+// + Оценщик структуры: после генерации оценивает скелет и даёт рекомендации.
 
 import { callLLM, extractJSON } from './llm.js';
 
@@ -41,6 +42,7 @@ export function bookArchitectMessages(state, opts={}){
     seriesArcNote,
     p.seriesSummary ? `Содержание предыдущих книг:\n${p.seriesSummary}` : '',
     `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
+    opts.hint ? `\nЗАМЕЧАНИЯ К ПРЕДЫДУЩЕЙ ВЕРСИИ СТРУКТУРЫ (обязательно учти при проектировании):\n${opts.hint}` : '',
     '',
     'Спроектируй скелет. Верни JSON:',
     '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "что происходит, тон, чем заканчивается — 1-2 предложения", "emotion": "эмоция читателя в финале сцены", "targetWords": число } ] } ] }',
@@ -231,6 +233,68 @@ export function revertSkeleton(state){
   state.skeletonVersions.unshift(JSON.parse(JSON.stringify(state.structure))); // текущее → в историю (свап, можно вернуться)
   state.structure = prev;
   return true;
+}
+
+// ── Оценщик структуры: оценивает сгенерированный скелет по 5 осям ──
+// Возвращает { score, axes:{arc,pacing,conflict,balance,ending}, issues[], suggestions[] }
+export function structureEvalMessages(state, skeleton){
+  const p = state.project;
+  const totalScenes = skeleton.chapters.reduce((n,ch)=>n+(ch.scenes||[]).length, 0);
+  const sys = [
+    'Ты — главный редактор с 20-летним опытом. Оцени АРХИТЕКТУРУ скелета книги.',
+    'Ищи только структурные проблемы, которые нельзя починить на уровне сцены:',
+    '• Диспропорции: слишком длинный/короткий акт, скучкованные сцены одного типа',
+    '• Нарративные провалы: нет момента невозврата, финал не подготовлен, кульминация смещена',
+    '• Конфликт без нарастания или без разрядки',
+    '• Финал серии (если серия) без нужного закрытия/открытия арок',
+    'Не оценивай качество брифов, стиль или детали — только АРХИТЕКТУРУ.',
+  ].join('\n');
+
+  // Компактный скелет для промпта
+  const skeletonText = skeleton.chapters.map((ch,ci)=>{
+    const scList = (ch.scenes||[]).map((s,si)=>`    ${ci+1}.${si+1}. «${s.title}» [${s.targetWords||700}сл] — ${s.brief}`).join('\n');
+    return `Глава ${ci+1} [${ch.arc||'?'}]: «${ch.title}»\n${scList}`;
+  }).join('\n\n');
+
+  const user = [
+    `Жанр: ${p.genre||'роман'}, аудитория: ${p.audience||'широкая'}, объём: ${(p.targetWords||80000)/1000}к слов.`,
+    p.synopsis||p.idea ? `Синопсис: ${p.synopsis||p.idea}` : '',
+    p.type==='series' ? `Серия: книга ${p.seriesBook||1} из ${p.seriesTotal||3}.` : '',
+    '',
+    `СКЕЛЕТ (${skeleton.chapters.length} глав, ${totalScenes} сцен):`,
+    skeletonText,
+    '',
+    'Оцени структуру. Верни JSON:',
+    '{ "score": среднее_float_0-10, "axes": { "arc": 0-10, "pacing": 0-10, "conflict": 0-10, "balance": 0-10, "ending": 0-10 }, "issues": ["до 4 реальных проблем, кратко и конкретно"], "suggestions": ["до 4 конкретных улучшений со ссылками на главы/сцены"] }',
+    'Если структура хороша — скажи это в suggestions. issues может быть пустым. Только JSON.',
+  ].filter(Boolean).join('\n');
+
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export async function runStructureEval(state, skeleton){
+  const g = state.global;
+  if(!g.apiKey) return null;
+  const msgs = structureEvalMessages(state, skeleton);
+  try {
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:800 });
+    const j = extractJSON(res.text);
+    if(!j || typeof j.score !== 'number') return null;
+    return {
+      score: Math.max(0, Math.min(10, j.score)),
+      axes: {
+        arc:      Math.max(0,Math.min(10, (j.axes||{}).arc      ?? j.score)),
+        pacing:   Math.max(0,Math.min(10, (j.axes||{}).pacing   ?? j.score)),
+        conflict: Math.max(0,Math.min(10, (j.axes||{}).conflict ?? j.score)),
+        balance:  Math.max(0,Math.min(10, (j.axes||{}).balance  ?? j.score)),
+        ending:   Math.max(0,Math.min(10, (j.axes||{}).ending   ?? j.score)),
+      },
+      issues:      Array.isArray(j.issues)      ? j.issues.slice(0,4).map(String)      : [],
+      suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4).map(String) : [],
+    };
+  } catch(e){
+    return null; // оценка необязательна — молча игнорируем ошибку
+  }
 }
 
 // ── Перегенерация всех сцен ОДНОЙ главы с подсказкой ──
