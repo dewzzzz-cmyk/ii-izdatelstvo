@@ -117,46 +117,90 @@ function bindAskScene(scene){
 }
 
 const GUARD_PRESETS = [
-  { name:'Страж дат',    prompt:'Проверь хронологию: даты, возраст персонажей и временны́е промежутки между событиями не противоречат друг другу и предыдущим сценам.' },
-  { name:'Страж имён',   prompt:'Проверь единообразие имён персонажей: написание, форма обращения и прозвища должны совпадать с библией и предыдущими сценами.' },
-  { name:'Страж места',  prompt:'Проверь описания локаций: расположение предметов, размеры помещений и маршруты персонажей не должны противоречить предыдущим сценам.' },
-  { name:'Страж знаний', prompt:'Проверь, что персонажи не знают и не упоминают информацию, которую они ещё не могли получить по ходу сюжета.' },
+  // Факты и логика
+  { cat:'Факты',       name:'Страж дат',        prompt:'Проверь хронологию: даты, возраст персонажей и временны́е промежутки между событиями не противоречат друг другу и предыдущим сценам.' },
+  { cat:'Факты',       name:'Страж места',       prompt:'Проверь описания локаций: расположение предметов, размеры помещений и маршруты персонажей не должны противоречить предыдущим сценам.' },
+  { cat:'Факты',       name:'Страж знаний',      prompt:'Проверь, что персонажи не знают и не упоминают информацию, которую они ещё не могли получить по ходу сюжета.' },
+  { cat:'Факты',       name:'Страж физики',      prompt:'Проверь что физические действия реалистичны: усилие, скорость, расстояния, вес предметов соответствуют возможностям персонажа и законам мира.' },
+  { cat:'Факты',       name:'Страж погоды',      prompt:'Проверь что время суток, освещение и погода согласованы внутри сцены и не противоречат предыдущим сценам того же дня.' },
+  // Персонажи
+  { cat:'Персонажи',   name:'Страж имён',        prompt:'Проверь единообразие имён: написание, форма обращения и прозвища персонажей совпадают с библией и предыдущими сценами.' },
+  { cat:'Персонажи',   name:'Страж характеров',  prompt:'Проверь что поведение, реакции и решения персонажей соответствуют их характеристикам, мотивации и истории из библии.' },
+  { cat:'Персонажи',   name:'Страж отношений',   prompt:'Проверь что отношения между персонажами (доверие, вражда, симпатия, иерархия) согласованы с предыдущими сценами и не противоречат установленному.' },
+  // Язык и стиль
+  { cat:'Стиль',       name:'Страж повторов',     prompt:'Отметь слова, фразы и образы, которые встречаются больше двух раз в пределах этой сцены и создают ощущение однообразия.' },
+  { cat:'Стиль',       name:'Страж диалогов',     prompt:'Проверь что голос каждого персонажа в диалоге различим: словарь, темп, манера — разные у разных людей, не усреднённые.' },
+  { cat:'Стиль',       name:'Страж темпа',        prompt:'Отметь если три и более абзаца подряд идут без действия, диалога или события (пробуксовка темпа). Отметь и обратное — если важный момент смят.' },
+  { cat:'Стиль',       name:'Страж показа',       prompt:'Найди места где автор называет чувство или качество прямо («он испугался», «она была добра»), вместо того чтобы показать его через действие или деталь.' },
 ];
+
+const GUARD_CATS = ['Все', 'Факты', 'Персонажи', 'Стиль'];
+
+function renderGuardPresets(activeCat, query){
+  const q=(query||'').toLowerCase().trim();
+  return GUARD_PRESETS
+    .map((p,i)=>({...p,i}))
+    .filter(p=>(activeCat==='Все'||p.cat===activeCat) && (!q||p.name.toLowerCase().includes(q)||p.prompt.toLowerCase().includes(q)))
+    .map(p=>`<button class="agd-preset" data-i="${p.i}" title="${esc(p.prompt)}"
+      style="display:flex;flex-direction:column;gap:2px;text-align:left;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);cursor:pointer;width:100%">
+      <span style="font-size:13px;font-weight:500">${esc(p.name)}</span>
+      <span style="font-size:11px;color:var(--text-3);line-height:1.4">${esc(p.prompt.slice(0,80))}…</span>
+    </button>`).join('') || '<div style="font-size:13px;color:var(--text-3);padding:8px 0">Ничего не найдено</div>';
+}
 
 function openAddGuardModal(){
   const root=document.getElementById('modalRoot'); if(!root) return;
-  root.innerHTML=`<div class="modal-bg" id="agdBg"><div class="modal" style="width:460px;max-width:93vw" onclick="event.stopPropagation()">
-    <h2>🛡 Свой страж</h2>
-    <div style="font-size:13px;color:var(--text-2);margin-bottom:12px;line-height:1.6">
-      Страж — агент, который читает вашу сцену и ставит флаги по вашему критерию.
-      Он <b>не переписывает текст</b> — только сообщает о нарушениях, как остальные стражи.
-      Запускается параллельно с ними при каждом прогоне.
+  let activeCat='Все';
+  const render=()=>{
+    const q=root.querySelector('#agdSearch')?.value||'';
+    root.querySelector('#agdPresetList').innerHTML=renderGuardPresets(activeCat,q);
+    root.querySelectorAll('.agd-preset').forEach(b=>b.onclick=()=>{
+      const p=GUARD_PRESETS[+b.dataset.i];
+      root.querySelector('#agdName').value=p.name;
+      root.querySelector('#agdPrompt').value=p.prompt;
+      root.querySelectorAll('.agd-preset').forEach(x=>{ x.style.background='var(--bg)'; x.style.borderColor='var(--border)'; });
+      b.style.background='var(--accent-bg,#eef2ff)'; b.style.borderColor='var(--accent)';
+    });
+  };
+  root.innerHTML=`<div class="modal-bg" id="agdBg"><div class="modal" style="width:480px;max-width:93vw;max-height:90vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
+    <h2 style="flex-shrink:0">🛡 Свой страж</h2>
+    <div style="font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.6;flex-shrink:0">
+      Страж читает сцену и ставит флаги по вашему критерию.
+      <b>Не переписывает</b> — только сообщает о нарушениях.
+      Запускается параллельно с другими стражами при каждом прогоне.
     </div>
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-bottom:6px">Примеры — нажмите, чтобы заполнить</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px" id="agdPresets">
-      ${GUARD_PRESETS.map((p,i)=>`<button class="agd-preset btn" data-i="${i}" style="font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg);cursor:pointer">${esc(p.name)}</button>`).join('')}
+    <div style="flex-shrink:0;margin-bottom:8px">
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        ${GUARD_CATS.map(c=>`<button class="agd-cat ${c==='Все'?'agd-cat-active':''}" data-cat="${esc(c)}"
+          style="font-size:12px;padding:3px 10px;border-radius:20px;border:1px solid var(--border);cursor:pointer;background:${c==='Все'?'var(--accent)':'var(--bg)'};color:${c==='Все'?'#fff':'var(--text)'}">${esc(c)}</button>`).join('')}
+      </div>
+      <input id="agdSearch" class="ares-input" style="width:100%;box-sizing:border-box" placeholder="Поиск по названию или описанию…">
     </div>
-    <div style="margin-bottom:10px">
-      <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">Название</label>
+    <div id="agdPresetList" style="overflow-y:auto;max-height:220px;display:flex;flex-direction:column;gap:4px;margin-bottom:14px;flex-shrink:0">
+      ${renderGuardPresets('Все','')}
+    </div>
+    <div style="flex-shrink:0;margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">Название <span style="color:var(--text-3)">(или выберите пресет выше)</span></label>
       <input id="agdName" class="ares-input" style="width:100%;box-sizing:border-box" placeholder="Страж дат" maxlength="40" value="">
     </div>
-    <div style="margin-bottom:16px">
+    <div style="flex-shrink:0;margin-bottom:16px">
       <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">Что проверять</label>
-      <textarea id="agdPrompt" class="apv-draft" rows="3" style="min-height:70px" placeholder="напр.: даты и возраст персонажей не противоречат друг другу между сценами"></textarea>
+      <textarea id="agdPrompt" class="apv-draft" rows="3" style="min-height:70px" placeholder="напр.: проверь что у каждого персонажа свой голос в диалоге"></textarea>
     </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-shrink:0">
       <button class="btn" id="agdCancel">Отмена</button>
       <button class="btn btn-primary" id="agdOk">Создать стража</button>
     </div>
   </div></div>`;
+  render();
   root.querySelector('#agdBg').onclick=()=>root.innerHTML='';
   root.querySelector('#agdCancel').onclick=()=>root.innerHTML='';
-  root.querySelectorAll('.agd-preset').forEach(b=>b.onclick=()=>{
-    const p=GUARD_PRESETS[+b.dataset.i];
-    root.querySelector('#agdName').value=p.name;
-    root.querySelector('#agdPrompt').value=p.prompt;
-    root.querySelectorAll('.agd-preset').forEach(x=>x.style.background='var(--bg)');
-    b.style.background='var(--accent)'; b.style.color='#fff'; b.style.borderColor='var(--accent)';
+  root.querySelector('#agdSearch').addEventListener('input',render);
+  root.querySelectorAll('.agd-cat').forEach(b=>b.onclick=()=>{
+    activeCat=b.dataset.cat;
+    root.querySelectorAll('.agd-cat').forEach(x=>{ x.style.background='var(--bg)'; x.style.color='var(--text)'; });
+    b.style.background='var(--accent)'; b.style.color='#fff';
+    render();
   });
   root.querySelector('#agdOk').onclick=()=>{
     const name=(root.querySelector('#agdName').value||'').trim()||'Свой страж';
@@ -165,18 +209,32 @@ function openAddGuardModal(){
     const s=getState(); const a=addCustomAgent(s, name, prompt);
     _openAgents.add(a.id); save(); root.innerHTML='';
   };
-  setTimeout(()=>root.querySelector('#agdName').focus(),50);
+  setTimeout(()=>root.querySelector('#agdSearch').focus(),50);
 }
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
 const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom']);
+const AGENT_FILTER_CATS = ['Все','Основные','Стражи','Мои'];
+const CORE_ROLES = new Set(['architect','prose','evaluator','lineedit']);
+const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard']);
+let _agentFilter = 'Все';
+
+function agentMatchesFilter(a, filter){
+  if(filter==='Все') return true;
+  if(filter==='Основные') return CORE_ROLES.has(a.role);
+  if(filter==='Стражи')   return GUARD_ROLES.has(a.role);
+  if(filter==='Мои')      return !!a.custom;
+  return true;
+}
+
 export function renderAgentPipeline(){
   const s = getState();
   const agents = s.agents||[];
   const runs = getRuns();
   setTimeout(bindAgents, 0);
   let prevPar = false;
-  const rows = agents.map((a,i)=>{
+  const visible = agents.filter(a=>agentMatchesFilter(a, _agentFilter));
+  const rows = visible.map((a)=>{
     const isPar = PARALLEL_ROLES.has(a.role) && a.enabled!==false;
     const sep = (isPar && !prevPar) ? '<div class="par-sep" data-tip="Эти агенты-стражи работают одновременно (параллельно) — быстрее и независимо друг от друга.">∥ параллельный шаг</div>' : '';
     prevPar = isPar;
@@ -194,8 +252,15 @@ export function renderAgentPipeline(){
       </div>
       ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`;
   }).join('');
+  const customCount = agents.filter(a=>a.custom).length;
+  const filterTabs = AGENT_FILTER_CATS.map(c=>{
+    const active = c===_agentFilter;
+    return `<button class="ap-fcat ${active?'ap-fcat-active':''}" data-fcat="${esc(c)}"
+      style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'#fff':'var(--text-2)'};cursor:pointer">${esc(c)}${c==='Мои'&&customCount?` <span style="background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;font-size:10px">${customCount}</span>`:''}</button>`;
+  }).join('');
   return `
-    <div class="diag-section" id="agentRows">${rows}</div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;padding:6px 12px 0" id="agentFilterBar">${filterTabs}</div>
+    <div class="diag-section" id="agentRows">${rows||'<div class="empty-state">Нет агентов в этой категории.</div>'}</div>
     <button class="btn btn-block" id="addAgentBtn" style="margin:6px 12px;width:calc(100% - 24px)" data-tip="Добавить своего стража: он проверит сцену по вашему описанию и поставит флаги. Не меняет текст.">+ Добавить стража</button>
     <div class="ph">Прогоны</div>
     ${runs.length? runs.slice(0,4).map(renderRun).join('') : '<div class="empty-state">Прогонов ещё не было.</div>'}
@@ -243,6 +308,8 @@ function bindToggles(){
 // добавление/удаление, drag-and-drop, промпт кастомного агента.
 function bindAgents(){
   bindToggles();
+  // фильтр категорий агентов
+  document.querySelectorAll('.ap-fcat').forEach(b=>b.onclick=()=>{ _agentFilter=b.dataset.fcat; rerenderDiag(); });
   // тумблер вкл/выкл по id (включая кастомных)
   document.querySelectorAll('.toggle[data-id]').forEach(t=>{
     t.onclick=(e)=>{ e.stopPropagation(); const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.id); if(a){ a.enabled=!(a.enabled!==false); save(); } };
