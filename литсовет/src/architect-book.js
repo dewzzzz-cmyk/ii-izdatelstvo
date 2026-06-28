@@ -104,11 +104,20 @@ export async function runBookArchitect(state, opts={}){
   const p = state.project;
   const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / Math.max(700, Math.round((p.targetWords||80000)/60))));
   const archMaxTokens = Math.max(4000, Math.min(16000, targetScenes * 140 + 1500));
+  const wPerScene = Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:archMaxTokens });
     const v = validateSkeleton(res.text);
-    if(v.ok) return v.skeleton;
+    if(v.ok){
+      // Нормализация: ЛЛМ часто занижает targetWords (~700 вместо 1333).
+      // Если сцена меньше половины нормы — заменяем на целевой объём.
+      const minW = Math.round(wPerScene * 0.6);
+      v.skeleton.chapters.forEach(ch=>(ch.scenes||[]).forEach(sc=>{
+        if(!sc.targetWords || sc.targetWords < minW) sc.targetWords = wPerScene;
+      }));
+      return v.skeleton;
+    }
     lastErr = v.error;
     const preview = (res.text||'').slice(0, 120).replace(/\n/g,' ');
     // на ретрае — сообщаем модели что конкретно не так

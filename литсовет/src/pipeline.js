@@ -24,13 +24,22 @@ async function gate(state, role, label, output, opts, extra={}){
   if(!manual(state, role) || !opts.onApproval) return { approve:true };
   return await opts.onApproval({ role, label, output, ...extra });
 }
+function buildReviseDirective(verdict, allBanned){
+  const parts = [];
+  if((verdict.anchors||[]).length) parts.push('СОХРАНИ ДОСЛОВНО (якоря): ' + verdict.anchors.join('; '));
+  parts.push(...(verdict.notes||[]));
+  if(allBanned.length) parts.push('убери клише (все предыдущие итерации): ' + allBanned.join(', '));
+  return parts.join('; ');
+}
 function formatVerdict(v){
   if(!v || !v.ok) return 'Оценщик не вернул оценку.';
   const lines = Object.entries(v.scores||{}).map(([k,val])=>`${k}: ${val}`);
   return `Средневзвешенное: ${v.weighted}/10 (мин. ось ${v.minAxis})\n` +
     lines.join('  ·  ') +
+    (v.anchors&&v.anchors.length?`\n\n✦ Якоря (не трогать): ${v.anchors.join('; ')}`:'') +
     (v.cliches&&v.cliches.length?`\n\nКлише: ${v.cliches.join('; ')}`:'') +
-    (v.notes&&v.notes.length?`\n\nЗамечания:\n– ${v.notes.join('\n– ')}`:'');
+    (v.notes&&v.notes.length?`\n\nЗамечания:\n– ${v.notes.join('\n– ')}`:'') +
+    (v.questions&&v.questions.length?`\n\n? Вопросы автору:\n– ${v.questions.join('\n– ')}`:'');
 }
 function flagsText(flags){
   const all=[]; Object.entries(flags).forEach(([role,arr])=>(arr||[]).forEach(f=>all.push(`[${f.severity}] ${f.title}: ${f.detail||''}`)));
@@ -74,22 +83,23 @@ export async function runScene(state, scene, opts={}, onProgress){
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     let best = null, bestEval = null;
     let directive = opts.directive || '';
-    let prevDraft = '';
+    let prevDraft = opts.initialDraft || '';
     let iter = 0, safety = 0;
+    const bannedCliches = new Set(); // накапливает все клише со всех итераций
 
     while(iter < maxIter && safety++ < 20){
       iter++;
-      // На доработке (iter>1) — ХИРУРГИЧЕСКАЯ правка прошлого черновика по замечаниям:
-      // меняем только нужные фразы, остальное сохраняем дословно (не переписываем всё).
-      const isRevision = iter > 1 && prevDraft;
+      // Хирургическая правка: когда есть существующий черновик (передан как initialDraft
+      // или получен от предыдущей итерации) — редактируем точечно, не переписываем с нуля.
+      const isRevision = !!(iter > 1 && prevDraft || iter === 1 && prevDraft && directive);
       let streamed = '';
       const streamCb = chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); };
       let pRes, logInput, logLayers;
       if(isRevision){
         onProgress && onProgress({stage:'prose', text:`Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
         // +1000 токенов сверх прозы — под блок [РАЗБОР] (аргументы принять/отклонить)
-        const cap = Math.min(5000, Math.max(1800, Math.round(prevDraft.length/2) + 1400));
-        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: proseAg.maxTokens ?? cap }, streamCb);
+        const cap = Math.min(5000, Math.max(2000, Math.round(prevDraft.length/2) + 1400));
+        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
         // Разделяем "спор" ([РАЗБОР]) от итогового текста ([ТЕКСТ])
         const { debate, prose } = parseDebateRevision(pRes.text);
         if(debate) logStep({ agent:'prose-debate', iter, input:directive, output:debate, tokensIn:0, tokensOut:0, cost:0 });
@@ -100,9 +110,10 @@ export async function runScene(state, scene, opts={}, onProgress){
       } else {
         onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
         const ctx = buildSceneContext(state, scene, { prevSceneText, architectOutput:architectText, directive, prevDraft:'' });
-        // maxTokens масштабируется с targetWords сцены: 1 слово ≈ 1.8 токена для русского текста
+        // Кириллица: ~2.5 токена/слово — dynMin обеспечивает минимум для полного текста
         const sceneWords = scene.targetWords || 700;
-        const proseMaxTk = proseAg.maxTokens != null ? proseAg.maxTokens : Math.max(1600, Math.round(sceneWords * 1.8));
+        const dynMin = Math.max(2000, Math.round(sceneWords * 2.5));
+        const proseMaxTk = proseAg.maxTokens != null ? Math.max(proseAg.maxTokens, dynMin) : dynMin;
         pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb);
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
@@ -123,26 +134,32 @@ export async function runScene(state, scene, opts={}, onProgress){
       // Оценщик
       onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
       const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
-      const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??700 });
+      const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??900 });
       const verdict = parseEvaluator(eRes.text, threshold);
       logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
         tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
+      const evalLogExtra = (verdict.anchors&&verdict.anchors.length?` · ✦ ${verdict.anchors[0]}`:'')
+        + (verdict.questions&&verdict.questions.length?` · ? ${verdict.questions[0]}`:'');
       onProgress && onProgress({log:{ icon:'⚖️',
         text:`Оценщик: ${verdict.ok?verdict.weighted+'/10':'—'} ${verdict.pass?'✓ принято':'↻ на доработку'}`
           + ((verdict.cliches&&verdict.cliches.length)?` · клише: ${verdict.cliches.join(', ')}`
-             : (verdict.notes&&verdict.notes.length?` · ${verdict.notes[0]}`:'')),
+             : (verdict.notes&&verdict.notes.length?` · ${verdict.notes[0]}`:'')+evalLogExtra),
         state: verdict.pass?'ok':'warn' }});
 
       // лучший по баллу вариант
       if(!bestEval || (verdict.ok && verdict.weighted > (bestEval.weighted||0))){ best=pRes.text; bestEval=verdict; }
+
+      // Накапливаем все клише со всех итераций — прозаик не должен их повторять
+      (verdict.cliches||[]).forEach(c => bannedCliches.add(c));
+      const allBanned = [...bannedCliches];
 
       // Ручная пауза после Оценщика: автор видит вердикт, может ПОПРАВИТЬ ТЕКСТ руками,
       // принять как есть или вернуть Прозаику на точечную доработку по замечаниям.
       if(manual(state,'evaluator')){
         const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, formatVerdict(verdict), opts, {draft:pRes.text, editable:true, verdict});
         if(gt.approve){ best=(gt.text!=null && gt.text.trim())?gt.text.trim():pRes.text; bestEval=verdict; break; }
-        if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; } // правки автора → база для доработки
-        directive = gt.note || [...(verdict.notes||[]), ...((verdict.cliches||[]).length?['убери клише: '+verdict.cliches.join(', ')]:[])].join('; ') || directive;
+        if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
+        directive = gt.note || buildReviseDirective(verdict, allBanned) || directive;
         continue;
       }
 
@@ -150,8 +167,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       const hasCliches = (verdict.cliches||[]).length > 0;
       const iterationsLeft = iter < maxIter;
       if(verdict.ok && verdict.pass && !(hasCliches && iterationsLeft)){ break; }
-      const fix = [...(verdict.notes||[]), ...(hasCliches?['убери клише: '+verdict.cliches.join(', ')]:[])];
-      directive = fix.join('; ') || directive;
+      directive = buildReviseDirective(verdict, allBanned) || directive;
     }
 
     // ── 3. Стражи (параллельно) — только флагуют, не переписывают ──

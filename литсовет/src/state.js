@@ -73,7 +73,7 @@ export function defaultAgents(){
       desc:'Планирует сцену: ключевые детали, шаги, запрещённые слова. Не пишет прозу — готовит каркас для Прозаика.' },
     { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:1600, enabled:true, role:'prose', loop:true,
       desc:'Пишет прозу сцены по брифу и контексту. В петле с Оценщиком дорабатывает черновик, пока тот не примет.' },
-    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:700, enabled:true, role:'evaluator',
+    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:900, enabled:true, role:'evaluator',
       desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },
     { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'voiceguard',
       desc:'Сверяет стиль и ритм с образцом вашего голоса, цитируя образец. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },

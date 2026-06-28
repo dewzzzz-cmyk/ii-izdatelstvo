@@ -928,12 +928,16 @@ function approvalGate({role, label, output, draft, editable, verdict}){
     // Для Оценщика — структурированный вердикт с кнопками «⊕ В правило» у клише и замечаний.
     let infoBlock = '';
     if(verdict){
+      const an=(verdict.anchors||[]).map(a=>`<div class="apv-row" style="background:var(--ok-bg,#f0faf0)"><span style="color:var(--ok,#2a7a2a)">✦ «${esc(a)}»</span></div>`).join('');
       const cl=(verdict.cliches||[]).map(c=>`<div class="apv-row"><span>«${esc(c)}»</span><button class="apv-rule" data-rule="${esc('избегай штампа «'+c+'» и подобных шаблонных оборотов')}" title="Сделать правилом">⊕ В правило</button></div>`).join('');
       const nt=(verdict.notes||[]).map(n=>`<div class="apv-row"><span>${esc(n)}</span><button class="apv-rule" data-rule="${esc(n)}" title="Сделать правилом">⊕ В правило</button></div>`).join('');
+      const qs=(verdict.questions||[]).map(q=>`<div class="apv-row" style="background:var(--warn-bg,#fffbf0)"><span style="color:var(--warn,#8a6000)">? ${esc(q)}</span></div>`).join('');
       infoBlock=`<div class="apv-verdict">
         <div class="muted" style="margin-bottom:4px">Оценка <b>${verdict.weighted}/10</b> (мин. ось ${verdict.minAxis}) · ${verdict.pass?'проходит порог':'на доработку'}</div>
+        ${an?`<div class="ph2">Якоря — не трогать</div>${an}`:''}
         ${cl?`<div class="ph2">Клише</div>${cl}`:''}
         ${nt?`<div class="ph2">Замечания</div>${nt}`:''}
+        ${qs?`<div class="ph2">Вопросы автору</div>${qs}`:''}
       </div>`;
     } else if(output){
       infoBlock=`<div style="max-height:200px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.6">${esc(output)}</div>`;
@@ -982,7 +986,7 @@ async function doRun(els, s, scene, directive){
   const btn=document.getElementById('runBtn'); btn.disabled=true;
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
   try{
-    const runOpts = directive?{directive}:{};
+    const runOpts = directive ? {directive, initialDraft: scene.text||''} : {};
     runOpts.onApproval = approvalGate;   // ручной режим: пауза на подтверждение
     const result = await runScene(s, scene, runOpts, prog=>{
       if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
