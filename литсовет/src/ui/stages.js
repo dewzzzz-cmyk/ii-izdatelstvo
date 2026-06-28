@@ -573,7 +573,7 @@ function renderSkeletonEditor(s){
           <span class="sr-meta">${n.text?(n.words+' сл'):('~'+(n.targetWords||700))}</span>
         </div>
         ${open?`<div class="sk-scene-body">
-          <textarea class="sk-brief" data-id="${n.id}" rows="2" placeholder="бриф">${esc(n.brief)}</textarea>
+          <textarea class="sk-brief" data-id="${n.id}" rows="4" placeholder="бриф">${esc(n.brief)}</textarea>
           <input type="text" class="sk-emo" data-id="${n.id}" value="${esc(n.emotion||'')}" placeholder="эмоция читателя">
           <div class="sk-regen">
             <input type="text" class="sk-hint" data-id="${n.id}" placeholder="в каком направлении переделать (подсказка ИИ)…">
@@ -695,7 +695,7 @@ export function renderWrite(els){
     ${showStop?renderEditorialStop(s, ch):''}
     <div class="brief-box">
       <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
-        <textarea id="brief" rows="2">${esc(scene.brief)}</textarea></div>
+        <textarea id="brief" rows="4">${esc(scene.brief)}</textarea></div>
       <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Сказать агенту, что изменить</label>
       <div class="ia-row">
         <input type="text" id="directive" class="ia-input" placeholder="напр.: «сделай финал тревожнее», «убери описание погоды»">
