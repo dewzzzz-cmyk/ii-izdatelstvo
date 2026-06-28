@@ -8,7 +8,7 @@ import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
-         styleGuardMessages } from './guards.js';
+         parseDebateRevision, styleGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -86,22 +86,30 @@ export async function runScene(state, scene, opts={}, onProgress){
       const streamCb = chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); };
       let pRes, logInput, logLayers;
       if(isRevision){
-        onProgress && onProgress({stage:'prose', text:`Прозаик правит черновик по замечаниям (итерация ${iter})…`});
-        const cap = Math.min(4000, Math.max(1400, Math.round(prevDraft.length/2) + 800));
+        onProgress && onProgress({stage:'prose', text:`Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
+        // +1000 токенов сверх прозы — под блок [РАЗБОР] (аргументы принять/отклонить)
+        const cap = Math.min(5000, Math.max(1800, Math.round(prevDraft.length/2) + 1400));
         pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: proseAg.maxTokens ?? cap }, streamCb);
-        // защита от усечения: если ответ подозрительно короткий — оставляем прошлый черновик
+        // Разделяем "спор" ([РАЗБОР]) от итогового текста ([ТЕКСТ])
+        const { debate, prose } = parseDebateRevision(pRes.text);
+        if(debate) logStep({ agent:'prose-debate', iter, input:directive, output:debate, tokensIn:0, tokensOut:0, cost:0 });
+        if(prose) pRes.text = prose;
+        // защита от усечения: если текст подозрительно короткий — оставляем прошлый черновик
         if(pRes.text && pRes.text.length < prevDraft.length*0.6) pRes.text = prevDraft;
-        logInput = '(хирургическая доработка) ' + (directive||'');
+        logInput = '(разбор замечаний + точечная правка) ' + (directive||'');
       } else {
         onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
         const ctx = buildSceneContext(state, scene, { prevSceneText, architectOutput:architectText, directive, prevDraft:'' });
-        pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseAg.maxTokens ?? 1600 }, streamCb);
+        // maxTokens масштабируется с targetWords сцены: 1 слово ≈ 1.8 токена для русского текста
+        const sceneWords = scene.targetWords || 700;
+        const proseMaxTk = proseAg.maxTokens != null ? proseAg.maxTokens : Math.max(1600, Math.round(sceneWords * 1.8));
+        pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb);
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
       prevDraft = pRes.text;
       logStep({ agent:'prose', iter, input:logInput, output:pRes.text,
         layers:logLayers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
-      onProgress && onProgress({log:{icon:'✍️', text:isRevision?`Прозаик: черновик ${iter} (точечная правка)`:`Прозаик: черновик ${iter} написан`}});
+      onProgress && onProgress({log:{icon:'✍️', text:isRevision?`Прозаик: черновик ${iter} (принял/отклонил замечания)`:`Прозаик: черновик ${iter} написан`}});
 
       // Ручная пауза после Прозаика: автор может ПОПРАВИТЬ ТЕКСТ руками, принять или вернуть на переписывание.
       if(manual(state,'prose')){

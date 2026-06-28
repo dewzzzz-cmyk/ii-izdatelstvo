@@ -30,6 +30,8 @@ export function defaultState(){
       seriesTotal: 3,
       seriesBook: 1,
       mode: 'director',         // director (режиссёр) | factory (фабрика)
+      useVoice: false,          // показывать вкладку «Голос» и учитывать образец
+      seriesSummary: '',        // краткое содержание предыдущих книг серии (для книги 2+)
     },
     style: {
       refs: [],                // стилевые ориентиры (авторы)

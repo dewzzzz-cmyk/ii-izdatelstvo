@@ -59,12 +59,12 @@ export function buildSceneContext(state, scene, opts={}){
   ].filter(Boolean).join(' ');
   if(projBlock) layers.push({ name:'project', text:'=== ПРОЕКТ ===\n'+projBlock, fixed:true });
 
-  // 3a. Память серии: сводки прошлых книг (режим серии)
+  // 3a. Память серии: ручной синопсис (поле seriesSummary) + импортированные сводки
   const mem = state.memory || {};
-  if(state.series && state.series.length){
-    const seriesSums = state.series.map(b=>b.summary).filter(Boolean);
-    if(seriesSums.length) layers.push({ name:'series', text:'=== ПРОШЛЫЕ КНИГИ СЕРИИ ===\n'+seriesSums.join('\n\n') });
-  }
+  const seriesParts = [];
+  if(proj.seriesSummary) seriesParts.push(proj.seriesSummary);
+  if(state.series && state.series.length) seriesParts.push(...state.series.map(b=>b.summary).filter(Boolean));
+  if(seriesParts.length) layers.push({ name:'series', text:'=== ПРОШЛЫЕ КНИГИ СЕРИИ ===\n'+seriesParts.join('\n\n') });
 
   // 3b. Бегущий синопсис книги: сюда свёрнуты старые сцены (ограничивает рост контекста)
   const synopsis = runningSynopsis(state);

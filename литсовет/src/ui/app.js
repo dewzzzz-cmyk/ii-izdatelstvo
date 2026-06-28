@@ -39,7 +39,8 @@ function stageDone(state, stageId){
 function renderRail(){
   const s = getState();
   els.stages.innerHTML = '';
-  STAGES.forEach(st=>{
+  const visibleStages = s.project?.useVoice ? STAGES : STAGES.filter(st=>st.id!=='voice');
+  visibleStages.forEach(st=>{
     const b = document.createElement('button');
     b.className = 'chip' + (s.ui.stage===st.id?' active':'') + (stageDone(s,st.id) && s.ui.stage!==st.id?' done':'');
     b.textContent = st.label;
@@ -187,6 +188,8 @@ async function openSettings(){
           <input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
         <div class="field"><label>Модель</label>
           <input type="text" id="setModel" value="${escAttr(g.model)}"></div>
+        <div class="field"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов отдать под память сцены; больше = дольше и дороже</span></label>
+          <input type="number" id="setBudget" value="${escAttr(g.budgetTokens??12000)}" min="2000" max="60000" step="1000"></div>
         ${projListHtml}
         <div class="row" style="justify-content:space-between;margin-top:12px">
           <button class="btn" id="setNew">+ Новый проект</button>
@@ -203,6 +206,7 @@ async function openSettings(){
     g.apiKey = document.getElementById('setKey').value.trim();
     g.baseURL = document.getElementById('setUrl').value.trim();
     g.model = document.getElementById('setModel').value.trim();
+    const bv = parseInt(document.getElementById('setBudget').value); if(bv>=2000) g.budgetTokens = bv;
     save(); close();
   };
   document.getElementById('setNew').onclick = ()=>{

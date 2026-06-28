@@ -8,23 +8,43 @@ const ARCS = ['завязка','развитие','кульминация','ра
 
 export function bookArchitectMessages(state, opts={}){
   const p = state.project;
+  const totalWords = p.targetWords || 80000;
+  // Целевой объём сцены: 1200 слов для романа — реалистичная сцена.
+  // Более крупная сцена → меньше вызовов LLM, лучше связность.
+  const wPerScene = Math.max(700, Math.min(2000, Math.round(totalWords / 60)));
+  const targetScenes = Math.max(6, Math.round(totalWords / wPerScene));
+  const targetChapters = opts.chapters || Math.max(3, Math.min(25, Math.round(targetScenes / 3.5)));
+  const scenesPerCh = Math.max(2, Math.round(targetScenes / targetChapters));
+
   const sys = [
     'Ты — книжный архитектор. Ты проектируешь скелет книги: главы и сцены. Ты НЕ пишешь прозу.',
-    'Каждая сцена — это единица письма (~700 слов). Думай о нарративной арке: завязка → развитие → кульминация → развязка.',
+    `Каждая сцена — это единица письма (~${wPerScene} слов). Думай о нарративной арке: завязка → развитие → кульминация → развязка.`,
   ].join('\n');
-  const targetScenes = Math.max(3, Math.round((p.targetWords||80000)/800));
+  // Нарративная инструкция по позиции в серии
+  let seriesArcNote = '';
+  if(p.type==='series'){
+    const book = p.seriesBook||1, total = p.seriesTotal||3;
+    if(book===1)
+      seriesArcNote = `ПОЗИЦИЯ В СЕРИИ — книга 1 из ${total}: заложи мир, персонажей и главный серийный конфликт. Финал открытый — угроза обозначена, но не разрешена, читатель хочет продолжения.`;
+    else if(book===total)
+      seriesArcNote = `ПОЗИЦИЯ В СЕРИИ — финальная книга (${book} из ${total}): все нити серии должны найти разрешение, финал — полная точка для всего цикла.`;
+    else
+      seriesArcNote = `ПОЗИЦИЯ В СЕРИИ — книга ${book} из ${total}: развивай персонажей и углубляй конфликт из предыдущих книг. Финал продвигает серийный конфликт, но не закрывает его полностью — впереди ещё ${total-book} книг.`;
+  }
+
   const user = [
     `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
     p.era ? `Эпоха: ${p.era}.` : '',
     p.audience ? `Аудитория: ${p.audience}.` : '',
     `Идея/синопсис: ${p.synopsis || p.idea || '(не задан)'}`,
     p.type==='series' ? `Серия: «${p.seriesTitle||'(без названия)'}» — книга ${p.seriesBook||1} из ${p.seriesTotal||3}.` : '',
-    `Целевой объём: ${p.targetWords||80000} слов (~${targetScenes} сцен).`,
-    opts.chapters ? `Желаемое число глав: ${opts.chapters}.` : '',
+    seriesArcNote,
+    p.seriesSummary ? `Содержание предыдущих книг:\n${p.seriesSummary}` : '',
+    `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
     '',
     'Спроектируй скелет. Верни JSON:',
     '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "что происходит, тон, чем заканчивается — 1-2 предложения", "emotion": "эмоция читателя в финале сцены", "targetWords": число } ] } ] }',
-    'Сделай 3-6 глав, в каждой 2-6 сцен. Брифы конкретные. Только JSON.',
+    `Спланируй ~${targetChapters} глав, в каждой ~${scenesPerCh} сцен. Итого ~${targetScenes} сцен. Сумма targetWords всех сцен должна быть около ${totalWords}. Брифы конкретные. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
@@ -60,9 +80,13 @@ export async function runBookArchitect(state, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ.');
   const msgs = bookArchitectMessages(state, opts);
+  // maxTokens масштабируется с числом сцен: ~80 токенов на сцену + накладные расходы
+  const p = state.project;
+  const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / Math.max(700, Math.round((p.targetWords||80000)/60))));
+  const archMaxTokens = Math.max(3000, Math.min(8000, targetScenes * 90 + 500));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:2500 });
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:archMaxTokens });
     const v = validateSkeleton(res.text);
     if(v.ok) return v.skeleton;
     lastErr = v.error;

@@ -18,6 +18,33 @@ import { runHistoricalResearch } from '../historian.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// Жанры с типичным объёмом и сценой-по-умолчанию
+const GENRES = [
+  { v:'',                     label:'— выберите жанр —',        words: null  },
+  { v:'роман',                label:'Роман',                     words: 80000 },
+  { v:'повесть',              label:'Повесть',                   words: 40000 },
+  { v:'рассказ',              label:'Рассказ',                   words: 8000  },
+  { v:'детектив',             label:'Детектив',                  words: 70000 },
+  { v:'триллер',              label:'Триллер',                   words: 80000 },
+  { v:'фэнтези',              label:'Фэнтези',                   words:100000 },
+  { v:'фантастика',           label:'Фантастика (НФ)',           words: 90000 },
+  { v:'исторический роман',   label:'Исторический роман',        words:110000 },
+  { v:'любовный роман',       label:'Любовный роман',            words: 60000 },
+  { v:'мистика',              label:'Мистика / мистический детектив', words: 70000 },
+  { v:'ужасы',                label:'Ужасы',                     words: 70000 },
+  { v:'молодёжная фантастика',label:'Молодёжная фантастика (YA)',words: 70000 },
+  { v:'приключения',          label:'Приключения',               words: 75000 },
+  { v:'биографическая проза', label:'Биографическая проза',      words: 90000 },
+  { v:'другой',               label:'Другой…',                   words: null  },
+];
+
+function sceneCountHint(tw){
+  const w = parseInt(tw)||80000;
+  const wps = Math.max(700, Math.min(2000, Math.round(w/60)));
+  const scenes = Math.max(6, Math.round(w/wps));
+  return `≈ ${scenes} сцен × ${wps} слов`;
+}
+
 let _topTab = 'analysis';  // analysis | process
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
 let _runLog = [];           // лента шагов текущего/последнего прогона
@@ -83,6 +110,10 @@ function renderRightPanel(els){
 // ─────────────────────────────── КОНЦЕПЦИЯ ───────────────────────────────
 export function renderConcept(els){
   const s = getState(); const p = s.project;
+  // Логика жанрового dropdown: известный жанр → выбрать его; неизвестный → выбрать «другой» + показать поле
+  const _knownGenre = GENRES.find(g=>g.v && g.v!=='другой' && g.v===p.genre);
+  const _genreSelectVal = _knownGenre ? p.genre : (p.genre ? 'другой' : '');
+  const _showCustom = !_knownGenre && !!p.genre;
   els.left.innerHTML = `<div class="ph">Проект</div><div class="pad">
     <div class="muted">Прогрессивный онбординг: один вопрос, остальное по желанию.</div></div>`;
   els.right.innerHTML = '';
@@ -94,6 +125,16 @@ export function renderConcept(els){
 
       <div class="field" style="margin-top:14px"><label>Название</label>
         <input type="text" id="title" value="${esc(p.title)}" placeholder="Рабочее название"></div>
+
+      <div class="field"><label>Синопсис <span class="hint">необязательно — нить сюжета, ключевые повороты; архитектор будет строить структуру на его основе</span></label>
+        <textarea id="synopsis" rows="4" placeholder="Главная героиня приезжает в северный город… встречает загадочного незнакомца… в финале раскрывает тайну…">${esc(p.synopsis)}</textarea></div>
+
+      <div class="field"><label>Жанр</label>
+        <select id="genre">
+          ${GENRES.map(g=>`<option value="${esc(g.v)}"${_genreSelectVal===g.v?' selected':''}>${esc(g.label)}</option>`).join('')}
+        </select>
+        <input type="text" id="genreCustom" value="${_showCustom?esc(p.genre):''}" placeholder="Свой жанр…" style="${_showCustom?'':'display:none'}">
+      </div>
 
       <div class="field"><label>Режим работы</label>
         <div class="mode-switch" id="modeSwitch">
@@ -120,25 +161,61 @@ export function renderConcept(els){
               <input type="number" id="seriesTotal" value="${p.seriesTotal||3}" min="2" style="width:70px">
             </div>
           </div>
+          <div id="prevBooksField" style="${(p.seriesBook||1)>1?'':'display:none'}">
+            <div class="field"><label>Содержание предыдущих книг <span class="hint">кратко — ИИ будет учитывать это в структуре и сценах</span></label>
+              <textarea id="seriesSummary" rows="4" placeholder="Книга 1: Алина приезжает в Мурманск, узнаёт что тётка была двойным агентом…">${esc(p.seriesSummary||'')}</textarea></div>
+          </div>
         </div>
-        <div class="field"><label>Жанр</label><input type="text" id="genre" value="${esc(p.genre)}" placeholder="роман, повесть, сказка…"></div>
         <div class="field"><label>Эпоха / сеттинг</label><input type="text" id="era" value="${esc(p.era)}" placeholder="наши дни, XX век…"></div>
-        <div class="field"><label>Целевой объём (слов)</label><input type="text" id="tw" value="${esc(p.targetWords)}"></div>
+        <div class="field"><label>Целевой объём (слов)</label>
+          <input type="text" id="tw" value="${esc(p.targetWords||80000)}">
+          <div class="hint" id="twHint">${sceneCountHint(p.targetWords||80000)}</div>
+        </div>
+        <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
+          <input type="checkbox" id="useVoice" ${p.useVoice?'checked':''}
+            style="width:16px;height:16px;flex-shrink:0">
+          <span><b>Голос автора</b> — включить вкладку «Голос» <span class="hint">загрузить образец своей прозы, чтобы модель писала в вашем стиле</span></span>
+        </label>
       </div>
 
       <div class="row" style="margin-top:16px;justify-content:flex-end">
-        <button class="btn btn-primary" id="toVoice">Дальше — Голос →</button>
+        <button class="btn btn-primary" id="toNext">Дальше — ${p.useVoice?'Голос':'Структура'} →</button>
       </div>
     </div>`;
 
   const bind = (id, fn)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input',fn); };
   bind('idea', e=>{ p.idea=e.target.value; });
   bind('title', e=>{ p.title=e.target.value; });
-  bind('genre', e=>{ p.genre=e.target.value; });
+  bind('synopsis', e=>{ p.synopsis=e.target.value; });
   bind('era', e=>{ p.era=e.target.value; });
-  bind('tw', e=>{ p.targetWords=parseInt(e.target.value)||80000; });
+  bind('seriesSummary', e=>{ p.seriesSummary=e.target.value; });
+  bind('tw', e=>{
+    p.targetWords=parseInt(e.target.value)||80000;
+    const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(p.targetWords);
+  });
+  // Жанр: выпадающий список + поле «свой»
+  const genreSel = document.getElementById('genre');
+  const genreCustom = document.getElementById('genreCustom');
+  if(genreSel){
+    genreSel.onchange = ()=>{
+      const v = genreSel.value;
+      const gd = GENRES.find(g=>g.v===v);
+      if(v==='другой'){
+        genreCustom.style.display=''; genreCustom.focus();
+        p.genre = genreCustom.value||'';
+      } else {
+        genreCustom.style.display='none';
+        p.genre = v;
+        if(gd && gd.words){ p.targetWords=gd.words; const tw=document.getElementById('tw'); if(tw) tw.value=gd.words; const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(gd.words); }
+      }
+    };
+  }
+  if(genreCustom) genreCustom.addEventListener('input', e=>{ p.genre=e.target.value; });
   bind('seriesTitle', e=>{ p.seriesTitle=e.target.value; });
-  bind('seriesBook',  e=>{ p.seriesBook=Math.max(1,parseInt(e.target.value)||1); });
+  bind('seriesBook',  e=>{
+    p.seriesBook=Math.max(1,parseInt(e.target.value)||1);
+    const f=document.getElementById('prevBooksField'); if(f) f.style.display=p.seriesBook>1?'':'none';
+  });
   bind('seriesTotal', e=>{ p.seriesTotal=Math.max(2,parseInt(e.target.value)||2); });
   document.getElementById('advBtn').onclick = (ev)=>{ const a=document.getElementById('adv'); const open=a.style.display!=='none'; a.style.display=open?'none':'block'; ev.target.textContent=(open?'▾':'▴')+' Дополнительные настройки'; };
   document.getElementById('typeSwitch').onclick = (ev)=>{
@@ -148,7 +225,13 @@ export function renderConcept(els){
     document.getElementById('seriesFields').style.display=p.type==='series'?'':'none';
   };
   document.getElementById('modeSwitch').onclick = (ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; p.mode=o.dataset.mode; save(); };
-  document.getElementById('toVoice').onclick = ()=>{ save(); s.ui.stage='voice'; save(); };
+  document.getElementById('useVoice').onchange = (ev)=>{
+    p.useVoice = ev.target.checked;
+    const btn = document.getElementById('toNext');
+    if(btn) btn.textContent = 'Дальше — '+(p.useVoice?'Голос':'Структура')+' →';
+    save();
+  };
+  document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = p.useVoice?'voice':'structure'; save(); };
 }
 
 // ─────────────────────────────── ГОЛОС ───────────────────────────────
