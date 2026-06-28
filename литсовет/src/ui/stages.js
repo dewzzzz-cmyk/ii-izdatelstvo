@@ -410,8 +410,9 @@ function bindHistorianPanel(s){
 // ─────────── Панель оценки структуры ───────────
 function renderStructureEval(ev){
   const score = ev.score ?? 0;
+  const prev = ev.prevScore ?? null;
   const color = score >= 8 ? 'var(--ok)' : score >= 6 ? '#e6a817' : 'var(--err)';
-  const axisNames = { arc:'Дуга', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
+  const axisNames = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
   const axesBadges = Object.entries(axisNames).map(([k,label])=>{
     const v = ev.axes?.[k] ?? score;
     const c = v>=8?'var(--ok)':v>=6?'#e6a817':'var(--err)';
@@ -419,13 +420,25 @@ function renderStructureEval(ev){
   }).join('');
   const issuesList = (ev.issues||[]).map(t=>`<li style="color:var(--err)">⚠ ${esc(t)}</li>`).join('');
   const suggList = (ev.suggestions||[]).map(t=>`<li style="color:var(--text-2)">→ ${esc(t)}</li>`).join('');
+  // Показываем дельту если была предыдущая оценка
+  const scoreDelta = prev !== null ? score - prev : null;
+  const deltaHtml = scoreDelta !== null
+    ? `<span style="font-size:13px;font-weight:600;color:${scoreDelta > 0 ? 'var(--ok)' : scoreDelta < 0 ? 'var(--err)' : 'var(--text-3)'}">
+        ${scoreDelta > 0 ? '↑' : scoreDelta < 0 ? '↓' : '='} ${prev.toFixed(1)} → ${score.toFixed(1)}
+      </span>`
+    : '';
+  const didDrop = scoreDelta !== null && scoreDelta < 0;
   return `
-    <div id="structEvalPanel" style="margin-top:18px;border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:var(--surface-2)">
+    <div id="structEvalPanel" style="margin-top:18px;border:1px solid ${didDrop?'var(--err)':'var(--border)'};border-radius:8px;padding:14px 16px;background:var(--surface-2)">
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px">
         <b style="font-size:13px">Оценка структуры</b>
-        <span style="font-size:22px;font-weight:700;color:${color}">${score.toFixed(1)}<span style="font-size:13px;color:var(--text-3)">/10</span></span>
+        <div class="row" style="gap:10px;align-items:center">
+          ${deltaHtml}
+          <span style="font-size:22px;font-weight:700;color:${color}">${score.toFixed(1)}<span style="font-size:13px;color:var(--text-3)">/10</span></span>
+        </div>
       </div>
       <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${axesBadges}</div>
+      ${didDrop ? `<div style="font-size:12px;color:var(--err);margin-bottom:8px">⚠ Оценка упала — предыдущая структура была лучше. Откатите или попробуйте ещё раз.</div>` : ''}
       ${issuesList ? `<ul style="margin:0 0 8px;padding-left:18px;font-size:13px">${issuesList}</ul>` : ''}
       ${suggList ? `<ul style="margin:0 0 10px;padding-left:18px;font-size:13px">${suggList}</ul>` : ''}
       <div class="row" style="justify-content:flex-end;gap:8px">
@@ -514,9 +527,14 @@ export function renderStructure(els){
   const regenWithEval = document.getElementById('regenWithEval');
   if(regenWithEval) regenWithEval.onclick = async ()=>{
     if(!s.structureEval) return;
+    const prevScore = s.structureEval.score;
+    const axisNames = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
+    const axisScores = s.structureEval.axes
+      ? 'ОЦЕНКИ ПО ОСЯМ:\n' + Object.entries(axisNames).map(([k,label])=>`${label}: ${(s.structureEval.axes[k]??prevScore).toFixed(0)}/10`).join(', ')
+      : '';
     const suggestions = (s.structureEval.suggestions||[]).join('\n');
     const issues = (s.structureEval.issues||[]).join('\n');
-    const hint = [issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
+    const hint = [axisScores, issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
     if(!hint) return;
     regenWithEval.disabled=true;
     document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор перерабатывает структуру…';
@@ -532,6 +550,8 @@ export function renderStructure(els){
       if(st2) st2.innerHTML='<span class="spinner"></span> Оценщик проверяет новую структуру…';
       if(btn2) btn2.disabled=true;
       const evalResult = await runStructureEval(s, skeleton);
+      // Сохраняем предыдущий счёт для сравнения в UI
+      if(evalResult) evalResult.prevScore = prevScore;
       s.structureEval = evalResult;
       save();
     }catch(e){
