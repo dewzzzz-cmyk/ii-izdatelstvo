@@ -536,11 +536,20 @@ export function renderStructure(els){
     const issues = (s.structureEval.issues||[]).join('\n');
     const hint = [axisScores, issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
     if(!hint) return;
+    // Строим previousSkeleton из текущего state.structure для передачи архитектору
+    const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+    const previousSkeleton = chapters.length ? {
+      chapters: chapters.map(ch=>({
+        title: ch.title, arc: ch.arc,
+        scenes: (s.structure||[]).filter(n=>n.type==='scene' && n.chapterId===ch.id)
+          .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, targetWords:sc.targetWords }))
+      }))
+    } : null;
     regenWithEval.disabled=true;
     document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор перерабатывает структуру…';
     try{
       const chCount = parseInt(document.getElementById('chCount')?.value)||0;
-      const skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint });
+      const skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
       applySkeleton(s, skeleton, uid);
       s.structureEval = null;
       save();

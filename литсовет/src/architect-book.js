@@ -42,11 +42,20 @@ export function bookArchitectMessages(state, opts={}){
     seriesArcNote,
     p.seriesSummary ? `Содержание предыдущих книг:\n${p.seriesSummary}` : '',
     `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
-    opts.hint ? `\nЗАМЕЧАНИЯ К ПРЕДЫДУЩЕЙ ВЕРСИИ СТРУКТУРЫ (обязательно учти при проектировании):\n${opts.hint}` : '',
+    // Если это улучшение — показываем предыдущий скелет и проблемы
+    opts.previousSkeleton ? (() => {
+      const prev = opts.previousSkeleton;
+      const skText = prev.chapters.map((ch,ci)=>{
+        const scList = (ch.scenes||[]).map((sc,si)=>`    ${ci+1}.${si+1}. «${sc.title}» — ${sc.brief||'(без брифа)'}`).join('\n');
+        return `Глава ${ci+1} [${ch.arc||'?'}]: «${ch.title}»\n${scList}`;
+      }).join('\n\n');
+      return `\nПРЕДЫДУЩАЯ СТРУКТУРА — улучши её, не создавай с нуля. Сохрани то, что работает; исправь только проблемы ниже:\n${skText}`;
+    })() : '',
+    opts.hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${opts.hint}` : '',
     '',
-    'Спроектируй скелет. Верни JSON:',
+    opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
     '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число } ] } ] }',
-    `Спланируй ~${targetChapters} глав, в каждой ~${scenesPerCh} сцен. Итого ~${targetScenes} сцен. Сумма targetWords всех сцен должна быть около ${totalWords}. Брифы конкретные — событие, конфликт, поворот. Только JSON.`,
+    `Итого ~${targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
