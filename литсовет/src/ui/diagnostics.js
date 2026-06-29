@@ -80,10 +80,8 @@ function renderFlags(scene){
 
 function bindFlagFix(){
   document.querySelectorAll('.flag-fix').forEach(b=>b.onclick=()=>{
-    const inp=document.getElementById('directive');
-    if(inp){ inp.value=b.dataset.fix; inp.focus(); inp.scrollIntoView({block:'center'});
-      const re=document.getElementById('reRun'); if(re){ re.classList.add('btn-primary'); }
-    }
+    b.textContent='⏳ Запускаю…'; b.disabled=true;
+    document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix}}));
   });
 }
 

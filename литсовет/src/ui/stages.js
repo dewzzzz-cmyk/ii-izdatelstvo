@@ -18,6 +18,13 @@ import { runHistoricalResearch } from '../historian.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// Кнопка «→ Прозаику» в панели Анализ сцены диспетчирует это событие.
+// stages.js регистрирует слушатель один раз и вызывает doRun текущей сцены.
+let _activeFlagFix = null;
+document.addEventListener('litsovet:flag-fix', e => {
+  if(_activeFlagFix) _activeFlagFix(e.detail.directive);
+});
+
 // Жанры с типичным объёмом и сценой-по-умолчанию
 const GENRES = [
   { v:'',                     label:'— выберите жанр —',        words: null  },
@@ -752,6 +759,7 @@ export function renderWrite(els){
 
   // инлайн-директива
   const runWith = (directive)=>doRun(els, s, scene, directive);
+  _activeFlagFix = d => doRun(els, getState(), scene, d); // кнопка «→ Прозаику» в Анализ сцены
   document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
