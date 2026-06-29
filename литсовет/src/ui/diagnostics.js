@@ -73,7 +73,10 @@ function renderFlags(scene){
         <div class="flag-title">${esc(f.title)}</div>
         ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
         ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
-        ${f.severity!=='ok'?`<button class="flag-fix" data-fix="${esc(f.title+': '+f.detail)}">→ Прозаику</button>`:''}
+        ${f.severity!=='ok'?`<div class="flag-acts">
+          <button class="flag-fix" data-fix="${esc(f.title+': '+f.detail)}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
+          <button class="flag-rewrite" data-fix="${esc(f.title+': '+f.detail)}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
+        </div>`:''}
       </div>`).join('')}
     </div>`;
 }
@@ -82,6 +85,11 @@ function bindFlagFix(){
   document.querySelectorAll('.flag-fix').forEach(b=>b.onclick=()=>{
     b.textContent='⏳ Запускаю…'; b.disabled=true;
     document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix}}));
+  });
+  document.querySelectorAll('.flag-rewrite').forEach(b=>b.onclick=()=>{
+    if(!confirm('Сцена будет написана заново с учётом этого замечания.\nТекущий вариант сохранится в истории (кнопка ↶).\n\nПродолжить?')) return;
+    b.textContent='⏳ Запускаю…'; b.disabled=true;
+    document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix, rewrite:true}}));
   });
 }
 
@@ -212,6 +220,33 @@ function openAddGuardModal(){
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
 const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom']);
+
+// ── Живая схема пайплайна ─────────────────────────────────────────────────
+function renderPipelineFlow(agents){
+  const get = r => agents.find(a=>a.role===r);
+  const arch  = get('architect');
+  const prose = get('prose');
+  const eval_ = get('evaluator');
+  const le    = get('lineedit');
+  const guards = agents.filter(a=>PARALLEL_ROLES.has(a.role));
+
+  const nd = a => `<div class="pf-nd ${!a||a.enabled===false?'pf-off':''}" title="${esc(a?a.name:'')}">${a?a.icon:''}</div>`;
+  const arr = `<span class="pf-arr">→</span>`;
+
+  const loopGroup = `<div class="pf-group pf-loop-grp">
+    <div class="pf-loop-row">${nd(prose)}<span class="pf-loop-sym">↻</span>${nd(eval_)}</div>
+    <div class="pf-glbl">петля</div>
+  </div>`;
+
+  const guardsGroup = guards.length ? `${arr}<div class="pf-group pf-par-grp">
+    <div class="pf-par-row">${guards.map(nd).join('')}</div>
+    <div class="pf-glbl">∥ параллельно</div>
+  </div>` : '';
+
+  const leNode = le ? `${arr}${nd(le)}` : '';
+
+  return `<div class="pf-flow">${arch?nd(arch)+arr:''}${loopGroup}${guardsGroup}${leNode}</div>`;
+}
 const AGENT_FILTER_CATS = ['Все','Основные','Стражи','Мои'];
 const CORE_ROLES = new Set(['architect','prose','evaluator','lineedit']);
 const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard']);
@@ -230,6 +265,7 @@ export function renderAgentPipeline(){
   const agents = s.agents||[];
   const runs = getRuns();
   setTimeout(bindAgents, 0);
+  const flowHtml = renderPipelineFlow(agents);
   let prevPar = false;
   const visible = agents.filter(a=>agentMatchesFilter(a, _agentFilter));
   const rows = visible.map((a)=>{
@@ -257,6 +293,7 @@ export function renderAgentPipeline(){
       style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'#fff':'var(--text-2)'};cursor:pointer">${esc(c)}${c==='Мои'&&customCount?` <span style="background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;font-size:10px">${customCount}</span>`:''}</button>`;
   }).join('');
   return `
+    ${flowHtml}
     <div style="display:flex;gap:5px;flex-wrap:wrap;padding:6px 12px 0" id="agentFilterBar">${filterTabs}</div>
     <div class="diag-section" id="agentRows">${rows||'<div class="empty-state">Нет агентов в этой категории.</div>'}</div>
     <button class="btn btn-block" id="addAgentBtn" style="margin:6px 12px;width:calc(100% - 24px)" data-tip="Добавить своего стража: он проверит сцену по вашему описанию и поставит флаги. Не меняет текст.">+ Добавить стража</button>

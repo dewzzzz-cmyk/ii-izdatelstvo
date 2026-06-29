@@ -130,6 +130,9 @@ textarea{resize:vertical;min-height:60px}
 .scene-row.active .sr-name{color:var(--accent)}
 .sr-name{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sr-meta{font-size:10px;color:var(--text-3)}
+.sr-score{font-size:10px;padding:1px 5px;border-radius:3px;font-weight:600;flex-shrink:0;line-height:1.4}
+.sr-score.score-pass{background:var(--ok-bg,#f0faf4);color:var(--ok,#1a7f37)}
+.sr-score.score-fail{background:var(--warn-bg,#fffbf0);color:var(--warn,#b45309)}
 
 /* ── Skeleton editor (Structure) ── */
 .chapter-head{padding:8px 12px 5px;margin:14px 0 3px;font-size:11px;font-weight:700;color:var(--text-1);background:var(--surface-2);border-left:3px solid var(--accent);border-radius:0 4px 4px 0}
@@ -320,8 +323,27 @@ textarea{resize:vertical;min-height:60px}
 .flag-title{font-size:12px;font-weight:500}
 .flag-detail{font-size:11px;color:var(--text-2);line-height:1.45;margin-top:2px}
 .flag-quote{font-size:11px;color:var(--text-2);font-style:italic;background:var(--surface-2);border-left:2px solid var(--ok-border);padding:3px 8px;margin-top:4px;border-radius:0 4px 4px 0}
-.flag-fix{margin-top:5px;font-size:10px;padding:2px 8px;border:1px solid var(--accent-border);border-radius:8px;background:var(--accent-bg);color:var(--accent)}
+.flag-acts{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+.flag-fix,.flag-rewrite{font-size:10px;padding:2px 8px;border-radius:8px}
+.flag-fix{border:1px solid var(--accent-border);background:var(--accent-bg);color:var(--accent)}
 .flag-fix:hover{background:var(--accent);color:#fff}
+.flag-rewrite{border:1px solid var(--warn-border,#f5a623);background:var(--warn-bg,#fffbf0);color:var(--warn,#b45309)}
+.flag-rewrite:hover{background:var(--warn,#b45309);color:#fff;border-color:var(--warn,#b45309)}
+
+/* ── Pipeline flowchart ── */
+.pf-flow{display:flex;align-items:center;padding:10px 12px 8px;gap:2px;overflow-x:auto;border-bottom:1px solid var(--border);scrollbar-width:thin;background:var(--surface-2)}
+.pf-nd{width:30px;height:30px;border-radius:8px;border:1.5px solid var(--accent-border);background:var(--accent-bg);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;cursor:default;transition:opacity .15s}
+.pf-nd.pf-off{opacity:.25;filter:grayscale(1);border-color:var(--border);background:transparent}
+.pf-arr{color:var(--text-3);font-size:11px;padding:0 2px;flex-shrink:0;line-height:30px;align-self:center}
+.pf-group{display:flex;flex-direction:column;align-items:center;flex-shrink:0;gap:2px}
+.pf-loop-grp{background:var(--accent-bg);border:1.5px dashed var(--accent-border);border-radius:10px;padding:5px 7px 3px}
+.pf-loop-row{display:flex;align-items:center;gap:3px}
+.pf-loop-grp .pf-nd{width:26px;height:26px;font-size:13px;border-width:1px}
+.pf-loop-sym{font-size:12px;color:var(--accent);line-height:1;flex-shrink:0}
+.pf-par-grp{border:1.5px dashed var(--border);border-radius:10px;padding:5px 6px 3px;background:var(--bg)}
+.pf-par-row{display:flex;gap:3px}
+.pf-par-grp .pf-nd{width:24px;height:24px;font-size:12px;border-color:var(--border);background:var(--surface-2)}
+.pf-glbl{font-size:9px;color:var(--text-3);text-align:center;line-height:1;margin-top:2px;letter-spacing:.03em}
 
 /* ── Process feed ── */
 .proc-feed{padding:6px 0}

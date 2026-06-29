@@ -22,7 +22,7 @@ export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'
 // stages.js регистрирует слушатель один раз и вызывает doRun текущей сцены.
 let _activeFlagFix = null;
 document.addEventListener('litsovet:flag-fix', e => {
-  if(_activeFlagFix) _activeFlagFix(e.detail.directive);
+  if(_activeFlagFix) _activeFlagFix(e.detail.directive, e.detail.rewrite||false);
 });
 
 // Жанры с типичным объёмом и сценой-по-умолчанию
@@ -693,8 +693,10 @@ function renderSceneList(s){
   nodes.forEach(n=>{
     if(n.type==='chapter'){ html+=`<div class="chapter-head">${esc(n.title)}</div>`; }
     else if(n.type==='scene'){
+      const sc = n.lastEval?.weighted;
+      const scoreBadge = sc ? `<span class="sr-score ${n.lastEval.pass?'score-pass':'score-fail'}" title="Оценка оценщика: ${sc}">${sc}</span>` : '';
       html+=`<div class="scene-row ${s.ui.activeScene===n.id?'active':''}" data-sc="${n.id}">
-        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${esc(n.title)}</span><span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
+        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${esc(n.title)}</span>${scoreBadge}<span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
     }
   });
   return html;
@@ -759,7 +761,7 @@ export function renderWrite(els){
 
   // инлайн-директива
   const runWith = (directive)=>doRun(els, s, scene, directive);
-  _activeFlagFix = d => doRun(els, getState(), scene, d); // кнопка «→ Прозаику» в Анализ сцены
+  _activeFlagFix = (d, rewrite) => doRun(els, getState(), scene, d, {rewrite}); // кнопки флагов в Анализ сцены
   document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
@@ -980,7 +982,7 @@ function approvalGate({role, label, output, draft, editable, verdict}){
   });
 }
 
-async function doRun(els, s, scene, directive){
+async function doRun(els, s, scene, directive, runFlags={}){
   const g=s.global;
   if(_busy) return;
   if(!g.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
@@ -994,7 +996,7 @@ async function doRun(els, s, scene, directive){
   const btn=document.getElementById('runBtn'); btn.disabled=true;
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
   try{
-    const runOpts = directive ? {directive, initialDraft: scene.text||''} : {};
+    const runOpts = directive ? {directive, ...(runFlags.rewrite ? {} : {initialDraft: scene.text||''})} : {};
     runOpts.onApproval = approvalGate;   // ручной режим: пауза на подтверждение
     const result = await runScene(s, scene, runOpts, prog=>{
       if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
@@ -1012,7 +1014,13 @@ async function doRun(els, s, scene, directive){
     try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }
     catch(e){ console.warn('summarize failed', e); }
   }catch(e){ ed.textContent='Ошибка: '+e.message; pushProc({log:{icon:'⚠', text:'Ошибка: '+e.message, state:'warn'}}); }
-  finally{ btn.disabled=false; _busy=false; _runCurrent=''; document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity=''); renderRightPanel(els); }
+  finally{
+    btn.disabled=false; _busy=false; _runCurrent='';
+    document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='');
+    // После прогона возвращаемся на Анализ сцены — пользователь видит новые флаги
+    _topTab = 'analysis';
+    renderRightPanel(els);
+  }
 }
 
 // Плавающее меню по выделению текста → директива, привязанная к фрагменту.

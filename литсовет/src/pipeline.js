@@ -107,9 +107,12 @@ export async function runScene(state, scene, opts={}, onProgress){
         onProgress && onProgress({stage:'prose', text:`Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
         const cap = Math.min(5000, Math.max(2000, Math.round(prevDraft.length/2) + 1400));
         pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
-        const { debate, prose } = parseDebateRevision(pRes.text);
-        if(debate) logStep({ agent:'prose-debate', iter, input:directive, output:debate, tokensIn:0, tokensOut:0, cost:0 });
-        if(prose) pRes.text = prose;
+        const parsed = parseDebateRevision(pRes.text);
+        if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
+        if(parsed.truncated){
+          onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: ответ обрезан токенами (нет секции [ТЕКСТ]) — используем предыдущий черновик', state:'warn'}});
+          pRes.text = prevDraft;
+        } else if(parsed.prose) pRes.text = parsed.prose;
         if(pRes.text && pRes.text.length < prevDraft.length*0.6) pRes.text = prevDraft;
         logInput = '(разбор замечаний + точечная правка) ' + (directive||'');
       } else {
@@ -159,37 +162,49 @@ export async function runScene(state, scene, opts={}, onProgress){
           continue;
         }
 
-        // Стражи: запускаем когда оценщик принял ИЛИ на последней итерации.
-        // Незачем проверять факты в тексте, который ещё литературно не принят.
+        // Стражи: фактические (логика, события) — каждую итерацию, пока текст ещё меняется.
+        // Литературные (голос, стиль) — только когда оценщик принял ИЛИ последняя итерация.
         const hasCliches = (verdict.cliches||[]).length > 0;
         const evalAccepted = verdict.ok && verdict.pass && !(hasCliches && iter < maxIter);
+        const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
         let criticals = [];
-        if(hasGuards && (evalAccepted || iter >= maxIter)){
+        if(hasGuards){
           flags = {};
           const guardJobs = [];
-          if(agentEnabled('voiceguard')) guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples, ag(state,'voiceguard').strictness), flags));
-          if(agentEnabled('logic'))      guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
-          if(agentEnabled('events'))     guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
-          if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
-            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
-          (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
-            guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
-          });
-          onProgress && onProgress({stage:'guards', text:iter>1?`Стражи перепроверяют (итерация ${iter})…`:'Стражи проверяют сцену…'});
-          await Promise.all(guardJobs);
+          // Фактические стражи — запускаем на каждой итерации
+          if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
+          if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
+          // Литературные стражи — только когда текст принят или итерации кончились
+          if(evalAccepted || iter >= maxIter){
+            if(agentEnabled('voiceguard')){
+              if(voiceExamples.length > 0)
+                guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, voiceExamples, ag(state,'voiceguard').strictness), flags));
+              else
+                onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
+            }
+            if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
+              guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
+            (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
+              guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
+            });
+          }
+          if(guardJobs.length){
+            onProgress && onProgress({stage:'guards', text:iter>1?`Стражи перепроверяют (итерация ${iter})…`:'Стражи проверяют сцену…'});
+            await Promise.all(guardJobs);
 
-          const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
-          criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity==='critical').map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
-          onProgress && onProgress({log:{icon:'🛡',
-            text: flagList.length
-              ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
-              : 'Стражи: замечаний нет',
-            flags:flagList, state: flagList.length?'warn':'ok'}});
+            const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
+            criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity==='critical').map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+            onProgress && onProgress({log:{icon:'🛡',
+              text: flagList.length
+                ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
+                : 'Стражи: замечаний нет',
+              flags:flagList, state: flagList.length?'warn':'ok'}});
 
-          const manualGuard = ['voiceguard','logic','events','styleguard'].find(r=>agentEnabled(r)&&manual(state,r));
-          if(manualGuard){
-            const gt = await gate(state, manualGuard, 'Стражи · флаги сцены', flagsText(flags), opts);
-            if(gt.approve) criticals = [];
+            const manualGuard = ['voiceguard','logic','events','styleguard'].find(r=>agentEnabled(r)&&manual(state,r));
+            if(manualGuard && (evalAccepted || iter >= maxIter)){
+              const gt = await gate(state, manualGuard, 'Стражи · флаги сцены', flagsText(flags), opts);
+              if(gt.approve) criticals = [];
+            }
           }
         }
 
