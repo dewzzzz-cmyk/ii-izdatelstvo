@@ -170,26 +170,91 @@ export async function runScene(state, scene, opts={}, onProgress){
       directive = buildReviseDirective(verdict, allBanned) || directive;
     }
 
-    // ── 3. Стражи (параллельно) — только флагуют, не переписывают ──
-    const flags = {};
-    const guardJobs = [];
-    if(agentEnabled('voiceguard')) guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples, ag(state,'voiceguard').strictness), flags));
-    if(agentEnabled('logic'))      guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
-    if(agentEnabled('events'))     guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
-    if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
-                                   guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
-    // кастомные стражи (добавленные автором)
-    (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
-      guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
-    });
-    if(guardJobs.length){
-      onProgress && onProgress({stage:'guards', text:'Стражи проверяют сцену…'});
-      await Promise.all(guardJobs);
-      const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role, severity:f.severity, title:f.title, detail:f.detail||''})));
-      onProgress && onProgress({log:{icon:'🛡', text: flagList.length?`Стражи: ${flagList.length} ${flagList.length===1?'замечание':'замечаний'}`:'Стражи: замечаний нет', flags:flagList, state: flagList.length?'warn':'ok'}});
-      // Ручная пауза: если хоть один Страж в ручном режиме — показать флаги и ждать.
-      if(['voiceguard','logic','events','styleguard'].some(r=>agentEnabled(r) && manual(state,r))){
-        await gate(state, ['voiceguard','logic','events','styleguard'].find(r=>manual(state,r)), 'Стражи · флаги сцены', flagsText(flags), opts);
+    // ── 3. Стражи → авто-петля правки (critical-флаги → Прозаик → Оценщик → повтор) ──
+    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля'};
+    const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
+      (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
+      (state.agents||[]).some(a=>a.custom && a.enabled!==false);
+    const maxGuardIter = Math.min(2, g.evaluatorMaxIter ?? 3); // макс. итераций правки по стражам
+    let guardFixIter = 0; // сколько раз уже правили по стражам
+    let flags = {};
+
+    if(hasGuards){
+      let keepLooping = true;
+      while(keepLooping){
+        // Запускаем всех стражей параллельно
+        flags = {};
+        const guardJobs = [];
+        if(agentEnabled('voiceguard')) guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, state.voice?.examples, ag(state,'voiceguard').strictness), flags));
+        if(agentEnabled('logic'))      guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
+        if(agentEnabled('events'))     guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
+        if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
+          guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
+        (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
+          guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
+        });
+        const label = guardFixIter > 0 ? `Стражи перепроверяют (${guardFixIter+1})…` : 'Стражи проверяют сцену…';
+        onProgress && onProgress({stage:'guards', text:label});
+        await Promise.all(guardJobs);
+
+        // Разделяем на критические (триггер петли) и просто замечания (info)
+        const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
+        const criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity==='critical').map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+        const iterSuffix = guardFixIter > 0 ? ` · пересмотр ${guardFixIter+1}` : '';
+        onProgress && onProgress({log:{icon:'🛡',
+          text: flagList.length
+            ? `Стражи${iterSuffix}: ${flagList.length} замечаний${criticals.length ? ` (${criticals.length} крит.)` : ''}`
+            : `Стражи${iterSuffix}: замечаний нет`,
+          flags:flagList, state: flagList.length?'warn':'ok'}});
+
+        // Ручная пауза (хотя бы один страж в manual-режиме)
+        const manualGuard = ['voiceguard','logic','events','styleguard'].find(r=>agentEnabled(r) && manual(state,r));
+        if(manualGuard){
+          const gt = await gate(state, manualGuard, 'Стражи · флаги сцены', flagsText(flags), opts);
+          if(gt.approve){ keepLooping = false; break; } // автор принял флаги, выходим
+        }
+
+        // Нет критических замечаний или исчерпали лимит → выходим
+        if(!criticals.length || guardFixIter >= maxGuardIter){ keepLooping = false; break; }
+        guardFixIter++;
+
+        // ── 3b. Прозаик исправляет критические флаги (хирургически) ──
+        const guardDirective = 'Исправь критические замечания стражей:\n' + criticals.join('\n');
+        onProgress && onProgress({stage:'prose', text:`Прозаик исправляет замечания стражей (${guardFixIter})…`});
+        let gStreamed = '';
+        const gStreamCb = chunk=>{ gStreamed+=chunk; onProgress && onProgress({stage:'prose', text:gStreamed, streaming:true}); };
+        const gCap = Math.min(5000, Math.max(2000, Math.round(best.length/2)+1400));
+        const gpRes = await callLLM({
+          ...llmBase, temperature:0.4,
+          messages: surgicalReviseMessages(best, guardDirective, state.style?.rules),
+          maxTokens: Math.max(proseAg.maxTokens ?? gCap, gCap)
+        }, gStreamCb);
+        const { debate:gDebate, prose:gProse } = parseDebateRevision(gpRes.text);
+        if(gDebate) logStep({agent:'prose-debate', phase:'guard-fix', iter:guardFixIter, input:guardDirective, output:gDebate, tokensIn:0, tokensOut:0, cost:0});
+        const candidateText = gProse && gProse.length > best.length*0.6 ? gProse : best;
+        logStep({agent:'prose', phase:'guard-fix', iter:guardFixIter, input:guardDirective, output:gpRes.text, tokensIn:gpRes.tokensIn, tokensOut:gpRes.tokensOut, cost:gpRes.cost});
+        onProgress && onProgress({log:{icon:'✍️', text:`Прозаик: правка по стражам (${guardFixIter})`}});
+
+        // ── 3c. Оценщик — гарантия что правка не ухудшила прозу ──
+        if(agentEnabled('evaluator')){
+          onProgress && onProgress({stage:'evaluator', text:'Оценщик проверяет правку стражей…'});
+          const geMsgs = evaluatorMessages(scene, candidateText, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
+          const geRes = await callLLM({...llmBase, temperature:evalAg.temp??0.2, messages:geMsgs, maxTokens:evalAg.maxTokens??900});
+          const gVerdict = parseEvaluator(geRes.text, threshold);
+          logStep({agent:'evaluator', phase:'guard-fix', iter:guardFixIter, input:'(правка)', output:geRes.text, verdict:gVerdict, tokensIn:geRes.tokensIn, tokensOut:geRes.tokensOut, cost:geRes.cost});
+          const prevScore = bestEval?.weighted ?? 0;
+          if(gVerdict.ok && gVerdict.weighted >= prevScore - 1.5){
+            // Правка стражей приемлема → берём
+            best = candidateText; bestEval = gVerdict;
+            onProgress && onProgress({log:{icon:'⚖️', text:`После стражей (${guardFixIter}): ${gVerdict.weighted}/10 ${gVerdict.pass?'✓':'?'}`, state:gVerdict.pass?'ok':'warn'}});
+          } else {
+            // Откат: правка стражей ухудшила прозу — оставляем лучший черновик
+            onProgress && onProgress({log:{icon:'⚠️', text:`Откат: правка стражей снизила оценку (${gVerdict.weighted} < ${prevScore}−1.5) — оставляю лучший черновик прозаика`, state:'warn'}});
+            keepLooping = false; // не имеет смысла итерировать дальше
+          }
+        } else {
+          best = candidateText; // оценщик выключен — берём правку без проверки
+        }
       }
     }
 
