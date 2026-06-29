@@ -6,6 +6,14 @@ import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// Нормализует прозаический текст для HTML: одиночный \n внутри абзаца → пробел, двойной \n\n → <br><br>
+function escProse(s){
+  const norm = String(s==null?'':s)
+    .replace(/\r\n/g,'\n')
+    .replace(/([^\n])\n([^\n])/g,'$1 $2')  // одиночный перенос внутри абзаца → пробел
+    .replace(/([^\n])\n([^\n])/g,'$1 $2');  // второй проход для смежных
+  return norm.split('\n\n').map(p=>esc(p.trim())).filter(Boolean).join('<br><br>');
+}
 
 const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля' };
 const _openAgents = new Set();
@@ -462,7 +470,7 @@ function renderResultBody(r){
   if(r.kind==='lineedit'){
     if(!r.text) return `<div class="muted">Правок не предложено.</div>`;
     return `<div class="ares-h">Предложенная правка</div>
-      <div class="ares-edit">${esc(r.text)}</div>
+      <div class="ares-edit">${escProse(r.text)}</div>
       <div class="row" style="gap:8px;margin-top:10px;align-items:center">
         <button class="btn btn-primary ares-apply">Применить правку</button>
         <span class="muted" style="font-size:11px">прошлый вариант вернёте кнопкой ↶</span></div>`;
