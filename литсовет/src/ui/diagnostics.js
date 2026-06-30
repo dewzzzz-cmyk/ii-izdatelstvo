@@ -228,6 +228,8 @@ function openAddGuardModal(){
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
 const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom']);
+// Фактические стражи — бегут каждую итерацию петли; литературные — только при принятом тексте.
+const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
 
 // ── Живая схема пайплайна ─────────────────────────────────────────────────
 function renderPipelineFlow(agents){
@@ -280,9 +282,16 @@ export function renderAgentPipeline(){
     const isPar = PARALLEL_ROLES.has(a.role) && a.enabled!==false;
     const sep = (isPar && !prevPar) ? '<div class="par-sep" data-tip="Эти агенты-стражи работают одновременно (параллельно) — быстрее и независимо друг от друга.">∥ параллельный шаг</div>' : '';
     prevPar = isPar;
+    const isFactual = FACTUAL_GUARD_ROLES.has(a.role);
+    const parTip = isFactual
+      ? 'Фактический страж: работает параллельно на каждой итерации петли — ловит противоречия сразу, пока текст ещё меняется.'
+      : (PARALLEL_ROLES.has(a.role) && !a.custom)
+        ? 'Литературный страж: работает параллельно, только когда Оценщик принял текст — незачем проверять голос на черновике.'
+        : 'Идёт параллельно с другими стражами.';
     const badges =
       (a.role==='prose'&&a.loop?'<span class="ag-badge loop" data-tip="Петля с Оценщиком: Прозаик дорабатывает черновик, пока Оценщик не примет (до макс. итераций).">↻</span>':'') +
-      (isPar?'<span class="ag-badge par" data-tip="Идёт параллельно с другими стражами.">∥</span>':'') +
+      (isPar?`<span class="ag-badge par" data-tip="${parTip}">∥</span>`:'') +
+      (isFactual && isPar?'<span class="ag-badge loop" data-tip="Запускается на каждой итерации петли, не ждёт финального принятия.">↻</span>':'') +
       (a.manual?'<span class="ag-badge man" data-tip="Ручной режим: пауза после агента, вы подтверждаете каждый шаг.">✋</span>':'');
     return `${sep}
       <div class="agent-toggle ${isPar?'is-par':''}" data-open="${a.id}" draggable="true" data-drag="${a.id}" data-tip="${esc(a.desc||'')}">
