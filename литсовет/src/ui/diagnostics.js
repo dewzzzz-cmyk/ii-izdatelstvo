@@ -233,7 +233,7 @@ function openAddGuardModal(){
 }
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
-const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom']);
+const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom','reader']);
 // Фактические стражи — бегут каждую итерацию петли; литературные — только при принятом тексте.
 const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
 

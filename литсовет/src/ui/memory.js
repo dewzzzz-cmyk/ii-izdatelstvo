@@ -39,7 +39,13 @@ export function renderMemory(){
 
       ${s.characters&&s.characters.length?`
         <div class="mem-h">Персонажи (${s.characters.length})</div>
-        ${s.characters.map(c=>`<div class="mem-card"><div class="mem-title">${esc(c.name)}</div><div class="muted" style="font-size:12px">${esc(c.stateNote||'—')}</div></div>`).join('')}
+        ${s.characters.map((c,i)=>`<div class="mem-card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="mem-title">${esc(c.name)}</div>
+            <button class="bc-act char-edit" data-chi="${i}" title="Изменить состояние">✏</button>
+          </div>
+          <div class="muted char-state" data-chi="${i}" style="font-size:12px;cursor:pointer" title="Нажмите чтобы редактировать">${esc(c.stateNote||'—')}</div>
+        </div>`).join('')}
       `:''}
 
       ${driftBlock(scenes)}
@@ -111,6 +117,19 @@ function bindMemory(){
   document.querySelectorAll('.mem-rb').forEach(b=>{
     b.onclick=()=>{ const s=getState(); if(rollback(s, b.dataset.level, b.dataset.id, 0)){ save(); } };
   });
+  // Персонажи: редактировать состояние
+  function editCharState(i){
+    const s=getState(); const c=s.characters[i]; if(!c) return;
+    const stDiv=document.querySelector(`.char-state[data-chi="${i}"]`); if(!stDiv) return;
+    const oldNote=c.stateNote||'';
+    stDiv.innerHTML=`<textarea style="width:100%;min-height:52px;font-size:12px;background:var(--bg-2);color:var(--text);border:1px solid var(--accent);border-radius:4px;padding:4px;box-sizing:border-box;resize:vertical">${esc(oldNote)}</textarea><div style="display:flex;gap:6px;margin-top:4px"><button class="btn btn-primary" style="font-size:11px;padding:2px 8px">Сохранить</button><button class="btn" style="font-size:11px;padding:2px 8px">Отмена</button></div>`;
+    const ta=stDiv.querySelector('textarea'); ta.focus(); ta.select();
+    stDiv.querySelector('.btn-primary').onclick=()=>{ c.stateNote=ta.value.trim()||undefined; save(); };
+    stDiv.querySelector('.btn:not(.btn-primary)').onclick=()=>{ stDiv.innerHTML=`<span class="muted">${esc(oldNote||'—')}</span>`; };
+  }
+  document.querySelectorAll('.char-edit').forEach(b=>b.onclick=e=>{ e.stopPropagation(); editCharState(+b.dataset.chi); });
+  document.querySelectorAll('.char-state').forEach(d=>d.onclick=()=>editCharState(+d.dataset.chi));
+
   // Bible: добавить факт
   const ba=document.getElementById('bibleAdd');
   if(ba) ba.onclick=()=>{
@@ -119,7 +138,7 @@ function bindMemory(){
     const s=getState(); s.bible.push({keys:keys.trim(), text:text.trim()}); rebuildBibleVecs(s.bible); save();
   };
   // Bible: ред./AI-расширить/удалить
-  document.querySelectorAll('.bc-act').forEach(b=>b.onclick=async (e)=>{
+  document.querySelectorAll('.bc-act:not(.char-edit)').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
     if(b.dataset.act==='del'){ s.bible.splice(i,1); rebuildBibleVecs(s.bible); save(); return; }

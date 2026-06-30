@@ -123,6 +123,27 @@ export function styleGuardMessages(draft, rules, strictness){
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
+// ── Читатель (0.3): смотрит глазами читателя — внимание, ставка, финальная эмоция. ──
+export function readerGuardMessages(scene, draft, strictness){
+  const sys = [
+    'Ты — вовлечённый читатель жанровой прозы. Ты читаешь сцену и честно отвечаешь: держит ли она тебя?',
+    'Тебе важно: теряешь ли интерес в какой-то момент, ясна ли ставка для героя, понятна ли финальная эмоция.',
+    'Ты НЕ редактор, не стилист — только читатель. Давай флаги только там, где твоё внимание реально споткнулось.',
+    strictnessLine(strictness),
+  ].join('\n');
+  const emo = scene.emotion ? `Целевая эмоция читателя в финале: ${scene.emotion}.` : '';
+  const user = [
+    `Бриф сцены: ${scene.brief||scene.title||''}`, emo, '', 'СЦЕНА:', draft, '',
+    'Проверь три вопроса:',
+    '1) Где ты теряешь нить или интерес? (абзац ни о чём, потеря темпа)',
+    '2) Ясна ли ставка — что стоит на кону для героя в этой сцене?',
+    '3) Финальная эмоция — совпадает ли с целевой? (только если целевая задана)',
+    '',
+    'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"кратко","detail":"что именно споткнулось","quote":"фрагмент сцены"}] }. Только реальные провалы внимания. Только JSON.',
+  ].filter(Boolean).join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
 // Кастомный страж: пользовательский промпт проверки. Только флагует.
 export function customGuardMessages(state, scene, draft, prompt, strictness){
   const sys = 'Ты — кастомный страж сцены. Твоя задача от автора: ' + (prompt||'проверь сцену') +

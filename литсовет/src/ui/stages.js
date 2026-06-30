@@ -505,7 +505,17 @@ export function renderStructure(els){
 
   document.getElementById('genSkeleton').onclick = async (ev)=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
-    if(hasSkeleton && !confirm('Перегенерировать скелет? Текущая структура (и тексты сцен) будут заменены.')) return;
+    if(hasSkeleton){
+      const btn=ev.target;
+      if(btn.dataset.confirmed!=='1'){
+        const orig=btn.textContent; btn.dataset.confirmed='1';
+        btn.textContent='Нажми ещё раз — сцены будут заменены';
+        btn.style.cssText='background:var(--err-border);color:#fff';
+        setTimeout(()=>{ if(btn.dataset.confirmed==='1'){ delete btn.dataset.confirmed; btn.textContent=orig; btn.style.cssText=''; } },3000);
+        return;
+      }
+      delete btn.dataset.confirmed; btn.style.cssText='';
+    }
     const btn=ev.target; btn.disabled=true;
     document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор проектирует…';
     try{
@@ -671,7 +681,14 @@ function bindSkeleton(s){
     const after = (s.structure||[]).filter(x=>x.type==='scene');
     const cnt = after.length - after.findIndex(x=>x.id===n.id) - 1;
     if(cnt<=0){ const st=document.querySelector(`.sk-st[data-st="${n.id}"]`); if(st) st.textContent='Это последняя сцена.'; return; }
-    if(!confirm(`Переписать ${cnt} последующих сцен под изменение «${n.title}»? Их текущие версии сохранятся для отката.`)) return;
+    if(b.dataset.confirmed!=='1'){
+      const orig=b.textContent; b.dataset.confirmed='1';
+      b.textContent=`Нажми ещё раз — ${cnt} сцен будут переписаны`;
+      b.style.cssText='background:var(--err-border);color:#fff;font-size:11px';
+      setTimeout(()=>{ if(b.dataset.confirmed==='1'){ delete b.dataset.confirmed; b.textContent=orig; b.style.cssText=''; } },3000);
+      return;
+    }
+    delete b.dataset.confirmed; b.style.cssText='';
     const hint=(document.querySelector(`.sk-hint[data-id="${n.id}"]`)?.value||'').trim();
     const st=document.querySelector(`.sk-st[data-st="${n.id}"]`);
     b.disabled=true; if(st) st.innerHTML='<span class="spinner"></span> Переписываю хвост книги…';

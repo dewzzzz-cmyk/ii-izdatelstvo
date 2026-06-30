@@ -8,7 +8,7 @@ import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
-         parseDebateRevision, styleGuardMessages } from './guards.js';
+         parseDebateRevision, styleGuardMessages, readerGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -88,6 +88,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     const threshold = g.evaluatorThreshold ?? 7;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
+      agentEnabled('reader') ||
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
     let best = null, bestEval = null;
@@ -160,8 +161,11 @@ export async function runScene(state, scene, opts={}, onProgress){
           tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
         const evalLogExtra = (verdict.anchors?.length?` · ✦ ${verdict.anchors[0]}`:'')
           + (verdict.questions?.length?` · ? ${verdict.questions[0]}`:'');
+        const deltaStr = iter > 1 && anchorVerdict?.ok && verdict.ok
+          ? ` (Δ${verdict.weighted > anchorVerdict.weighted ? '+' : ''}${(verdict.weighted - anchorVerdict.weighted).toFixed(1)})`
+          : '';
         onProgress && onProgress({log:{ icon:'⚖️',
-          text:`Оценщик: ${verdict.ok?verdict.weighted+'/10':'—'} ${verdict.pass?'✓ принято':'↻ на доработку'}`
+          text:`Оценщик: ${verdict.ok?verdict.weighted+'/10'+deltaStr:'—'} ${verdict.pass?'✓ принято':'↻ на доработку'}`
             + (verdict.cliches?.length?` · клише: ${verdict.cliches.join(', ')}`
                : (verdict.notes?.length?` · ${verdict.notes[0]}`:'')+evalLogExtra),
           state: verdict.pass?'ok':'warn' }});
@@ -199,6 +203,8 @@ export async function runScene(state, scene, opts={}, onProgress){
             }
             if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
               guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
+            if(agentEnabled('reader'))
+              guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, best, ag(state,'reader').strictness), flags));
             (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
               guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
             });
