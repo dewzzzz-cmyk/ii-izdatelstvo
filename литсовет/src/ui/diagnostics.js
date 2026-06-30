@@ -95,9 +95,15 @@ function bindFlagFix(){
     document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix}}));
   });
   document.querySelectorAll('.flag-rewrite').forEach(b=>b.onclick=()=>{
-    if(!confirm('Сцена будет написана заново с учётом этого замечания.\nТекущий вариант сохранится в истории (кнопка ↶).\n\nПродолжить?')) return;
-    b.textContent='⏳ Запускаю…'; b.disabled=true;
-    document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix, rewrite:true}}));
+    if(b.dataset.confirmed==='1'){
+      b.textContent='⏳ Запускаю…'; b.disabled=true;
+      document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix, rewrite:true}}));
+      return;
+    }
+    const orig=b.textContent;
+    b.dataset.confirmed='1'; b.textContent='Нажми ещё раз — точно?';
+    b.style.cssText='background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)';
+    setTimeout(()=>{ if(b.dataset.confirmed==='1'){ delete b.dataset.confirmed; b.textContent=orig; b.style.cssText=''; } }, 3000);
   });
 }
 

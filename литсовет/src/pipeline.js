@@ -5,7 +5,7 @@
 import { callLLM } from './llm.js';
 import { buildSceneContext, bookContextBlock } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
-         evaluatorMessages, parseEvaluator } from './agents.js';
+         evaluatorMessages, parseEvaluator, RUBRIC_AXES } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          parseDebateRevision, styleGuardMessages } from './guards.js';
@@ -96,6 +96,9 @@ export async function runScene(state, scene, opts={}, onProgress){
     let iter = 0, safety = 0;
     let flags = {};
     const bannedCliches = new Set();
+    let anchorVerdict = null;   // оценки итерации 1 — baseline для стабильности Оценщика
+    const scoreHistory = [];    // история scores по итерациям — детектор стагнации осей
+    const AXIS_LABELS = Object.fromEntries(RUBRIC_AXES.map(a=>[a.key, a.label]));
 
     while(iter < maxIter && safety++ < 20){
       iter++;
@@ -144,8 +147,15 @@ export async function runScene(state, scene, opts={}, onProgress){
       else {
         onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
         const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
+        // Anchor-score: передаём baseline итерации 1 чтобы Оценщик не дрейфовал между итерациями
+        if(iter > 1 && anchorVerdict?.ok){
+          const baseStr = Object.entries(anchorVerdict.scores).map(([k,v])=>`${AXIS_LABELS[k]||k}:${v}`).join(', ');
+          eMsgs[1].content += `\n\nИтерация ${iter}. Базовые оценки черновика 1: [${baseStr}]. Оценивай ТЕКУЩИЙ черновик относительно baseline — ось должна расти там где проблема устранена, и падать если добавлена новая.`;
+        }
         const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??900 });
         const verdict = parseEvaluator(eRes.text, threshold);
+        if(iter === 1 && verdict.ok) anchorVerdict = verdict;
+        if(verdict.ok) scoreHistory.push({...verdict.scores});
         logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
           tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
         const evalLogExtra = (verdict.anchors?.length?` · ✦ ${verdict.anchors[0]}`:'')
@@ -219,7 +229,19 @@ export async function runScene(state, scene, opts={}, onProgress){
         // Директива строится от лучшего оценщика (bestEval), а не обязательно от текущего verdict.
         // Это важно когда guards запустились на финальной итерации, а best — из более ранней.
         const directiveVerdict = (bestEval && bestEval.weighted > (verdict.weighted||0)) ? bestEval : verdict;
-        directive = buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive;
+        // Стагнация: если ось не растёт 2 итерации подряд — добавить радикальную инструкцию
+        let stagnantNote = '';
+        if(scoreHistory.length >= 2){
+          const stuck = RUBRIC_AXES.map(a=>a.key).filter(k=>{
+            const vals = scoreHistory.map(s=>s[k]||0);
+            return vals.length >= 2 && vals[vals.length-1] <= vals[vals.length-2] + 0.5;
+          });
+          if(stuck.length){
+            stagnantNote = '\n\nОСИ БЕЗ ПРОГРЕССА — измени подход РАДИКАЛЬНО, не шлифуй то же самое: ' + stuck.map(k=>AXIS_LABELS[k]||k).join(', ');
+            onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена`, state:'warn'}});
+          }
+        }
+        directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote;
       }
     }
     if(!best) best = prevDraft || '';

@@ -95,8 +95,14 @@ function renderRightPanel(els){
   els.right.innerHTML = `
     <div class="sect sect-top">
       <div class="rtabs">
-        <button class="rtab ${_topTab==='analysis'?'active':''}" data-tt="analysis">Анализ сцены</button>
-        <button class="rtab ${_topTab==='process'?'active':''}" data-tt="process">Процесс</button>
+        ${(()=>{
+          const sc=(s.structure||[]).find(n=>n.id===s.ui.activeScene);
+          const flagCnt=sc&&sc.flags?Object.values(sc.flags).reduce((t,a)=>t+(a||[]).length,0):0;
+          const flagBadge=flagCnt?` <span style="background:var(--err-border);color:#fff;border-radius:8px;padding:0 5px;font-size:10px;font-weight:600">${flagCnt}</span>`:'';
+          const procBadge=_busy?` <span style="color:var(--accent);font-size:10px">●</span>`:_runLog.length?` <span style="color:var(--text-2);font-size:10px">${_runLog.length}</span>`:'';
+          return `<button class="rtab ${_topTab==='analysis'?'active':''}" data-tt="analysis">Анализ${flagBadge}</button>
+        <button class="rtab ${_topTab==='process'?'active':''}" data-tt="process">Процесс${procBadge}</button>`;
+        })()}
       </div>
       <div class="sect-scroll" id="topBody">${_topTab==='process'?renderProcess():renderSceneAnalysis()}</div>
     </div>
