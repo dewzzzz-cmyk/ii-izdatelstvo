@@ -39,7 +39,7 @@ export function bookContextBlock(state, scene){
 // Возвращает {messages, layers} — layers для диагностики (что попало в промпт).
 export function buildSceneContext(state, scene, opts={}){
   const { voice, style, bible, characters, global } = state;
-  const BUDGET = (global && global.budgetTokens) || 12000;
+  const BUDGET = (global && global.budgetTokens) || 32000;
   const layers = [];
 
   // 1. Голос + запреты (фикс, не режется)

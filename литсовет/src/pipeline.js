@@ -127,7 +127,12 @@ export async function runScene(state, scene, opts={}, onProgress){
       prevDraft = pRes.text;
       logStep({ agent:'prose', iter, input:logInput, output:pRes.text,
         layers:logLayers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
-      onProgress && onProgress({log:{icon:'✍️', text:isRevision?`Прозаик: черновик ${iter} (разобрал замечания)`:`Прозаик: черновик ${iter} написан`}});
+      const _budget = (state.global && state.global.budgetTokens) || 32000;
+      const _pct = Math.round((pRes.tokensIn||0) / _budget * 100);
+      onProgress && onProgress({log:{icon:'✍️', text:isRevision?`Прозаик: черновик ${iter} (разобрал замечания)`:`Прозаик: черновик ${iter} написан · контекст ${pRes.tokensIn||0} / ${_budget} ток. (${_pct}%)`}});
+      if(!isRevision && (pRes.tokensIn||0) > _budget * 0.8){
+        onProgress && onProgress({log:{icon:'⚠️', text:`Контекст заполнен на ${_pct}% — часть памяти (сводки сцен, глав) могла быть урезана. Увеличьте бюджет в Настройках или свёртывайте старые сцены.`, state:'warn'}});
+      }
 
       if(manual(state,'prose')){
         const gt = await gate(state,'prose','Прозаик'+(iter>1?` · итерация ${iter}`:''), '', opts, {draft:pRes.text, editable:true});

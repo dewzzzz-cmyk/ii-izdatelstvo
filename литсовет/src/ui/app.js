@@ -188,8 +188,11 @@ async function openSettings(){
           <input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
         <div class="field"><label>Модель</label>
           <input type="text" id="setModel" value="${escAttr(g.model)}"></div>
-        <div class="field"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов отдать под память сцены; больше = дольше и дороже</span></label>
-          <input type="number" id="setBudget" value="${escAttr(g.budgetTokens??12000)}" min="2000" max="60000" step="1000"></div>
+        <div class="field"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="range" id="setBudgetRange" min="8000" max="60000" step="4000" value="${escAttr(g.budgetTokens??32000)}" style="flex:1" oninput="document.getElementById('setBudgetNum').value=this.value">
+            <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??32000)}" min="8000" max="60000" step="4000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
+          </div></div>
         ${projListHtml}
         <div class="row" style="justify-content:space-between;margin-top:12px">
           <button class="btn" id="setNew">+ Новый проект</button>
@@ -206,7 +209,7 @@ async function openSettings(){
     g.apiKey = document.getElementById('setKey').value.trim();
     g.baseURL = document.getElementById('setUrl').value.trim();
     g.model = document.getElementById('setModel').value.trim();
-    const bv = parseInt(document.getElementById('setBudget').value); if(bv>=2000) g.budgetTokens = bv;
+    const bv = parseInt(document.getElementById('setBudgetNum').value); if(bv>=8000) g.budgetTokens = bv;
     save(); close();
   };
   document.getElementById('setNew').onclick = ()=>{

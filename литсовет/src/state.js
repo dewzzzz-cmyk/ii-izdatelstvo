@@ -56,7 +56,7 @@ export function defaultState(){
       baseURL: 'https://api.deepseek.com',
       model: 'deepseek-chat',
       apiKey: '',              // ТОЛЬКО в памяти, не сериализуется
-      budgetTokens: 12000,     // бюджет сборки контекста
+      budgetTokens: 32000,     // бюджет сборки контекста
       retries: 2,
       evaluatorThreshold: 7,
       evaluatorMaxIter: 3,
