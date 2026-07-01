@@ -636,6 +636,7 @@ export function renderStructure(els){
   const regenWithEval = document.getElementById('regenWithEval');
   if(regenWithEval) regenWithEval.onclick = async ()=>{
     if(!s.structureEval) return;
+    const prevEval = s.structureEval; // держим до перегенерации — Оценщик должен видеть, что проверяли в прошлый раз
     const prevScore = s.structureEval.score;
     const axisNames = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
     const axisScores = s.structureEval.axes
@@ -667,7 +668,7 @@ export function renderStructure(els){
       const btn2 = document.getElementById('genSkeleton');
       if(st2) st2.innerHTML='<span class="spinner"></span> Оценщик проверяет новую структуру…';
       if(btn2) btn2.disabled=true;
-      const evalResult = await runStructureEval(s, skeleton);
+      const evalResult = await runStructureEval(s, skeleton, prevEval);
       // Сохраняем предыдущий счёт для сравнения в UI
       if(evalResult) evalResult.prevScore = prevScore;
       s.structureEval = evalResult;

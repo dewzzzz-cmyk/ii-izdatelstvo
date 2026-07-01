@@ -278,7 +278,10 @@ export function revertSkeleton(state){
 
 // ── Оценщик структуры: оценивает сгенерированный скелет по 5 осям ──
 // Возвращает { score, axes:{arc,pacing,conflict,balance,ending}, issues[], suggestions[] }
-export function structureEvalMessages(state, skeleton){
+// prevEval (опц.) — оценка ДО перегенерации: без неё каждый прогон видит скелет свежим
+// взглядом и либо дословно повторяет прошлую критику, либо чинит одно замечание ценой
+// другого (напр. "добавь сцену-паузу" → "теперь глава перегружена сценами").
+export function structureEvalMessages(state, skeleton, prevEval){
   const p = state.project;
   const totalScenes = skeleton.chapters.reduce((n,ch)=>n+(ch.scenes||[]).length, 0);
   const sys = [
@@ -289,7 +292,10 @@ export function structureEvalMessages(state, skeleton){
     '• Конфликт без нарастания или без разрядки',
     '• Финал серии (если серия) без нужного закрытия/открытия арок',
     'Не оценивай качество брифов, стиль или детали — только АРХИТЕКТУРУ.',
-  ].join('\n');
+    prevEval && (prevEval.issues||[]).length
+      ? 'Тебе дана ПРЕДЫДУЩАЯ ОЦЕНКА этой же книги до правки. По каждой прошлой проблеме явно реши: устранена или нет. Не подменяй устранённую проблему похожей, но другой критикой того же места — если правка решила именно то, что было заявлено, значит проблема закрыта, даже если место ещё не идеально. Для неустранённых — объясни, что конкретно осталось, и включи в issues с пометкой «(не устранено)».'
+      : '',
+  ].filter(Boolean).join('\n');
 
   // Компактный скелет для промпта
   const skeletonText = skeleton.chapters.map((ch,ci)=>{
@@ -297,10 +303,15 @@ export function structureEvalMessages(state, skeleton){
     return `Глава ${ci+1} [${ch.arc||'?'}]: «${ch.title}»\n${scList}`;
   }).join('\n\n');
 
+  const prevBlock = prevEval && (prevEval.issues||[]).length
+    ? `\nПРЕДЫДУЩАЯ ОЦЕНКА (${prevEval.score}/10) отметила эти проблемы — проверь каждую:\n${prevEval.issues.map((s,i)=>`${i+1}. ${s}`).join('\n')}`
+    : '';
+
   const user = [
     `Жанр: ${p.genre||'роман'}, аудитория: ${p.audience||'широкая'}, объём: ${(p.targetWords||80000)/1000}к слов.`,
     p.synopsis||p.idea ? `Синопсис: ${p.synopsis||p.idea}` : '',
     p.type==='series' ? `Серия: книга ${p.seriesBook||1} из ${p.seriesTotal||3}.` : '',
+    prevBlock,
     '',
     `СКЕЛЕТ (${skeleton.chapters.length} глав, ${totalScenes} сцен):`,
     skeletonText,
@@ -313,10 +324,10 @@ export function structureEvalMessages(state, skeleton){
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
-export async function runStructureEval(state, skeleton){
+export async function runStructureEval(state, skeleton, prevEval){
   const g = state.global;
   if(!g.apiKey) return null;
-  const msgs = structureEvalMessages(state, skeleton);
+  const msgs = structureEvalMessages(state, skeleton, prevEval);
   try {
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:800 });
     const j = extractJSON(res.text);
