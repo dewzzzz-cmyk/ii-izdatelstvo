@@ -430,7 +430,7 @@ function bindRulesEditor(){
     const i=+b.dataset.i;
     const item=document.querySelector(`.rule-item[data-ri="${i}"]`); if(!item) return;
     const s=getState(); const orig=s.style.rules[i]||'';
-    item.innerHTML = `<input type="text" class="rule-edit-input" value="${esc(orig)}" style="flex:1">
+    item.innerHTML = `<textarea class="rule-edit-input" rows="4" style="flex:1">${esc(orig)}</textarea>
       <button class="rule-save" data-i="${i}" title="Сохранить">💾</button>
       <button class="rule-cancel" title="Отмена">✕</button>`;
     const ei=item.querySelector('.rule-edit-input'); ei.focus(); ei.select();
@@ -441,7 +441,7 @@ function bindRulesEditor(){
     };
     item.querySelector('.rule-save').onclick=doSave;
     item.querySelector('.rule-cancel').onclick=doCancel;
-    ei.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); doSave(); } else if(e.key==='Escape'){ e.preventDefault(); doCancel(); } };
+    ei.onkeydown=(e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); doSave(); } else if(e.key==='Escape'){ e.preventDefault(); doCancel(); } };
   });
   const seed=document.getElementById('rulesSeed');
   if(seed) seed.onclick=()=>{ const s=getState(); STARTER_RULES.forEach(r=>addRule(s, r)); save(); };
