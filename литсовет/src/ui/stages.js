@@ -293,6 +293,9 @@ export function renderVoice(els){
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
   bindRefsEditor();
   bindRulesEditor();
+  // save() после "+ Добавить" перерисовывает всю стадию — без этого пропадали
+  // остальные ещё не добавленные карточки разбора манеры.
+  if(_mannerRules.length) renderMannerCards(_mannerRules, s);
 
   const ext=document.getElementById('extract');
   if(ext) ext.onclick = ()=>{
@@ -555,6 +558,9 @@ export function renderStructure(els){
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; s.ui.stage='write'; save(); });
   els.right.innerHTML = renderHistorianPanel(s);
   bindHistorianPanel(s);
+  // save() после "+ В канон" перерисовывает всю стадию — без этого пропадали
+  // остальные ещё не добавленные карточки фактов.
+  if(_historianFacts.length) renderFactCards(_historianFacts, s);
 
   const hasSkeleton = (s.structure||[]).some(n=>n.type==='chapter');
   els.center.innerHTML = `
