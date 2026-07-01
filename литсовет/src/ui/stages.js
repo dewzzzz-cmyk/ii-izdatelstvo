@@ -361,8 +361,9 @@ function renderMannerCards(rules, s){
     btn.onclick=()=>{
       const r = rules[+btn.dataset.i]; if(!r) return;
       const s=getState();
-      if(addRule(s, r)) save();
-      btn.textContent='✓ Добавлено'; btn.disabled=true;
+      if(addRule(s, r)) save(); // перерисовывает стадию — сама карточка уже отразит "✓ Добавлено" из state
+      // прокрутка к "Правилам автора", чтобы автор видел, куда именно приземлилось правило
+      document.getElementById('rulesList')?.scrollIntoView({behavior:'smooth', block:'center'});
     };
   });
 }
@@ -410,7 +411,7 @@ function renderRulesEditor(s){
   return `<div class="field" style="margin-top:22px;border-top:1px solid var(--border);padding-top:16px">
     <label>Правила автора <span class="hint">(чего избегать / как писать — идут Прозаику, Оценщику и Стражу стиля)</span></label>
     <div id="rulesList">${rules.length
-      ? rules.map((r,i)=>`<div class="rule-item"><span>${esc(r)}</span><button class="rule-del" data-i="${i}" title="Удалить правило">✕</button></div>`).join('')
+      ? rules.map((r,i)=>`<div class="rule-item" data-ri="${i}"><span class="rule-text">${esc(r)}</span><button class="rule-edit" data-i="${i}" title="Редактировать правило">✏️</button><button class="rule-del" data-i="${i}" title="Удалить правило">✕</button></div>`).join('')
       : `<div class="muted" style="font-size:12px">Пока пусто. Добавьте правило, копите их по ходу работы (кнопкой «⊕ В правило» в разборе Оценщика, флагах и инлайн-меню) или <button class="linklike" id="rulesSeed">засейте примерами из разбора</button>.</div>`}</div>
     <div class="row" style="margin-top:8px">
       <input type="text" id="ruleInput" placeholder="напр.: не называй эмоцию ярлыком — показывай жестом или деталью" style="flex:1">
@@ -425,6 +426,23 @@ function bindRulesEditor(){
   add.onclick=doAdd;
   inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); doAdd(); } };
   document.querySelectorAll('.rule-del').forEach(b=>b.onclick=()=>{ const s=getState(); s.style.rules.splice(+b.dataset.i,1); save(); });
+  document.querySelectorAll('.rule-edit').forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.i;
+    const item=document.querySelector(`.rule-item[data-ri="${i}"]`); if(!item) return;
+    const s=getState(); const orig=s.style.rules[i]||'';
+    item.innerHTML = `<input type="text" class="rule-edit-input" value="${esc(orig)}" style="flex:1">
+      <button class="rule-save" data-i="${i}" title="Сохранить">💾</button>
+      <button class="rule-cancel" title="Отмена">✕</button>`;
+    const ei=item.querySelector('.rule-edit-input'); ei.focus(); ei.select();
+    const doSave=()=>{ const t=ei.value.trim(); if(!t) return; const s2=getState(); s2.style.rules[i]=t; save(); };
+    const doCancel=()=>{
+      item.innerHTML = `<span class="rule-text">${esc(orig)}</span><button class="rule-edit" data-i="${i}" title="Редактировать правило">✏️</button><button class="rule-del" data-i="${i}" title="Удалить правило">✕</button>`;
+      bindRulesEditor(); // переустановить обработчики только что восстановленных кнопок
+    };
+    item.querySelector('.rule-save').onclick=doSave;
+    item.querySelector('.rule-cancel').onclick=doCancel;
+    ei.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); doSave(); } else if(e.key==='Escape'){ e.preventDefault(); doCancel(); } };
+  });
   const seed=document.getElementById('rulesSeed');
   if(seed) seed.onclick=()=>{ const s=getState(); STARTER_RULES.forEach(r=>addRule(s, r)); save(); };
 }
