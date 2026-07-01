@@ -279,6 +279,7 @@ export function renderVoice(els){
           </div>`).join('')}
         `:''}
       `}
+      ${renderRefsEditor(s)}
       ${renderRulesEditor(s)}
 
       <div class="row" style="margin-top:18px;justify-content:flex-end">
@@ -287,6 +288,7 @@ export function renderVoice(els){
     </div>`;
 
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
+  bindRefsEditor();
   bindRulesEditor();
 
   const ext=document.getElementById('extract');
@@ -320,6 +322,35 @@ export function renderVoice(els){
   });
 
   document.getElementById('toStruct').onclick = ()=>{ s.ui.stage='structure'; save(); };
+}
+
+// Ориентиры стиля (авторы/тексты для тона, не образец для копирования) — идут в
+// промпт Прозаика отдельной строкой (см. context.js: projBlock).
+function renderRefsEditor(s){
+  const refs = (s.style.refs||[]);
+  return `<div class="field" style="margin-top:22px;border-top:1px solid var(--border);padding-top:16px">
+    <label>Ориентиры стиля <span class="hint">(авторы или тексты, чью манеру держать в уме — не образец для копирования, а имя ориентира)</span></label>
+    <div class="chips" id="refsList" style="margin-bottom:8px">${refs.length
+      ? refs.map((r,i)=>`<span class="tag">${esc(r)}<button class="tag-x" data-i="${i}" title="Удалить">✕</button></span>`).join('')
+      : `<span class="muted" style="font-size:12px">Пока пусто.</span>`}</div>
+    <div class="row">
+      <input type="text" id="refInput" placeholder="напр.: Борис Акунин, Артур Конан Дойл" style="flex:1">
+      <button class="btn" id="refAdd">Добавить</button>
+    </div>
+  </div>`;
+}
+function bindRefsEditor(){
+  const add=document.getElementById('refAdd'), inp=document.getElementById('refInput');
+  if(!add) return;
+  const doAdd=()=>{
+    const t=inp.value.trim(); if(!t) return;
+    const s=getState(); s.style.refs=s.style.refs||[];
+    if(!s.style.refs.includes(t)){ s.style.refs.push(t); save(); }
+    inp.value='';
+  };
+  add.onclick=doAdd;
+  inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); doAdd(); } };
+  document.querySelectorAll('.tag-x').forEach(b=>b.onclick=()=>{ const s=getState(); s.style.refs.splice(+b.dataset.i,1); save(); });
 }
 
 // Правила автора (do/don't): задаются один раз, идут Прозаику (профилактика),
