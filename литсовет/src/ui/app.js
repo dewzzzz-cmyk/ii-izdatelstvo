@@ -166,6 +166,11 @@ async function openSettings(){
   });
   const projects = [...map.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
 
+  const fmtProjDate = (ts)=>{
+    if(!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleDateString('ru', {day:'numeric', month:'short'}) + ' ' + d.toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
+  };
   const projListHtml = projects.length<2 ? '' : `
     <div class="field" style="margin-top:12px">
       <label>Мои книги <span class="hint">(нажмите чтобы открыть)</span></label>
@@ -173,6 +178,7 @@ async function openSettings(){
         ${projects.map(p=>`
           <button class="proj-item${p.id===curId?' proj-item-active':''}" data-pid="${escAttr(p.id)}">
             <span class="proj-item-title">${escAttr(p.title||'(без названия)')}</span>
+            <span class="proj-item-date">${escAttr(fmtProjDate(p.updated))}</span>
             ${p.onServer?'<span class="proj-item-badge">☁</span>':''}
           </button>`).join('')}
       </div>

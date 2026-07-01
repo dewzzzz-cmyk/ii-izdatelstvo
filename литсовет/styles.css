@@ -412,6 +412,7 @@ textarea{resize:vertical;min-height:60px}
 .proj-item:hover{background:var(--accent-bg);border-color:var(--accent-border)}
 .proj-item-active{background:var(--accent-bg)!important;border-color:var(--accent-border)!important;font-weight:500}
 .proj-item-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-item-date{font-size:11px;color:var(--text-3);flex-shrink:0}
 .proj-item-badge{font-size:11px;color:var(--text-3);flex-shrink:0}
 .spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--border-2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px}
 @keyframes spin{to{transform:rotate(360deg)}}
