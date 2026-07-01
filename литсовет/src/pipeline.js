@@ -14,6 +14,10 @@ import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 export function isRunning(){ return _running; }
 
+// Фактические стражи — бегут каждую итерацию, пока текст ещё меняется (в отличие от
+// литературных, которые видят текст только один раз, в конце).
+const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
+
 // Конфиг агента по роли ИЛИ id (для кастомных). Настраивается ползунками.
 function ag(state, role){ return (state.agents||[]).find(a=>a.role===role || a.id===role) || {}; }
 function manual(state, role){ return ag(state, role).manual === true; }
@@ -207,7 +211,13 @@ export async function runScene(state, scene, opts={}, onProgress){
             await Promise.all(guardJobs);
 
             const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
-            criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity==='critical').map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+            // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):
+            // они одни из немногих, что бегут каждую итерацию, и их предупреждения иначе тонут
+            // молча (Прозаик их никогда не видит), пока не эскалируются в critical — обычно уже
+            // на последней итерации, когда чинить поздно.
+            criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+              .filter(f=>f.severity==='critical' || (f.severity==='warning' && FACTUAL_GUARD_ROLES.has(role)))
+              .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
             onProgress && onProgress({log:{icon:'🛡',
               text: flagList.length
                 ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
