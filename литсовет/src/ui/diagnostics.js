@@ -368,12 +368,16 @@ export function renderAgentPipeline(){
   const runs = getRuns();
   setTimeout(bindAgents, 0);
   const flowHtml = renderPipelineFlow(agents);
-  let prevPar = false;
+  // Заголовок «∥ параллельный шаг» показываем один раз перед первым включённым стражем —
+  // не по соседству со «своей группой» (позиция в списке — чисто отображение, порядок
+  // на выполнение не влияет), иначе перетаскивание/выключение стража посреди списка
+  // рвёт группу на несколько заголовков подряд.
+  let sepShown = false;
   const visible = agents.filter(a=>agentMatchesFilter(a, _agentFilter));
   const rows = visible.map((a)=>{
     const isPar = PARALLEL_ROLES.has(a.role) && a.enabled!==false;
-    const sep = (isPar && !prevPar) ? '<div class="par-sep" data-tip="Эти агенты-стражи работают одновременно (параллельно) — быстрее и независимо друг от друга.">∥ параллельный шаг</div>' : '';
-    prevPar = isPar;
+    const sep = (isPar && !sepShown) ? '<div class="par-sep" data-tip="Эти агенты-стражи работают одновременно (параллельно) — быстрее и независимо друг от друга.">∥ параллельный шаг</div>' : '';
+    if(isPar) sepShown = true;
     const isFactual = FACTUAL_GUARD_ROLES.has(a.role);
     const parTip = isFactual
       ? 'Фактический страж: работает параллельно на каждой итерации петли — ловит противоречия сразу, пока текст ещё меняется.'
