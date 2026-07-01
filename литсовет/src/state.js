@@ -71,7 +71,7 @@ export function defaultAgents(){
   return [
     { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:600, enabled:true, role:'architect',
       desc:'Планирует сцену: ключевые детали, шаги, запрещённые слова. Не пишет прозу — готовит каркас для Прозаика.' },
-    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:1600, enabled:true, role:'prose', loop:true,
+    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:2400, enabled:true, role:'prose', loop:true,
       desc:'Пишет прозу сцены по брифу и контексту. В петле с Оценщиком дорабатывает черновик, пока тот не примет.' },
     { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:900, enabled:true, role:'evaluator',
       desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },

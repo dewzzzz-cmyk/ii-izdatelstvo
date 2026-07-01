@@ -22,7 +22,7 @@ const _openAgents = new Set();
 function paramSpecs(a){
   const specs = [
     { key:'temp', label:'Температура', hint:'выше — креативнее, ниже — стабильнее', min:0, max:1, step:0.05, target:'agent', def:0.5, fmt:v=>v.toFixed(2) },
-    { key:'maxTokens', label:'Макс. токенов', hint:'потолок длины ответа', min:200, max:2400, step:100, target:'agent', def:700, fmt:v=>Math.round(v) },
+    { key:'maxTokens', label:'Макс. токенов', hint:'потолок длины ответа — Прозаику нужно ≥2400 для 700-слов. сцены', min:200, max:4000, step:100, target:'agent', def:700, fmt:v=>Math.round(v) },
   ];
   if(a.role==='evaluator'){
     specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля', min:5, max:9, step:0.5, target:'global', def:7, fmt:v=>v.toFixed(1) });
