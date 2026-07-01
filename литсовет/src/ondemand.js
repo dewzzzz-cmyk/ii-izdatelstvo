@@ -7,7 +7,7 @@ import { callLLM } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
-         styleGuardMessages, sceneQuestionMessages } from './guards.js';
+         styleGuardMessages, sceneQuestionMessages, readerGuardMessages } from './guards.js';
 import { bookContextBlock } from './context.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
@@ -48,7 +48,8 @@ export async function runAgentOnDemand(state, scene, agent){
     if(!(state.style?.rules||[]).filter(Boolean).length) throw new Error('Нет правил автора — добавьте их на вкладке «Голос» или кнопкой «⊕ В правило».');
     msgs = styleGuardMessages(draft, state.style.rules, agent.strictness);
   }
-  else                       msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
+  else if(role==='reader')    msgs = readerGuardMessages(scene, draft, agent.strictness);
+  else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
   const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }

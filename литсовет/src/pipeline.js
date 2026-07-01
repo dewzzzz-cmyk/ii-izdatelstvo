@@ -83,7 +83,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Стражи — часть той же петли, не отдельный цикл.
     // Прозаик получает объединённую директиву (оценщик + стражи вместе) и разбирает всё в [РАЗБОР].
     // Консенсус = Оценщик принял И Стражи молчат.
-    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля'};
+    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель'};
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
