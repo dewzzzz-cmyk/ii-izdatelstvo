@@ -15,6 +15,7 @@ import { parseFile } from '../import.js';
 import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 import { runHistoricalResearch } from '../historian.js';
+import { rebuildBibleVecs } from '../bible.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -406,6 +407,7 @@ function renderFactCards(facts, s){
       if(!f) return;
       if(!s.bible.some(b=>b.text===f.text)){
         s.bible.push({ keys: f.keys, text: f.text + (f.plotHook ? '\n💡 ' + f.plotHook : '') });
+        rebuildBibleVecs(s.bible);
         save();
       }
       btn.textContent='✓ В каноне'; btn.disabled=true;
