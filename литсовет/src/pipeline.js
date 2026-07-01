@@ -221,7 +221,11 @@ export async function runScene(state, scene, opts={}, onProgress){
                 : 'Стражи: замечаний нет',
               flags:flagList, state: flagList.length?'warn':'ok'}});
 
-            const manualGuard = ['voiceguard','logic','events','styleguard'].find(r=>agentEnabled(r)&&manual(state,r));
+            // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
+            // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
+            const guardCandidates = ['voiceguard','logic','events','styleguard','reader',
+              ...(state.agents||[]).filter(a=>a.custom).map(a=>a.id)];
+            const manualGuard = guardCandidates.find(r=>{ const a=ag(state,r); return a.enabled!==false && a.manual===true; });
             if(manualGuard && (evalAccepted || iter >= maxIter)){
               const gt = await gate(state, manualGuard, 'Стражи · флаги сцены', flagsText(flags), opts);
               if(gt.approve) criticals = [];
