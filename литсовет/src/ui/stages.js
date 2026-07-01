@@ -2,7 +2,7 @@
 // Структура (минимальный список сцен), Написание (редактор + запуск ядра).
 
 import { getState, save, uid, addRule } from '../state.js';
-import { extractVoice } from '../voice.js';
+import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { runScene, isRunning } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
@@ -263,7 +263,10 @@ export function renderVoice(els){
       ${mode==='sample'?`
         <div class="field"><label>Образец прозы <span class="hint">(3–5 абзацев вашего текста или ориентир)</span></label>
           <textarea id="sample" rows="9" placeholder="Вставьте сюда фрагмент прозы…">${esc(v.sample)}</textarea></div>
-        <div class="row"><button class="btn btn-primary" id="extract">Извлечь голос</button><span class="muted" id="vstatus"></span></div>
+        <div class="row"><button class="btn btn-primary" id="extract">Извлечь голос</button>
+          <button class="btn" id="analyzeManner" ${s.global.apiKey?'':'disabled'} title="${s.global.apiKey?'Разбирает диалоги, описание мира/окружения, синтаксис — отдельными правилами':'Задайте API-ключ в настройках'}">✨ Разобрать манеру письма</button>
+          <span class="muted" id="vstatus"></span></div>
+        <div id="mannerResults" style="margin-top:10px"></div>
       `:`
         <div class="field"><label>Загрузить готовую книгу серии <span class="hint">(.txt, .docx, .epub)</span></label>
           <input type="file" id="bookFile" accept=".txt,.docx,.epub"></div>
@@ -298,6 +301,21 @@ export function renderVoice(els){
     s.voice = extractVoice(sample, 5); save();
   };
 
+  const am=document.getElementById('analyzeManner');
+  if(am) am.onclick = async ()=>{
+    const sample = document.getElementById('sample').value.trim();
+    const st = document.getElementById('vstatus');
+    const resEl = document.getElementById('mannerResults');
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    am.disabled=true; st.innerHTML='<span class="spinner"></span> Разбираю манеру письма…'; resEl.innerHTML='';
+    try{
+      _mannerRules = await analyzeStyleManner(sample, s);
+      st.textContent = _mannerRules.length ? `Разобрано ${_mannerRules.length} правил.` : '';
+      renderMannerCards(_mannerRules, s);
+    }catch(e){ st.textContent='Ошибка: '+e.message; }
+    finally{ am.disabled=false; }
+  };
+
   const imp=document.getElementById('importBook');
   if(imp) imp.onclick = async ()=>{
     const file = document.getElementById('bookFile').files[0];
@@ -322,6 +340,28 @@ export function renderVoice(els){
   });
 
   document.getElementById('toStruct').onclick = ()=>{ s.ui.stage='structure'; save(); };
+}
+
+// Разбор манеры письма (✨): кэш последнего результата для рендера карточек,
+// каждое правило добавляется в Правила автора по отдельности — не молча всё сразу.
+let _mannerRules = [];
+function renderMannerCards(rules, s){
+  const el = document.getElementById('mannerResults');
+  if(!el) return;
+  if(!rules.length){ el.innerHTML='<div class="muted" style="font-size:12px">Правил не найдено.</div>'; return; }
+  el.innerHTML = rules.map((r,i)=>`
+    <div class="card" style="margin-bottom:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span style="font-size:12px;flex:1">${esc(r)}</span>
+      <button class="btn manner-add" data-i="${i}" style="font-size:11px;padding:3px 9px;flex-shrink:0">${(s.style.rules||[]).includes(r)?'✓ Добавлено':'+ Добавить'}</button>
+    </div>`).join('');
+  el.querySelectorAll('.manner-add').forEach(btn=>{
+    btn.onclick=()=>{
+      const r = rules[+btn.dataset.i]; if(!r) return;
+      const s=getState();
+      if(addRule(s, r)) save();
+      btn.textContent='✓ Добавлено'; btn.disabled=true;
+    };
+  });
 }
 
 // Ориентиры стиля (авторы/тексты для тона, не образец для копирования) — идут в
