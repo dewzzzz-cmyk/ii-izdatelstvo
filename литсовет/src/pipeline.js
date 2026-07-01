@@ -33,16 +33,6 @@ function buildUnifiedDirective(verdict, allBanned, criticalFlags){
   if(allBanned.length) parts.push('убери клише (все предыдущие итерации): ' + allBanned.join(', '));
   return parts.join('\n\n');
 }
-function formatVerdict(v){
-  if(!v || !v.ok) return 'Оценщик не вернул оценку.';
-  const lines = Object.entries(v.scores||{}).map(([k,val])=>`${k}: ${val}`);
-  return `Средневзвешенное: ${v.weighted}/10 (мин. ось ${v.minAxis})\n` +
-    lines.join('  ·  ') +
-    (v.anchors&&v.anchors.length?`\n\n✦ Якоря (не трогать): ${v.anchors.join('; ')}`:'') +
-    (v.cliches&&v.cliches.length?`\n\nКлише: ${v.cliches.join('; ')}`:'') +
-    (v.notes&&v.notes.length?`\n\nЗамечания:\n– ${v.notes.join('\n– ')}`:'') +
-    (v.questions&&v.questions.length?`\n\n? Вопросы автору:\n– ${v.questions.join('\n– ')}`:'');
-}
 function flagsText(flags){
   const all=[]; Object.entries(flags).forEach(([role,arr])=>(arr||[]).forEach(f=>all.push(`[${f.severity}] ${f.title}: ${f.detail||''}`)));
   return all.length? all.join('\n') : 'Флагов нет.';
@@ -138,7 +128,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         onProgress && onProgress({log:{icon:'⚠️', text:`Контекст заполнен на ${_pct}% — часть памяти (сводки сцен, глав) могла быть урезана. Увеличьте бюджет в Настройках или свёртывайте старые сцены.`, state:'warn'}});
       }
 
-      if(manual(state,'prose')){
+      // Если Оценщик тоже ручной, его гейт покажет тот же черновик + оценку сразу после —
+      // не спрашиваем дважды подряд одно и то же без контекста.
+      const evaluatorWillGate = agentEnabled('evaluator') && manual(state,'evaluator');
+      if(manual(state,'prose') && !evaluatorWillGate){
         const gt = await gate(state,'prose','Прозаик'+(iter>1?` · итерация ${iter}`:''), '', opts, {draft:pRes.text, editable:true});
         if(!gt.approve){ directive=gt.note||directive; prevDraft=''; iter--; continue; }
         if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
@@ -174,7 +167,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         const allBanned = [...bannedCliches];
 
         if(manual(state,'evaluator')){
-          const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, formatVerdict(verdict), opts, {draft:pRes.text, editable:true, verdict});
+          const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, '', opts, {draft:pRes.text, editable:true, verdict});
           if(gt.approve){ best=(gt.text?.trim())||pRes.text; bestEval=verdict; break; }
           if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
           directive = gt.note || buildUnifiedDirective(verdict, allBanned, []) || directive;
