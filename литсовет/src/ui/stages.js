@@ -16,6 +16,7 @@ import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 import { runHistoricalResearch } from '../historian.js';
 import { rebuildBibleVecs } from '../bible.js';
+import { openRuleModal } from './rule-modal.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -1137,14 +1138,11 @@ function approvalGate({role, label, output, draft, editable, verdict}){
         <button class="btn btn-primary" id="apvOk">✓ Принять</button>
       </div>
     </div></div>`;
-    // ⊕ В правило: рождаем правило прямо из вердикта. Без save() — идёт прогон и
+    // ⊕ В правило: рождаем правило прямо из вердикта. skipSave — идёт прогон и
     // ре-рендер оторвёт ссылку на редактор; правило в памяти сразу действует на
     // следующую доработку, а на диск попадёт при завершении прогона.
     document.querySelectorAll('.apv-rule').forEach(b=>b.onclick=()=>{
-      const t=prompt('Правило автора (как принцип, не привязка к одной сцене):', b.dataset.rule);
-      if(t==null||!t.trim()) return;
-      addRule(getState(), t.trim());
-      b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true;
+      openRuleModal(b.dataset.rule, { skipSave:true, onSave:()=>{ b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true; } });
     });
     const getText=()=>{ const t=document.getElementById('apvDraft'); return t? t.value : undefined; };
     document.getElementById('apvOk').onclick=()=>{ const text=getText(); root.innerHTML=''; resolve({approve:true, text}); };
@@ -1243,8 +1241,7 @@ function initSelectionMenu(edEl, scene, els){
       menu.style.display='none';
       if(b.dataset.act==='__rule'){
         const sel=edEl.textContent.slice(sel0, sel1).trim();
-        const t=prompt('Правило автора:', 'избегай оборотов вроде «'+sel.slice(0,80)+'»');
-        if(t&&t.trim()){ addRule(getState(), t.trim()); save(); }
+        openRuleModal('избегай оборотов вроде «'+sel.slice(0,80)+'»');
         return;
       }
       applyInlineEdit(scene, edEl, b.dataset.act, sel0, sel1);

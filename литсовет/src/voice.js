@@ -81,6 +81,25 @@ export async function analyzeStyleManner(sample, state){
   return Array.isArray(j?.rules) ? j.rules.filter(Boolean) : [];
 }
 
+// Превращает разовое наблюдение (клише/замечание/цитата фрагмента), привязанное
+// к конкретному месту в тексте, в общий принцип письма — для кнопки "⊕ В правило".
+export async function generalizeToRule(text, state){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  if(!(text||'').trim()) throw new Error('Нечего обобщать.');
+  const msgs = [
+    { role:'system', content: 'Ты помогаешь автору превращать разовое наблюдение о своём тексте в общий принцип письма — применимый ко всем будущим сценам, а не привязанный к одной.' },
+    { role:'user', content: [
+      'НАБЛЮДЕНИЕ (привязано к конкретному месту в тексте):',
+      text,
+      '',
+      'Переформулируй как ОБЩЕЕ правило-принцип для автора: одно предложение, без ссылок на конкретную сцену, фразу или имя персонажа. Верни только текст правила, без кавычек и пояснений.',
+    ].join('\n') },
+  ];
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:200 });
+  return (res.text||'').trim().replace(/^["«]+|["»]+$/g,'');
+}
+
 // Текстовый блок голоса для промпта (только примеры + запреты).
 export function voicePromptBlock(voice, forbidden){
   const lines = [];

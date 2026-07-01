@@ -1,9 +1,10 @@
 // Правая панель: диагностический режим — toggle агентов + трейс прогонов.
 
-import { getState, save, addCustomAgent, removeAgent, addRule } from '../state.js';
+import { getState, save, addCustomAgent, removeAgent } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
+import { openRuleModal } from './rule-modal.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 // Нормализует прозаический текст для HTML: одиночный \n внутри абзаца → пробел, двойной \n\n → <br><br>
@@ -629,9 +630,6 @@ function openAgentResult(agent, result, scene){
     sc.text=result.text; sc.words=(result.text.match(/\S+/g)||[]).length; save(); close();
   };
   document.querySelectorAll('.ares-rule').forEach(b=>b.onclick=()=>{
-    const t=prompt('Правило автора (как принцип, не привязка к одной сцене):', b.dataset.rule);
-    if(t==null||!t.trim()) return;
-    addRule(getState(), t.trim()); save();
-    b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true;
+    openRuleModal(b.dataset.rule, { onSave:()=>{ b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true; } });
   });
 }
