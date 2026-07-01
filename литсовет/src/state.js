@@ -210,19 +210,23 @@ function migrate(s){
   s.global  = Object.assign({}, d.global, s.global);
   s.memory  = Object.assign({}, d.memory, s.memory);
   s.diagnostics = s.diagnostics || { runs: [] };
-  // Мердж агентов по id: сохраняем пользовательские enabled/temp, до-добавляем новых агентов из дефолтов.
+  // Мердж агентов по id: сохраняем пользовательские enabled/temp и ПОРЯДОК, до-добавляем новых из дефолтов.
   if(!s.agents || !s.agents.length){ s.agents = d.agents; }
   else {
-    const byId = Object.fromEntries(s.agents.map(a=>[a.id, a]));
     const KEEP = ['enabled','temp','maxTokens','strictness','manual'];
-    const builtins = d.agents.map(da => {
-      if(!byId[da.id]) return da;
+    const defById = Object.fromEntries(d.agents.map(a=>[a.id, a]));
+    // Идём по СОХРАНЁННОМУ порядку — пользовательская перестановка сохраняется.
+    const storedIds = new Set(s.agents.map(a=>a.id));
+    const updated = s.agents.filter(a=>!a.custom).map(a=>{
+      const da = defById[a.id]; if(!da) return null; // удалённый дефолт — выкинуть
       const merged = Object.assign({}, da);
-      KEEP.forEach(k=>{ if(byId[da.id][k]!==undefined) merged[k]=byId[da.id][k]; });
+      KEEP.forEach(k=>{ if(a[k]!==undefined) merged[k]=a[k]; });
       return merged;
-    });
-    const customs = s.agents.filter(a=>a.custom); // кастомные агенты сохраняем как есть
-    s.agents = [...builtins, ...customs];
+    }).filter(Boolean);
+    // Новые встроенные агенты (добавлены в дефолты после последнего сохранения) — в конец.
+    const newBuiltins = d.agents.filter(da=>!da.custom && !storedIds.has(da.id));
+    const customs = s.agents.filter(a=>a.custom);
+    s.agents = [...updated, ...newBuiltins, ...customs];
   }
   s.ui = Object.assign({}, d.ui, s.ui);
   s.characters = s.characters || [];
