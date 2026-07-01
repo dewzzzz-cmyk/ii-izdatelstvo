@@ -73,9 +73,17 @@ function renderFlags(scene){
   all.sort((a,b)=>(SEV_RANK[a.severity]??1)-(SEV_RANK[b.severity]??1));
   const crit = all.filter(f=>f.severity==='critical').length;
   const warn = all.filter(f=>f.severity==='warning').length;
+  const fixable = all.filter(f=>f.severity!=='ok').length;
   return `<div class="ph">Флаги сцены <span style="font-weight:400;text-transform:none;letter-spacing:0">${crit?crit+' критич':''}${crit&&warn?', ':''}${warn?warn+' предупр':''}${!crit&&!warn?'норма':''}</span></div>
-    <div class="flags-list">
-      ${all.map(f=>`<div class="flag-item">
+    ${fixable>1?`<div class="flags-toolbar" id="flagsToolbar">
+      <label class="fl-selall"><input type="checkbox" id="flagSelAll"> Выбрать все (${fixable})</label>
+      <span id="flagSelCount" class="muted" style="font-size:12px"></span>
+      <button class="btn" id="flagMultiFix" style="display:none" data-tip="Точечная правка сразу по всем выбранным замечаниям">→ Прозаику</button>
+      <button class="btn" id="flagMultiRewrite" style="display:none" data-tip="Переписать сцену с учётом всех выбранных замечаний">↺ Переписать все</button>
+    </div>`:''}
+    <div class="flags-list" id="flagsList">
+      ${all.map((f,i)=>`<div class="flag-item${f.severity!=='ok'?' flag-selectable':''}" data-fi="${i}">
+        ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+f.detail)}" data-fi="${i}"></label>`:''}
         <div class="flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span>
           <span class="flag-role">${GUARD_LABELS[f.role] || (getState().agents.find(a=>a.id===f.role)?.name) || f.role}</span></div>
         <div class="flag-title">${esc(f.title)}</div>
@@ -90,10 +98,12 @@ function renderFlags(scene){
 }
 
 function bindFlagFix(){
+  // individual → Прозаику
   document.querySelectorAll('.flag-fix').forEach(b=>b.onclick=()=>{
     b.textContent='⏳ Запускаю…'; b.disabled=true;
     document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix}}));
   });
+  // individual ↺ Переписать (2-click confirmation)
   document.querySelectorAll('.flag-rewrite').forEach(b=>b.onclick=()=>{
     if(b.dataset.confirmed==='1'){
       b.textContent='⏳ Запускаю…'; b.disabled=true;
@@ -105,6 +115,78 @@ function bindFlagFix(){
     b.style.cssText='background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)';
     setTimeout(()=>{ if(b.dataset.confirmed==='1'){ delete b.dataset.confirmed; b.textContent=orig; b.style.cssText=''; } }, 3000);
   });
+
+  // multi-select: click anywhere on flag-item (except buttons/checkbox) toggles checkbox
+  document.querySelectorAll('.flag-selectable').forEach(item=>{
+    item.addEventListener('click', e=>{
+      if(e.target.closest('button')||e.target.closest('.flag-cb-wrap')) return;
+      const cb=item.querySelector('.flag-cb'); if(!cb) return;
+      cb.checked=!cb.checked; cb.dispatchEvent(new Event('change',{bubbles:true}));
+    });
+  });
+
+  function updateMultiBar(){
+    const cbs=[...document.querySelectorAll('.flag-cb')];
+    const checked=cbs.filter(c=>c.checked);
+    const n=checked.length;
+    const fixBtn=document.getElementById('flagMultiFix');
+    const rwBtn=document.getElementById('flagMultiRewrite');
+    const countEl=document.getElementById('flagSelCount');
+    if(!fixBtn) return;
+    if(n>0){
+      countEl.textContent=`${n} выбрано`;
+      fixBtn.style.display=''; fixBtn.textContent=`→ Прозаику (${n})`;
+      rwBtn.style.display=''; rwBtn.textContent=`↺ Переписать выбранные (${n})`;
+    } else {
+      countEl.textContent='';
+      fixBtn.style.display='none';
+      rwBtn.style.display='none';
+    }
+    // sync select-all checkbox state
+    const selAll=document.getElementById('flagSelAll');
+    if(selAll){ selAll.checked=n===cbs.length && n>0; selAll.indeterminate=n>0&&n<cbs.length; }
+  }
+
+  document.querySelectorAll('.flag-cb').forEach(cb=>cb.addEventListener('change', ()=>{
+    cb.closest('.flag-selectable')?.classList.toggle('flag-selected', cb.checked);
+    updateMultiBar();
+  }));
+
+  const selAll=document.getElementById('flagSelAll');
+  if(selAll) selAll.onchange=()=>{
+    document.querySelectorAll('.flag-cb').forEach(cb=>{
+      cb.checked=selAll.checked;
+      cb.closest('.flag-selectable')?.classList.toggle('flag-selected', selAll.checked);
+    });
+    updateMultiBar();
+  };
+
+  function combinedDirective(){
+    const checks=[...document.querySelectorAll('.flag-cb:checked')];
+    if(!checks.length) return null;
+    return checks.map((c,i)=>`${i+1}. ${c.dataset.fix}`).join('\n');
+  }
+
+  const fixBtn=document.getElementById('flagMultiFix');
+  if(fixBtn) fixBtn.onclick=()=>{
+    const d=combinedDirective(); if(!d) return;
+    fixBtn.textContent='⏳ Запускаю…'; fixBtn.disabled=true;
+    document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d}}));
+  };
+
+  const rwBtn=document.getElementById('flagMultiRewrite');
+  if(rwBtn) rwBtn.onclick=()=>{
+    if(rwBtn.dataset.confirmed==='1'){
+      const d=combinedDirective(); if(!d) return;
+      rwBtn.textContent='⏳ Запускаю…'; rwBtn.disabled=true;
+      document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d, rewrite:true}}));
+      return;
+    }
+    const orig=rwBtn.textContent;
+    rwBtn.dataset.confirmed='1'; rwBtn.textContent='Нажми ещё раз — точно?';
+    rwBtn.style.cssText='background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)';
+    setTimeout(()=>{ if(rwBtn.dataset.confirmed==='1'){ delete rwBtn.dataset.confirmed; rwBtn.textContent=orig; rwBtn.style.cssText=''; } }, 3000);
+  };
 }
 
 // Анализ сцены (правая панель, верх): строка вопроса + флаги Стражей.
