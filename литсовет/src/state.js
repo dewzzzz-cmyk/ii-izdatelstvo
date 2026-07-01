@@ -175,7 +175,9 @@ export async function init(){
 }
 
 export function newProject(){
+  const prevKey = _state?.global?.apiKey || '';
   _state = defaultState();
+  _state.global.apiKey = prevKey;
   lsSet('litsovet_last', _state.id);
   save();
   return _state;
