@@ -254,7 +254,13 @@ export async function runScene(state, scene, opts={}, onProgress){
             onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена`, state:'warn'}});
           }
         }
-        directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote;
+        // Бан точной фразы не спасает от клише — модель просто перефразирует ту же идею
+        // ("сердце в горле" → "кожа на затылке стянулась"). Категорию называет сам
+        // Оценщик (clicheCategory) — надёжнее самодельного словаря стемов/ключевых слов.
+        const categoryNote = directiveVerdict.clicheCategory
+          ? '\n\nИЗБЕГАЙ ЦЕЛОЙ КАТЕГОРИИ (не просто других слов той же идеи): ' + directiveVerdict.clicheCategory + ' — передай тревогу через другой канал: звук, свет, память, деталь обстановки.'
+          : '';
+        directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote + categoryNote;
       }
     }
     if(!best) best = prevDraft || '';

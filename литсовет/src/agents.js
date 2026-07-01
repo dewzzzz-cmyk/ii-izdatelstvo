@@ -82,8 +82,9 @@ export function evaluatorMessages(scene, draft, voiceExamples, bookContext, rule
     'ЧЕРНОВИК:',
     draft,
     '',
-    'Верни JSON: { "cliches": [процитированные клише, 0-2], "anchors": [короткие дословные цитаты из текста которые нельзя трогать, 1-2], "questions": [спорные художественные выборы для автора, 0-2], "scores": {"freshness":n,"rhythm":n,"concrete":n,"voice":n,"brief":n}, "notes": [замечания для переработки с привязкой к фрагментам, 1-4] }',
+    'Верни JSON: { "cliches": [процитированные клише, 0-2], "clicheCategory": "если clichés не пусто — к какому ОБЩЕМУ приёму они относятся (не сами слова, а тип: например «телесные маркеры тревоги», «олицетворение природы», «механика движения рук»); иначе пустая строка", "anchors": [короткие дословные цитаты из текста которые нельзя трогать, 1-2], "questions": [спорные художественные выборы для автора, 0-2], "scores": {"freshness":n,"rhythm":n,"concrete":n,"voice":n,"brief":n}, "notes": [замечания для переработки с привязкой к фрагментам, 1-4] }',
     'Баллы — целые 1-10. notes должны указывать ЧТО и ГДЕ исправить через принцип или критерий («нужна сенсорная деталь», «слишком абстрактно»)' + (bookContext ? ' и учитывать контекст книги (канон, сюжет, персонажей)' : '') + '. НЕ давай готовые формулировки замен — только направление.',
+    'clicheCategory важна не меньше самих цитат: автор правит точечно только буквальные слова, если не назвать сам приём, который повторяется вместо конкретики.',
     'Только JSON.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -107,6 +108,7 @@ export function parseEvaluator(text, threshold){
     pass,
     notes: Array.isArray(j.notes) ? j.notes : [],
     cliches: Array.isArray(j.cliches) ? j.cliches : [],
+    clicheCategory: typeof j.clicheCategory === 'string' ? j.clicheCategory.trim() : '',
     anchors: Array.isArray(j.anchors) ? j.anchors : [],
     questions: Array.isArray(j.questions) ? j.questions : [],
   };
