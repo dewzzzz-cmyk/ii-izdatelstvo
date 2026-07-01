@@ -100,12 +100,14 @@ function renderFlags(scene){
 function bindFlagFix(){
   // individual → Прозаику
   document.querySelectorAll('.flag-fix').forEach(b=>b.onclick=()=>{
+    if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     b.textContent='⏳ Запускаю…'; b.disabled=true;
     document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix}}));
   });
   // individual ↺ Переписать (2-click confirmation)
   document.querySelectorAll('.flag-rewrite').forEach(b=>b.onclick=()=>{
     if(b.dataset.confirmed==='1'){
+      if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
       b.textContent='⏳ Запускаю…'; b.disabled=true;
       document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:b.dataset.fix, rewrite:true}}));
       return;
@@ -170,6 +172,7 @@ function bindFlagFix(){
   const fixBtn=document.getElementById('flagMultiFix');
   if(fixBtn) fixBtn.onclick=()=>{
     const d=combinedDirective(); if(!d) return;
+    if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     fixBtn.textContent='⏳ Запускаю…'; fixBtn.disabled=true;
     document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d}}));
   };
@@ -178,6 +181,7 @@ function bindFlagFix(){
   if(rwBtn) rwBtn.onclick=()=>{
     if(rwBtn.dataset.confirmed==='1'){
       const d=combinedDirective(); if(!d) return;
+      if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
       rwBtn.textContent='⏳ Запускаю…'; rwBtn.disabled=true;
       document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d, rewrite:true}}));
       return;
