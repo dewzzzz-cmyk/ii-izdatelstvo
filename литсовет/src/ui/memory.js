@@ -93,6 +93,12 @@ function openBlindRating(){
   document.querySelectorAll('.cal-n').forEach(b=>b.onclick=()=>{
     const adj = recordRating(scene.id, parseInt(b.dataset.n));
     close();
+    if(adj){
+      const t=document.createElement('div');
+      t.style.cssText='position:fixed;bottom:20px;right:20px;z-index:9999;padding:10px 16px;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.3);animation:fadeIn .2s';
+      t.textContent=`⚖️ Порог Оценщика → ${adj.threshold}/10 (вы ${adj.authorAvg} / ИИ ${adj.evalAvg})`;
+      document.body.appendChild(t); setTimeout(()=>t.remove(),5000);
+    }
   });
 }
 

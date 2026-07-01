@@ -267,7 +267,16 @@ export function renderVoice(els){
         <div class="field"><label>Загрузить готовую книгу серии <span class="hint">(.txt, .docx, .epub)</span></label>
           <input type="file" id="bookFile" accept=".txt,.docx,.epub"></div>
         <div class="row"><button class="btn btn-primary" id="importBook">Импортировать и извлечь</button><span class="muted" id="vstatus"></span></div>
-        ${(s.series||[]).length?`<div class="muted" style="margin-top:12px">Загруженные книги: ${(s.series||[]).map(b=>esc(b.title)).join(', ')}</div>`:''}
+        ${(s.series||[]).length?`
+          <div class="muted" style="margin-top:12px;margin-bottom:6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Загруженные книги</div>
+          ${s.series.map((b,i)=>`<div class="card" style="margin-bottom:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:500">${esc(b.title)}</div>
+              ${b.summary?`<div class="muted" style="font-size:11px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(b.summary.slice(0,80))}…</div>`:''}
+            </div>
+            <button class="btn" style="font-size:11px;padding:2px 7px;flex-shrink:0" data-si="${i}" title="Удалить книгу из серии">✕</button>
+          </div>`).join('')}
+        `:''}
       `}
       ${renderRulesEditor(s)}
 
@@ -304,6 +313,10 @@ export function renderVoice(els){
     }catch(e){ st.textContent='Ошибка: '+e.message; }
     finally{ imp.disabled=false; }
   };
+  document.querySelectorAll('[data-si]').forEach(b=>b.onclick=()=>{
+    const s=getState(); const i=+b.dataset.si;
+    if(i>=0&&i<(s.series||[]).length){ s.series.splice(i,1); save(); }
+  });
 
   document.getElementById('toStruct').onclick = ()=>{ s.ui.stage='structure'; save(); };
 }
@@ -757,6 +770,12 @@ export function renderWrite(els){
     <div class="brief-box">
       <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
         <textarea id="brief" rows="4">${esc(scene.brief)}</textarea></div>
+      ${s.characters&&s.characters.length?`<div class="field" style="margin:0 0 10px">
+        <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Персонажи в сцене <span class="hint">(отметьте присутствующих — Стражи увидят их состояния)</span></label>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">
+          ${s.characters.map(c=>{const on=(scene.presentChars||[]).includes(c.name); return `<label class="pc-tag${on?' active':''}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:12px;border:1px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent-dim)':'transparent'};cursor:pointer"><input type="checkbox" class="pc-cb" data-name="${esc(c.name)}" ${on?'checked':''} style="display:none"><span>${esc(c.name)}</span></label>`; }).join('')}
+        </div>
+      </div>`:''}
       <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Сказать агенту, что изменить</label>
       <div class="ia-row">
         <input type="text" id="directive" class="ia-input" placeholder="напр.: «сделай финал тревожнее», «убери описание погоды»">
@@ -773,6 +792,16 @@ export function renderWrite(els){
     </div>
     ${(()=>{ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nx=idx>=0&&idx<scenes.length-1?scenes[idx+1]:null; return nx?`<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="btn" id="nextScene">→ ${esc(nx.title)}</button></div>`:''; })()}`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
+  document.querySelectorAll('.pc-cb').forEach(cb=>cb.addEventListener('change', ()=>{
+    scene.presentChars=[...document.querySelectorAll('.pc-cb:checked')].map(c=>c.dataset.name);
+    document.querySelectorAll('.pc-tag').forEach(l=>{
+      const on=l.querySelector('.pc-cb').checked;
+      l.classList.toggle('active',on);
+      l.style.borderColor=on?'var(--accent)':'var(--border)';
+      l.style.background=on?'var(--accent-dim)':'transparent';
+    });
+    save();
+  }));
 
   // редактирование текста автором → отметка «рука автора»
   const edEl = document.getElementById('editor');
@@ -863,6 +892,24 @@ export function renderRoadmap(s){
   </div>`;
 }
 
+function exportPdf(s){
+  const title = esc(s.project.title||'Книга');
+  const nodes = s.structure||[];
+  let body='';
+  nodes.forEach(n=>{
+    if(n.type==='chapter') body+=`<h2>${esc(n.title)}</h2>`;
+    else if(n.type==='scene'&&n.text) body+=`<div class="scene"><h3>${esc(n.title)}</h3><div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
+  });
+  const html=`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title><style>
+    @page{margin:2cm 2.5cm}body{font-family:Georgia,serif;font-size:12pt;line-height:1.7;color:#111;max-width:680px;margin:0 auto}
+    h1{font-size:22pt;text-align:center;margin:3cm 0 1cm}h2{font-size:16pt;margin:2cm 0 .5cm;border-bottom:1px solid #ccc;padding-bottom:.3cm}
+    h3{font-size:12pt;font-weight:normal;font-style:italic;color:#555;margin:.8cm 0 .2cm}.prose p{text-indent:1.5em;margin:.15em 0}
+    .prose p:first-child{text-indent:0}@media print{h2{page-break-before:always}}
+  </style></head><body><h1>${title}</h1>${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
+  const w=window.open('','_blank'); if(!w) return;
+  w.document.write(html); w.document.close();
+}
+
 // Редактура — чтение собранной книги целиком + экспорт. Роадмап теперь живёт
 // в правой панели «Написания», поэтому здесь — только книга как книга.
 export function renderEdit(els){
@@ -891,6 +938,7 @@ export function renderEdit(els){
       <button class="btn" id="exMd">📕 .md</button>
       <button class="btn" id="exDocx">📄 .doc</button>
       <button class="btn" id="exEpub">📗 .epub</button>
+      <button class="btn" id="exPdf">🖨 .pdf</button>
       <button class="btn" id="exJson">⬇ .json</button>
     </div>
     <div class="read-body">${doneScenes.length?body:'<div class="empty-state">Напишите сцены — здесь книга соберётся целиком для финального чтения.</div>'}</div>`;
@@ -899,6 +947,7 @@ export function renderEdit(els){
   document.getElementById('exDocx').onclick=()=>exportDocx(s);
   document.getElementById('exEpub').onclick=()=>exportEpub(s);
   document.getElementById('exJson').onclick=()=>exportJson(s);
+  document.getElementById('exPdf').onclick=()=>exportPdf(s);
 }
 function stageDoneFor(s,id){
   switch(id){
