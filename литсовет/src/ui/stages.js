@@ -990,15 +990,18 @@ export function renderWrite(els){
   if(edU) edU.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('undo'); scene.text=ed.innerText; scene._dirty=true; } };
   if(edR) edR.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('redo'); scene.text=ed.innerText; scene._dirty=true; } };
 
-  // Откат ПЕРЕГЕНЕРАЦИИ (как было) — вернуть прошлый вариант прозы
+  // Откат ПЕРЕГЕНЕРАЦИИ (как было) — вернуть прошлый вариант прозы.
+  // Честный откат (LIFO), не свап с той же позицией — см. фикс revertSkeleton:
+  // раньше клали текущий текст обратно в версии, и второй клик возвращал вперёд,
+  // а более старые варианты становились навсегда недостижимы.
   const rp=document.getElementById('revertProse');
   if(rp) rp.onclick = ()=>{
     if(!scene.proseVersions||!scene.proseVersions.length) return;
-    const prev = scene.proseVersions.shift();
-    scene.proseVersions.unshift(scene.text);
-    scene.text = prev;
-    scene.words=(prev.match(/\S+/g)||[]).length;
+    scene.text = scene.proseVersions.shift();
+    scene.words=(scene.text.match(/\S+/g)||[]).length;
     scene.handDone=false;
+    // Оценка/флаги относились к отменяемому тексту — теперь они не про то, что на экране.
+    scene.lastEval=null; scene.flags={};
     save();
   };
 

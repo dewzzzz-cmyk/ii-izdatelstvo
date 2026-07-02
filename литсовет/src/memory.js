@@ -69,11 +69,11 @@ export function rollback(state, level, id, versionIdx){
   const bucket = state.memory[level];
   const entry = bucket && bucket[id];
   if(!entry || !entry.versions[versionIdx]) return false;
-  const restore = entry.versions[versionIdx].text;
-  // текущее уходит в версии, восстановленное становится текущим
-  entry.versions.splice(versionIdx,1);
-  entry.versions.unshift({ text: entry.current, at: Date.now() });
-  entry.current = restore;
+  // Честный откат (LIFO): раньше клали текущее обратно в ту же позицию, из
+  // которой брали версию — второй клик по «↶» возвращал вперёд, а версии
+  // старше первой становились навсегда недостижимы, хотя счётчик кнопки
+  // обещал N версий назад (см. фикс revertSkeleton).
+  entry.current = entry.versions.splice(versionIdx,1)[0].text;
   return true;
 }
 
