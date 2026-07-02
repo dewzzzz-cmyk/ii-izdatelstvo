@@ -7,7 +7,8 @@ import { callLLM } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
-         styleGuardMessages, sceneQuestionMessages, readerGuardMessages, imageryGuardMessages } from './guards.js';
+         styleGuardMessages, sceneQuestionMessages, readerGuardMessages, imageryGuardMessages,
+         povGuardMessages, dialogueGuardMessages } from './guards.js';
 import { bookContextBlock } from './context.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
@@ -50,6 +51,8 @@ export async function runAgentOnDemand(state, scene, agent){
   }
   else if(role==='reader')    msgs = readerGuardMessages(scene, draft, agent.strictness);
   else if(role==='imagery')   msgs = imageryGuardMessages(draft, agent.strictness);
+  else if(role==='pov')       msgs = povGuardMessages(draft, agent.strictness);
+  else if(role==='dialogue')  msgs = dialogueGuardMessages(draft, agent.strictness);
   else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
   const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
   return { kind:'guard', flags: runGuardParse(res.text) };
