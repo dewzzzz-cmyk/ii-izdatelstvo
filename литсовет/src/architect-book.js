@@ -293,9 +293,11 @@ export function pushSkeletonVersion(state){
 }
 export function revertSkeleton(state){
   if(!state.skeletonVersions || !state.skeletonVersions.length) return false;
-  const prev = state.skeletonVersions.shift();
-  state.skeletonVersions.unshift(JSON.parse(JSON.stringify(state.structure))); // текущее → в историю (свап, можно вернуться)
-  state.structure = prev;
+  // Честный откат по истории (LIFO), не свап с одной и той же версией: раньше
+  // повторный клик клал текущую структуру обратно на то же место в истории —
+  // второй клик просто возвращал вперёд, а версии старше первой были
+  // навсегда недостижимы, хотя счётчик кнопки обещал «N» шагов назад.
+  state.structure = state.skeletonVersions.shift();
   return true;
 }
 

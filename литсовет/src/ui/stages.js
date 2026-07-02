@@ -685,7 +685,11 @@ export function renderStructure(els){
   };
 
   const rs=document.getElementById('revertSkeleton');
-  if(rs) rs.onclick = ()=>{ if(revertSkeleton(s)) save(); };
+  if(rs) rs.onclick = ()=>{
+    // Оценка Оценщика относилась к отменяемой структуре — после отката она
+    // описывала бы уже не то, что показано на экране (устаревшие оси/замечания).
+    if(revertSkeleton(s)){ s.structureEval=null; save(); }
+  };
 
   // Кнопки оценщика структуры
   const evalDismiss = document.getElementById('evalDismiss');
