@@ -12,6 +12,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          povGuardMessages, dialogueGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
+import { recordObservedPattern } from './state.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 export function isRunning(){ return _running; }
@@ -305,6 +306,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         const categoryNote = directiveVerdict.clicheCategory
           ? '\n\nИЗБЕГАЙ ЦЕЛОЙ КАТЕГОРИИ (не просто других слов той же идеи): ' + directiveVerdict.clicheCategory + ' — передай тревогу через другой канал: звук, свет, память, деталь обстановки.'
           : '';
+        // Запоминаем категорию на уровне книги (не только этой сцены) — если она
+        // всплывёт снова в другой сцене, автор увидит подсказку «уже случалось» в
+        // Памяти вместо того, чтобы Оценщик каждый раз находил её заново с нуля.
+        if(directiveVerdict.clicheCategory) recordObservedPattern(state, scene.id, directiveVerdict.clicheCategory);
         directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote + categoryNote;
       }
     }

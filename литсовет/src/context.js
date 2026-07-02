@@ -53,6 +53,14 @@ export function buildSceneContext(state, scene, opts={}){
   const rules = (style.rules||[]).filter(Boolean);
   if(rules.length) layers.push({ name:'rules', text:'=== ПРАВИЛА АВТОРА (соблюдай неукоснительно) ===\n'+rules.map(r=>'— '+r).join('\n'), fixed:true });
 
+  // 1c. Замеченные паттерны (мягкая память, не rules): категории клише, которые Оценщик
+  // уже находил в других сценах этой книги (см. recordObservedPattern в state.js). Это
+  // совет, не обязательство — потому не fixed, может быть обрезан при нехватке бюджета.
+  // Цель — упредить претензию Оценщика в первом же черновике, а не ждать, пока она
+  // снова всплывёт и придётся дорабатывать сцену по кругу.
+  const observed = (style.observed||[]).filter(o=>!o.dismissed && o.count>=2).sort((a,b)=>b.count-a.count).slice(0,5);
+  if(observed.length) layers.push({ name:'observed', text:'=== УЖЕ ЗАМЕЧАЛОСЬ В ЭТОЙ КНИГЕ (постарайся не повторять) ===\n'+observed.map(o=>'— '+o.category).join('\n') });
+
   // 2. Параметры проекта (жанр/тон) — короткий фикс
   const proj = state.project;
   const projBlock = [

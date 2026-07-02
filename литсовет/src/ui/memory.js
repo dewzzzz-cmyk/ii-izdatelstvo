@@ -1,12 +1,13 @@
 // Правая панель, вкладка «Память»: сводки (с откатом версий), состояния
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
-import { getState, save, mergeCharacters, charNamesMatch } from '../state.js';
+import { getState, save, mergeCharacters, charNamesMatch, dismissObserved } from '../state.js';
 import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 import { callLLM } from '../llm.js';
 import { rebuildBibleVecs } from '../bible.js';
+import { openRuleModal } from './rule-modal.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -66,6 +67,8 @@ export function renderMemory(){
       `:''}
 
       ${driftBlock(scenes)}
+
+      ${observedBlock(s)}
 
       ${sectionHeader('bible', `Канон / Bible (${(s.bible||[]).length})`, `<button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button>`)}
       ${collapsed.bible ? '' : ((s.bible||[]).map((b,i)=>`
@@ -160,6 +163,26 @@ function driftBlock(scenes){
     </div>`).join('')}`;
 }
 
+// Замеченные Оценщиком клише-категории, повторившиеся в ≥2 сценах этой книги
+// (state.style.observed[], копится через recordObservedPattern — см. pipeline.js).
+// Мягкая память: уже подмешивается в контекст Прозаика как совет (context.js), но
+// здесь автор может одним кликом закрепить это как жёсткое правило ⊕ или скрыть ✕.
+function observedBlock(s){
+  const items = (s.style?.observed||[]).map((o,i)=>({...o,i})).filter(o=>!o.dismissed && o.count>=2).sort((a,b)=>b.count-a.count);
+  if(!items.length) return '';
+  return `<div class="mem-h" title="Категории, которые Оценщик находил повторно в разных сценах — Прозаик уже видит их как совет в контексте следующих сцен">🔁 Повторяющиеся замечания</div>
+    ${items.map(o=>`<div class="mem-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+        <div style="font-size:12px;flex:1">${esc(o.category)}</div>
+        <div style="display:flex;gap:2px;flex-shrink:0">
+          <button class="bc-act obs-rule" data-oi="${o.i}" title="Закрепить как правило автора — впредь Прозаик не будет это порождать">⊕</button>
+          <button class="bc-act obs-dismiss" data-oi="${o.i}" title="Скрыть — не предлагать превращать в правило (не блокирует, только убирает из списка)">✕</button>
+        </div>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px">встречалось в ${o.count} сценах</div>
+    </div>`).join('')}`;
+}
+
 function bindMemory(){
   document.querySelectorAll('.mem-h-toggle').forEach(h=>h.onclick=(e)=>{
     if(e.target.closest('button')) return; // не сворачивать при клике на «+ факт» в заголовке
@@ -176,6 +199,17 @@ function bindMemory(){
   });
   document.querySelectorAll('.mem-rb').forEach(b=>{
     b.onclick=()=>{ const s=getState(); if(rollback(s, b.dataset.level, b.dataset.id, 0)){ save(); } };
+  });
+  // Повторяющиеся замечания: закрепить как правило / скрыть.
+  // openRuleModal сам вызывает addRule с (возможно отредактированным в модалке)
+  // текстом — здесь только убираем запись из «мягкого» списка после сохранения,
+  // не добавляем правило второй раз.
+  document.querySelectorAll('.obs-rule').forEach(b=>b.onclick=()=>{
+    const s=getState(); const oi=+b.dataset.oi; const o=(s.style?.observed||[])[oi]; if(!o) return;
+    openRuleModal(o.category, { onSave:()=>{ const st=getState(); if(dismissObserved(st, oi)) save(); } });
+  });
+  document.querySelectorAll('.obs-dismiss').forEach(b=>b.onclick=()=>{
+    const s=getState(); if(dismissObserved(s, +b.dataset.oi)) save();
   });
   // Персонажи: редактировать состояние
   function editCharState(i){
@@ -198,8 +232,10 @@ function bindMemory(){
     const text=prompt('Сам факт:'); if(!text) return;
     const s=getState(); s.bible.push({keys:keys.trim(), text:text.trim()}); rebuildBibleVecs(s.bible); save();
   };
-  // Bible: ред./AI-расширить/удалить
-  document.querySelectorAll('.bc-act:not(.char-edit):not(.char-merge)').forEach(b=>b.onclick=async (e)=>{
+  // Bible: ред./AI-расширить/удалить. Матчим по [data-bi] (только у Bible-кнопок),
+  // а не по классу bc-act — тот общий для char-edit/char-merge/obs-*, и раньше
+  // здесь уже был баг: общий класс перехватывал их onclick при перебиндинге.
+  document.querySelectorAll('.bc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
     if(b.dataset.act==='del'){ s.bible.splice(i,1); rebuildBibleVecs(s.bible); save(); return; }

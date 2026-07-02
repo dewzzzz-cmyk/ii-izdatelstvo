@@ -2,11 +2,11 @@
 // Единый объект state, персистентный в IndexedDB (storage.js).
 
 import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject } from './storage.js';
-import { rebuildBibleVecs } from './bible.js';
+import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.8.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -164,6 +164,45 @@ export function addRule(state, text){
   state.style = state.style || {}; state.style.rules = state.style.rules || [];
   if(state.style.rules.includes(text)) return false;
   state.style.rules.push(text); return true;
+}
+
+const OBSERVE_SIM = 0.5;
+function sameNote(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))) >= OBSERVE_SIM; }
+
+// Мягкая память замеченных Оценщиком клише-категорий (state.style.observed[]).
+// В отличие от rules — не «соблюдай неукоснительно», а «уже случалось в этой
+// книге N раз» с накоплением счётчика по сценам. Не становится жёстким правилом,
+// пока автор сам не закрепит через UI (ui/memory.js → openRuleModal → addRule).
+// Вызывается из pipeline.js каждый раз, когда Оценщик выдаёт clicheCategory для
+// текущей сцены — дедуп по sceneId внутри записи не даёт раздуть счётчик
+// повторными итерациями одной сцены.
+export function recordObservedPattern(state, sceneId, category){
+  const text = (category||'').trim(); if(!text) return;
+  state.style = state.style || {};
+  state.style.observed = state.style.observed || [];
+  if((state.style.rules||[]).some(r=>sameNote(r, text))) return; // уже стало явным правилом
+  const existing = state.style.observed.find(o=>!o.dismissed && sameNote(o.category, text));
+  if(existing){
+    if(!existing.sceneIds.includes(sceneId)){ existing.count++; existing.sceneIds.push(sceneId); existing.lastSeen = Date.now(); }
+  } else {
+    state.style.observed.push({ category:text, count:1, sceneIds:[sceneId], lastSeen: Date.now() });
+  }
+  // защита от разрастания на очень длинной книге: держим top-40 по частоте
+  if(state.style.observed.length > 40){
+    state.style.observed.sort((a,b)=>b.count-a.count || b.lastSeen-a.lastSeen);
+    state.style.observed.length = 40;
+  }
+}
+
+// Скрыть паттерн из «мягкого» списка — и когда автор закрепил его как правило
+// через openRuleModal (тот уже вызвал addRule сам, здесь только чистим список),
+// и когда решил «не сейчас». Не удаляем совсем: то же замечание, встретившись
+// снова, не должно открыться сразу с count:1 и запутать счётчик — помечаем
+// dismissed, recordObservedPattern такие пропускает при поиске совпадения
+// (новое вхождение заведёт свежую запись).
+export function dismissObserved(state, idx){
+  const o = (state.style?.observed||[])[idx]; if(!o) return false;
+  o.dismissed = true; return true;
 }
 
 let _agc = 0;
