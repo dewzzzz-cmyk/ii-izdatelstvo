@@ -10,6 +10,18 @@ import { rebuildBibleVecs } from '../bible.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// Свёрнутые секции панели «Память» — держим в модуле (не в state), это чисто
+// UI-удобство на сессию, не часть проекта. По умолчанию длинные списки свёрнуты,
+// чтобы не тонуть в персонажах/фактах при каждом открытии вкладки.
+const collapsed = { sceneSums:true, characters:true, bible:true };
+
+function sectionHeader(key, label, extraHtml=''){
+  const c = collapsed[key];
+  return `<div class="mem-h mem-h-toggle" data-sec="${key}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px">
+    <span>${c?'▸':'▾'} ${label}</span>${extraHtml}
+  </div>`;
+}
+
 export function renderMemory(){
   const s = getState();
   const mem = s.memory||{};
@@ -24,8 +36,8 @@ export function renderMemory(){
 
       ${renderCalibration(s)}
 
-      <div class="mem-h">Сводки сцен (${sceneSums.length})</div>
-      ${sceneSums.length ? sceneSums.map(n=>{
+      ${sectionHeader('sceneSums', `Сводки сцен (${sceneSums.length})`)}
+      ${collapsed.sceneSums ? '' : (sceneSums.length ? sceneSums.map(n=>{
         const e = mem.scenes[n.id];
         return `<div class="mem-card">
           <div class="mem-title">${esc(n.title)}</div>
@@ -35,11 +47,11 @@ export function renderMemory(){
             ${e.versions&&e.versions.length?`<button class="mem-rb" data-level="scenes" data-id="${n.id}">↶ откатить (${e.versions.length})</button>`:''}
           </div>
         </div>`;
-      }).join('') : '<div class="muted" style="margin-bottom:10px">Появятся после написания сцен.</div>'}
+      }).join('') : '<div class="muted" style="margin-bottom:10px">Появятся после написания сцен.</div>')}
 
       ${s.characters&&s.characters.length?`
-        <div class="mem-h">Персонажи (${s.characters.length})</div>
-        ${s.characters.map((c,i)=>{
+        ${sectionHeader('characters', `Персонажи (${s.characters.length})`)}
+        ${collapsed.characters ? '' : s.characters.map((c,i)=>{
           const dupOf = s.characters.find((c2,i2)=>i2!==i && charNamesMatch(c.name,c2.name));
           return `<div class="mem-card">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -55,8 +67,8 @@ export function renderMemory(){
 
       ${driftBlock(scenes)}
 
-      <div class="mem-h">Канон / Bible (${(s.bible||[]).length}) <button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button></div>
-      ${(s.bible||[]).map((b,i)=>`
+      ${sectionHeader('bible', `Канон / Bible (${(s.bible||[]).length})`, `<button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button>`)}
+      ${collapsed.bible ? '' : ((s.bible||[]).map((b,i)=>`
         <div class="mem-card bible-card" data-bi="${i}">
           <div class="bible-actions">
             <button class="bc-act" data-act="edit" data-bi="${i}" title="Редактировать">✏</button>
@@ -65,7 +77,7 @@ export function renderMemory(){
           </div>
           <div class="mem-title" style="color:var(--accent)">${esc(b.keys||'факт')}</div>
           <div class="muted" style="font-size:12px">${esc(b.text)}</div>
-        </div>`).join('') || '<div class="muted">Канон пуст — факты появятся при написании или добавьте вручную.</div>'}
+        </div>`).join('') || '<div class="muted">Канон пуст — факты появятся при написании или добавьте вручную.</div>')}
     </div>`;
 }
 
@@ -149,6 +161,12 @@ function driftBlock(scenes){
 }
 
 function bindMemory(){
+  document.querySelectorAll('.mem-h-toggle').forEach(h=>h.onclick=(e)=>{
+    if(e.target.closest('button')) return; // не сворачивать при клике на «+ факт» в заголовке
+    collapsed[h.dataset.sec] = !collapsed[h.dataset.sec];
+    const body = document.getElementById('rtabBody');
+    if(body) body.innerHTML = renderMemory();
+  });
   const cb=document.getElementById('calBtn'); if(cb) cb.onclick=openBlindRating;
   document.querySelectorAll('.mem-sum').forEach(t=>{
     t.addEventListener('change', ()=>{
