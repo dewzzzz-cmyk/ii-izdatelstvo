@@ -109,8 +109,11 @@ export function buildSceneContext(state, scene, opts={}){
   applyBudget(layers, BUDGET);
 
   const system = layers.map(l=>l.text).join(SEP);
-  const isFirstScene = (state.structure||[]).find(n=>n.type==='scene')?.id === scene.id;
-  const user = buildTask(scene, proj, opts, isFirstScene);
+  const scenesInOrder = (state.structure||[]).filter(n=>n.type==='scene');
+  const curIdx = scenesInOrder.findIndex(n=>n.id===scene.id);
+  const isFirstScene = curIdx === 0;
+  const prevSceneNode = curIdx > 0 ? scenesInOrder[curIdx-1] : null;
+  const user = buildTask(scene, proj, opts, isFirstScene, prevSceneNode);
 
   return {
     messages: [
@@ -121,7 +124,22 @@ export function buildSceneContext(state, scene, opts={}){
   };
 }
 
-function buildTask(scene, proj, opts, isFirstScene){
+// Секвель должен реагировать на КОНКРЕТНОЕ событие предыдущей сцены, не абстрактно —
+// иначе Прозаик получает шаблон «реакция→дилемма→решение» без привязки к сюжету.
+// Предпочитаем реальный текст (opts.prevSceneText), т.к. брифы иногда расходятся
+// с тем, что фактически написано; бриф — запасной вариант, если прозы ещё нет.
+function sequelConnectionNote(opts, prevSceneNode){
+  if(opts.prevSceneText){
+    const tail = opts.prevSceneText.trim().slice(-400);
+    return `Секвель идёт СРАЗУ после сцены${prevSceneNode?` «${prevSceneNode.title}»`:''}, вот чем она закончилась:\n«…${tail}»\nРеакция героя должна отвечать ИМЕННО на это событие/потрясение — не на произвольное, а на то, что случилось только что.`;
+  }
+  if(prevSceneNode && prevSceneNode.brief){
+    return `Секвель идёт СРАЗУ после сцены «${prevSceneNode.title}» — ${prevSceneNode.brief}\nРеакция героя должна отвечать ИМЕННО на это событие, не абстрактно.`;
+  }
+  return '';
+}
+
+function buildTask(scene, proj, opts, isFirstScene, prevSceneNode){
   const lines = [];
   const revising = !!opts.prevDraft;
   // При доработке директива идёт первой — иначе тонет в контексте ниже брифа и объёма
@@ -139,6 +157,10 @@ function buildTask(scene, proj, opts, isFirstScene){
   lines.push(scene.sceneType==='sequel'
     ? 'Тип сцены: СЕКВЕЛЬ (передышка). Структура: реакция героя на произошедшее → дилемма (взвешивание вариантов) → решение, которое ставит новую цель. Меньше внешнего действия, больше внутренней обработки. НЕ заканчивай новым потрясением — заканчивай принятым решением или ясным намерением.'
     : 'Тип сцены: СЦЕНА (растущее напряжение). Структура: цель героя ясна в начале → конфликт/препятствие мешает её достичь → сцена кончается ХУЖЕ, чем начиналась (поражение, осложнение, неожиданность). Не разрешай конфликт слишком легко и не смягчай финал сцены.');
+  if(scene.sceneType==='sequel' && !revising){
+    const note = sequelConnectionNote(opts, prevSceneNode);
+    if(note) lines.push(note);
+  }
   if(isFirstScene && !revising){
     lines.push('Это ПЕРВАЯ сцена книги — то, что читает литагент/редактор в первую очередь. Начни in medias res (в разгаре момента, не с описания места/погоды/предыстории). Первая же строка — конкретное действие или голос персонажа, не декорация. Никакой экспозиции до появления конфликта или вопроса, который зацепит.');
   }

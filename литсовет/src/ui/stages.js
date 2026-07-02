@@ -882,8 +882,9 @@ function renderSceneList(s){
     else if(n.type==='scene'){
       const sc = n.lastEval?.weighted;
       const scoreBadge = sc ? `<span class="sr-score ${n.lastEval.pass?'score-pass':'score-fail'}" title="Оценка оценщика: ${sc}">${sc}</span>` : '';
+      const seqBadge = n.sceneType==='sequel' ? '<span class="sk-seq-badge" title="Секвель — сцена реакции/передышки">↺</span> ' : '';
       html+=`<div class="scene-row ${s.ui.activeScene===n.id?'active':''}" data-sc="${n.id}">
-        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${esc(n.title)}</span>${scoreBadge}<span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
+        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${seqBadge}${esc(n.title)}</span>${scoreBadge}<span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
     }
   });
   return html;
@@ -909,7 +910,7 @@ export function renderWrite(els){
 
   els.center.innerHTML = `
     <div class="scene-bar">
-      <span class="scene-tag">Сцена</span>
+      <span class="scene-tag" data-tip="${scene.sceneType==='sequel'?'Секвель: реакция героя → дилемма → решение. Меньше внешнего действия, передышка после потрясения.':'Сцена: цель героя → конфликт → поражение/осложнение. Растущее напряжение.'}">${scene.sceneType==='sequel'?'↺ Секвель':'Сцена'}</span>
       <span class="scene-title">${esc(scene.title)}</span>
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
