@@ -318,6 +318,12 @@ textarea{resize:vertical;min-height:60px}
 .sb-text{font-size:11px;color:#633806;line-height:1.5;margin-bottom:8px}
 .sb-warn{font-size:11px;color:var(--err);margin-bottom:8px}
 
+/* ── Rejected notes (авторский выбор) ── */
+.rn-block{padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2,rgba(0,0,0,.015))}
+.rn-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;font-weight:600;color:var(--text-3);margin-bottom:6px}
+.rn-list{display:flex;flex-direction:column;gap:4px}
+.rn-item{font-size:11px;color:var(--text-2);line-height:1.4}
+
 /* ── Flags (guards) ── */
 .flags-list{padding:0}
 .flag-item{padding:7px 12px;border-bottom:1px solid var(--border)}

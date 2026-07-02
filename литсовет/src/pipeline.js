@@ -10,6 +10,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          parseDebateRevision, styleGuardMessages, readerGuardMessages, imageryGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
+import { tokensOf, tfvec, cosine } from './bible.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 export function isRunning(){ return _running; }
@@ -17,6 +18,27 @@ export function isRunning(){ return _running; }
 // Фактические стражи — бегут каждую итерацию, пока текст ещё меняется (в отличие от
 // литературных, которые видят текст только один раз, в конце).
 const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
+
+// Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
+// см. bible.js) — используется, чтобы не подсвечивать замечание, которое
+// Прозаик уже мотивированно отклонил как художественный приём.
+const REJECT_SIM_THRESHOLD = 0.4;
+function noteSimilarity(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))); }
+function isRejectedNote(text, rejectedNotes){
+  if(!rejectedNotes || !rejectedNotes.length || !text) return false;
+  return rejectedNotes.some(rn => noteSimilarity(text, rn.quote + ' ' + (rn.reason||'')) >= REJECT_SIM_THRESHOLD);
+}
+// Запоминает вновь отклонённые пункты на сцене (дедуп против уже сохранённых).
+function rememberRejected(scene, rejected){
+  if(!rejected || !rejected.length) return;
+  scene.rejectedNotes = scene.rejectedNotes || [];
+  rejected.forEach(r=>{
+    if(!r.quote) return;
+    const dup = scene.rejectedNotes.some(rn => noteSimilarity(rn.quote, r.quote) >= REJECT_SIM_THRESHOLD);
+    if(!dup) scene.rejectedNotes.push({ quote:r.quote, reason:r.reason||'', ts:Date.now() });
+  });
+  if(scene.rejectedNotes.length > 30) scene.rejectedNotes = scene.rejectedNotes.slice(-30);
+}
 
 // Конфиг агента по роли ИЛИ id (для кастомных). Настраивается ползунками.
 function ag(state, role){ return (state.agents||[]).find(a=>a.role===role || a.id===role) || {}; }
@@ -107,6 +129,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
         const parsed = parseDebateRevision(pRes.text);
         if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
+        if(parsed.rejected && parsed.rejected.length){
+          rememberRejected(scene, parsed.rejected);
+          onProgress && onProgress({log:{icon:'🖋', text:`Прозаик мотивированно отклонил ${parsed.rejected.length} замеч. (${parsed.rejected.map(r=>'«'+r.quote.slice(0,40)+'»').join(', ')}) — больше не будут подсвечиваться`}});
+        }
         if(parsed.truncated){
           onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: ответ обрезан токенами (нет секции [ТЕКСТ]) — используем предыдущий черновик', state:'warn'}});
           pRes.text = prevDraft;
@@ -211,6 +237,18 @@ export async function runScene(state, scene, opts={}, onProgress){
           if(guardJobs.length){
             onProgress && onProgress({stage:'guards', text:iter>1?`Стражи перепроверяют (итерация ${iter})…`:'Стражи проверяют сцену…'});
             await Promise.all(guardJobs);
+
+            // Замечания, которые Прозаик уже мотивированно отклонил (художественный
+            // приём) — не подсвечиваем повторно и не гоняем по кругу в директиве.
+            if(scene.rejectedNotes && scene.rejectedNotes.length){
+              let droppedCount = 0;
+              Object.keys(flags).forEach(role=>{
+                const before = (flags[role]||[]).length;
+                flags[role] = (flags[role]||[]).filter(f=>f.severity==='ok' || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes));
+                droppedCount += before - flags[role].length;
+              });
+              if(droppedCount) onProgress && onProgress({log:{icon:'🖋', text:`Скрыто ${droppedCount} замеч. — уже отклонено автором ранее как приём`}});
+            }
 
             const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
             // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):

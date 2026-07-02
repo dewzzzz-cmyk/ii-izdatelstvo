@@ -203,14 +203,29 @@ export function surgicalReviseMessages(draft, instruction, rules){
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
+// Разбирает пункты [РАЗБОР] вида «цитата» → ОТКЛОНЕНО: причина — Прозаик
+// мотивированно отказался вносить правку (художественный приём). Эти пункты
+// запоминаются на сцене (scene.rejectedNotes), чтобы то же замечание не
+// подсвечивалось Стражами повторно и не гонялось по кругу в директиве.
+function parseRejected(text){
+  const out = [];
+  // Внутренняя группа допускает ОДИН уровень вложенных «…» — модель часто цитирует
+  // фрагмент сцены внутри цитаты замечания («Невозможный образ ...: «фрагмент»»).
+  const re = /«((?:[^«»]|«[^»]*»)*)»\s*→\s*ОТКЛОНЕНО:?\s*([^\n]*)/gi;
+  let m;
+  while((m = re.exec(text))) if(m[1].trim().length>=4) out.push({ quote: m[1].trim(), reason: (m[2]||'').trim() });
+  return out;
+}
+
 // Вычленяет "спор" (РАЗБОР) и прозу (ТЕКСТ) из ответа surgicalReviseMessages.
-// Возвращает { debate, prose } или { debate, prose:null, truncated:true } если
-// модель обрезалась внутри [РАЗБОР] и не успела написать [ТЕКСТ].
+// Возвращает { debate, prose, rejected } или { debate, prose:null, truncated:true, rejected }
+// если модель обрезалась внутри [РАЗБОР] и не успела написать [ТЕКСТ].
 export function parseDebateRevision(text){
+  const rejected = parseRejected(text);
   const m = text.match(/\[ТЕКСТ\]\s*\n([\s\S]+)/i);
   // Усечение: [РАЗБОР] есть, [ТЕКСТ] нет → нельзя использовать как прозу
   if(!m && /\[РАЗБОР\]/i.test(text)){
-    return { debate: text, prose: null, truncated: true };
+    return { debate: text, prose: null, truncated: true, rejected };
   }
   let prose = m && m[1].trim().length > 50 ? m[1].trim() : text;
   // Артефакт хирургической правки: LLM копирует конец фразы с точкой и затем дописывает
@@ -219,8 +234,8 @@ export function parseDebateRevision(text){
   // Аналогично «!,» и «?,» — редко, но бывает
   prose = prose.replace(/([!?])\s*,(\s)/g, '$1$2');
   return m && m[1].trim().length > 50
-    ? { debate: text.slice(0, m.index).trim(), prose }
-    : { debate: '', prose };
+    ? { debate: text.slice(0, m.index).trim(), prose, rejected }
+    : { debate: '', prose, rejected };
 }
 
 // ── Линейный редактор (0.3): убирает ярлыки, варьирует ритм. ПРАВИТ текст. ──

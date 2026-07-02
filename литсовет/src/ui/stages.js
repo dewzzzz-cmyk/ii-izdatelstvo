@@ -1293,6 +1293,9 @@ async function doRun(els, s, scene, directive, runFlags={}){
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
   try{
     const runOpts = directive ? {directive, ...(runFlags.rewrite ? {} : {initialDraft: scene.text||''})} : {};
+    // Полностью свежий прогон (без директивы) — новый текст, старые «уже отклонённые
+    // как приём» замечания могут больше не относиться к делу.
+    if(!directive) scene.rejectedNotes = [];
     runOpts.onApproval = approvalGate;   // ручной режим: пауза на подтверждение
     const result = await runScene(s, scene, runOpts, prog=>{
       if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }

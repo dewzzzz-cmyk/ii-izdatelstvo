@@ -195,15 +195,29 @@ function bindFlagFix(){
 }
 
 // Анализ сцены (правая панель, верх): строка вопроса + флаги Стражей.
+function renderRejectedNotes(scene){
+  const rn = scene?.rejectedNotes;
+  if(!rn || !rn.length) return '';
+  return `<div class="rn-block" data-tip="Прозаик мотивированно отказался вносить эти правки (посчитал их художественным приёмом) — Стражи больше не подсвечивают их повторно.">
+    <div class="rn-head"><span>🖋 Отклонено автором как приём (${rn.length})</span><button class="btn" id="rnClear" style="font-size:11px;padding:2px 8px">↺ показывать снова</button></div>
+    <div class="rn-list">${rn.slice(-8).map(r=>`<div class="rn-item">«${esc(r.quote)}»${r.reason?` — ${esc(r.reason)}`:''}</div>`).join('')}</div>
+  </div>`;
+}
+
 export function renderSceneAnalysis(){
   const s = getState();
   const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
-  setTimeout(()=>{ bindFlagFix(); bindAskScene(activeScene); }, 0);
+  setTimeout(()=>{
+    bindFlagFix(); bindAskScene(activeScene);
+    const rc=document.getElementById('rnClear');
+    if(rc) rc.onclick=()=>{ if(activeScene){ activeScene.rejectedNotes=[]; save(); } };
+  }, 0);
   const ask = `<div class="ask-scene">
     <input type="text" id="askInput" placeholder="Спросить о сцене: «где показано, что его заметили?»" data-tip="Разовый вопрос стражу о текущей сцене. Он ответит по тексту (с цитатой) и предложит правку — без создания агента.">
     <button class="btn" id="askBtn">Спросить</button>
   </div>`;
-  return ask + (renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Задайте вопрос о сцене выше или запустите агентов — флаги появятся здесь.</div>`);
+  return ask + (renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Задайте вопрос о сцене выше или запустите агентов — флаги появятся здесь.</div>`)
+    + renderRejectedNotes(activeScene);
 }
 
 function bindAskScene(scene){
