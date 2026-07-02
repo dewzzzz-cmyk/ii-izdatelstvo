@@ -4,6 +4,10 @@
 import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject } from './storage.js';
 import { rebuildBibleVecs } from './bible.js';
 
+// Версия приложения — единственный источник правды (дублируется в package.json
+// для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
+export const APP_VERSION = '1.1.0';
+
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
   'deepseek-chat':     { in:0.14, out:0.28 },

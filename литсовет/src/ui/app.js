@@ -1,7 +1,7 @@
 // Точка входа UI: инициализация, рейл, изменяемые границы, настройки,
 // диспетчеризация стадий.
 
-import { init, getState, subscribe, save, newProject, switchProject } from '../state.js';
+import { init, getState, subscribe, save, newProject, switchProject, APP_VERSION } from '../state.js';
 import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } from './stages.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
@@ -187,7 +187,7 @@ async function openSettings(){
   els.modalRoot.innerHTML = `
     <div class="modal-bg" id="mbg">
       <div class="modal" onclick="event.stopPropagation()">
-        <h2>Настройки</h2>
+        <h2>Настройки <span class="muted" style="font-size:12px;font-weight:400">· v${APP_VERSION}</span></h2>
         <div class="field"><label>API-ключ <span class="hint">(только в памяти, не сохраняется на диск)</span></label>
           <input type="text" id="setKey" value="${escAttr(g.apiKey)}" placeholder="sk-..."></div>
         <div class="field"><label>Базовый URL</label>
@@ -238,6 +238,8 @@ async function openSettings(){
 }
 
 async function main(){
+  const brand = document.querySelector('.brand');
+  if(brand) brand.innerHTML = `Литсовет <span class="brand-ver">v${APP_VERSION}</span>`;
   await init();
   subscribe(()=>rerender());
   document.getElementById('settingsBtn').onclick = openSettings;
