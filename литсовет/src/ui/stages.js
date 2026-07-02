@@ -913,8 +913,8 @@ export function renderWrite(els){
       ${scene.text?'<button class="iconbtn" id="edProof" data-tip="ИИ-корректор: орфография, пунктуация, согласование. Стиль не трогает — покажет список правок перед применением.">Аа✓</button>':''}
       ${scene.text?`<button class="iconbtn" id="edStyle" data-tip="Редактор: ищет клише, эмоциональные ярлыки, однообразный ритм. В ручном режиме подсвечивает фрагменты прямо в тексте — примите (✓) или отклоните (✗) каждый. В авто — применяет сразу.">${_edReviewOn?'✕ Завершить редактуру':'📝 Редактор'}</button>
       <div class="mode-mini" id="edStyleModeWrap" data-tip="Авто — правки применяются сразу без вопросов, изменения остаются в тексте даже если потом переключить обратно на ручной. Ручной — подсвечивает и спрашивает по каждой.">
-        <button class="mm-btn ${!s.ui.editorAuto?'on':''}" data-edmode="manual">Ручной</button>
-        <button class="mm-btn ${s.ui.editorAuto?'on':''}" data-edmode="auto">Авто</button>
+        <button class="ed-mode-btn ${!s.ui.editorAuto?'on':''}" data-edmode="manual">Ручной</button>
+        <button class="ed-mode-btn ${s.ui.editorAuto?'on':''}" data-edmode="auto">Авто</button>
       </div>`:''}
       <button class="iconbtn" id="edUndo" data-tip="Отменить изменение в тексте (Ctrl+Z)">↶</button>
       <button class="iconbtn" id="edRedo" data-tip="Вернуть изменение (Ctrl+Shift+Z)">↷</button>
