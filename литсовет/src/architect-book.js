@@ -351,27 +351,27 @@ export function structureEvalMessages(state, skeleton, prevEval){
 
 export async function runStructureEval(state, skeleton, prevEval){
   const g = state.global;
-  if(!g.apiKey) return null;
+  if(!g.apiKey) return null; // конфигурация не задана — это не сбой, тихо пропускаем
   const msgs = structureEvalMessages(state, skeleton, prevEval);
-  try {
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:800 });
-    const j = extractJSON(res.text);
-    if(!j || typeof j.score !== 'number') return null;
-    return {
-      score: Math.max(0, Math.min(10, j.score)),
-      axes: {
-        arc:      Math.max(0,Math.min(10, (j.axes||{}).arc      ?? j.score)),
-        pacing:   Math.max(0,Math.min(10, (j.axes||{}).pacing   ?? j.score)),
-        conflict: Math.max(0,Math.min(10, (j.axes||{}).conflict ?? j.score)),
-        balance:  Math.max(0,Math.min(10, (j.axes||{}).balance  ?? j.score)),
-        ending:   Math.max(0,Math.min(10, (j.axes||{}).ending   ?? j.score)),
-      },
-      issues:      Array.isArray(j.issues)      ? j.issues.slice(0,4).map(String)      : [],
-      suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4).map(String) : [],
-    };
-  } catch(e){
-    return null; // оценка необязательна — молча игнорируем ошибку
-  }
+  // С каждой итерацией «Улучшить» промпт просит явно перечислить устранено/не
+  // устранено по каждой прошлой проблеме — ответ ощутимо растёт по итерациям
+  // (замерено вживую: 603 → 703 → 705 → 787 из 800). При 800 3-4-я итерация
+  // обрезает JSON. Запас на затухание роста, а не голая экстраполяция тренда.
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:1500, retries:g.retries });
+  const j = extractJSON(res.text);
+  if(!j || typeof j.score !== 'number') throw new Error('Оценщик вернул нераспознаваемый ответ — попробуйте ещё раз.');
+  return {
+    score: Math.max(0, Math.min(10, j.score)),
+    axes: {
+      arc:      Math.max(0,Math.min(10, (j.axes||{}).arc      ?? j.score)),
+      pacing:   Math.max(0,Math.min(10, (j.axes||{}).pacing   ?? j.score)),
+      conflict: Math.max(0,Math.min(10, (j.axes||{}).conflict ?? j.score)),
+      balance:  Math.max(0,Math.min(10, (j.axes||{}).balance  ?? j.score)),
+      ending:   Math.max(0,Math.min(10, (j.axes||{}).ending   ?? j.score)),
+    },
+    issues:      Array.isArray(j.issues)      ? j.issues.slice(0,4).map(String)      : [],
+    suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4).map(String) : [],
+  };
 }
 
 // ── Перегенерация всех сцен ОДНОЙ главы с подсказкой ──
