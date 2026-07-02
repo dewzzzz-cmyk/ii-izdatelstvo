@@ -18,6 +18,7 @@ import { runHistoricalResearch } from '../historian.js';
 import { rebuildBibleVecs } from '../bible.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
+import { suggestEdits } from '../editor.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -63,6 +64,9 @@ let _runLog = [];           // лента шагов текущего/после
 let _selMenuHide = null;    // ссылки на document-слушатели initSelectionMenu (снимаем перед повторным навешиванием)
 let _selMenuScroll = null;  // scroll-listener на panel-center для скрытия меню при прокрутке
 let _runCurrent = '';       // что происходит прямо сейчас
+let _edReviewOn = false;    // редактор в режиме ручного ревью (подсветка правок в тексте)
+let _edSuggestions = [];    // необработанные предложения редактора текущей сцены
+let _edReviewSceneId = null; // id сцены, к которой относятся _edSuggestions (сброс при смене сцены)
 
 // Лента «Процесс»: пошагово что делают агенты и почему (особенно доработки).
 function renderProcess(){
@@ -880,6 +884,8 @@ export function renderWrite(els){
   if(!scenes.length){ els.left.innerHTML=`<div class="ph">Сцены</div>`; els.center.innerHTML=`<div class="empty-state">Сначала добавьте сцену на стадии «Структура».</div>`; els.right.innerHTML=''; return; }
   if(!s.ui.activeScene || !scenes.find(x=>x.id===s.ui.activeScene)) s.ui.activeScene=scenes[0].id;
   const scene = scenes.find(x=>x.id===s.ui.activeScene);
+  // Смена сцены во время ручного ревью редактора — подсветка относилась к другой сцене.
+  if(_edReviewOn && _edReviewSceneId !== scene.id){ _edReviewOn=false; _edSuggestions=[]; }
 
   els.left.innerHTML = `<div class="ph">Сцены</div>${renderSceneList(s)}`;
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ if(_busy){ return; } s.ui.activeScene=r.dataset.sc; save(); });
@@ -895,11 +901,17 @@ export function renderWrite(els){
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
       <span style="flex:1"></span>
       ${scene.text?'<button class="iconbtn" id="edProof" data-tip="ИИ-корректор: орфография, пунктуация, согласование. Стиль не трогает — покажет список правок перед применением.">Аа✓</button>':''}
+      ${scene.text?`<button class="iconbtn" id="edStyle" data-tip="Редактор: ищет клише, эмоциональные ярлыки, однообразный ритм. В ручном режиме подсвечивает фрагменты прямо в тексте — примите (✓) или отклоните (✗) каждый. В авто — применяет сразу.">${_edReviewOn?'✕ Завершить редактуру':'📝 Редактор'}</button>
+      <div class="mode-mini" id="edStyleModeWrap" data-tip="Авто — правки применяются сразу без вопросов, изменения остаются в тексте даже если потом переключить обратно на ручной. Ручной — подсвечивает и спрашивает по каждой.">
+        <button class="mm-btn ${!s.ui.editorAuto?'on':''}" data-edmode="manual">Ручной</button>
+        <button class="mm-btn ${s.ui.editorAuto?'on':''}" data-edmode="auto">Авто</button>
+      </div>`:''}
       <button class="iconbtn" id="edUndo" data-tip="Отменить изменение в тексте (Ctrl+Z)">↶</button>
       <button class="iconbtn" id="edRedo" data-tip="Вернуть изменение (Ctrl+Shift+Z)">↷</button>
     </div>
-    <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?'contenteditable="true" spellcheck="false"':''}>${scene.text?esc(scene.text):'Проза появится здесь после запуска агентов.'}</div>
+    <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${_edReviewOn?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):esc(scene.text)):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
+    <div id="edPopup" class="ed-popup" style="display:none"></div>
     ${showStop?renderEditorialStop(s, ch):''}
     <div class="brief-box">
       <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
@@ -945,11 +957,12 @@ export function renderWrite(els){
 
   // редактирование текста автором → отметка «рука автора»
   const edEl = document.getElementById('editor');
-  if(scene.text){
+  if(scene.text && !_edReviewOn){
     edEl.addEventListener('input', ()=>{ scene.text=edEl.innerText; if(!scene.handDone){ scene.handDone=true; } scene._dirty=true; });
     edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; scene._dirty=false; save(); } });
     initSelectionMenu(edEl, scene, els);
   }
+  if(scene.text && _edReviewOn) bindEditorMarks(edEl, scene, els);
 
   // инлайн-директива
   const runWith = (directive)=>doRun(els, s, scene, directive);
@@ -998,6 +1011,8 @@ export function renderWrite(els){
     }catch(e){ alert('Корректор: '+e.message); }
     finally{ pf.disabled=false; pf.textContent=orig; }
   };
+
+  bindEditorButton(els, s, scene);
 
   // Автопилот главы
   const ac=document.getElementById('autoChapter');
@@ -1073,6 +1088,120 @@ function openProofreadModal(scene, res){
     close();
     save();
   };
+}
+
+// ── Редактор (стилистическая правка с подсветкой в тексте) ──
+
+// Строит HTML текста с <mark> вокруг непересекающихся вхождений _edSuggestions.
+// Побочный эффект: убирает из _edSuggestions правки, чей фрагмент больше не
+// найти дословно (текст изменился) — иначе они бы зависли недостижимыми.
+function markedEditorHtml(text){
+  _edSuggestions = _edSuggestions.filter(sug=>text.includes(sug.original));
+  const ranges = [];
+  _edSuggestions.forEach((sug, idx)=>{
+    let searchFrom = 0, pos;
+    while((pos = text.indexOf(sug.original, searchFrom)) >= 0){
+      const end = pos + sug.original.length;
+      if(!ranges.some(r=>pos<r.end && end>r.start)){ ranges.push({start:pos, end, idx}); break; }
+      searchFrom = pos + 1;
+    }
+  });
+  ranges.sort((a,b)=>a.start-b.start);
+  let html = '', cursor = 0;
+  ranges.forEach(r=>{
+    html += esc(text.slice(cursor, r.start));
+    html += `<mark class="ed-mark" data-idx="${r.idx}">${esc(text.slice(r.start, r.end))}</mark>`;
+    cursor = r.end;
+  });
+  html += esc(text.slice(cursor));
+  return html;
+}
+
+function bindEditorButton(els, s, scene){
+  const wrap = document.getElementById('edStyleModeWrap');
+  if(wrap) wrap.querySelectorAll('[data-edmode]').forEach(b=>b.onclick=()=>{
+    s.ui.editorAuto = b.dataset.edmode==='auto';
+    save();
+  });
+  const btn = document.getElementById('edStyle');
+  if(!btn) return;
+  if(_edReviewOn){ btn.onclick = ()=>{ _edReviewOn=false; _edSuggestions=[]; _edReviewSceneId=null; save(); }; return; }
+  btn.onclick = async ()=>{
+    if(_busy) return;
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    btn.disabled = true; const orig = btn.textContent; btn.innerHTML = '<span class="spinner"></span>';
+    try{
+      const suggestions = await suggestEdits(scene.text, s);
+      if(!suggestions.length){
+        btn.disabled = false; btn.textContent = '✓ правок нет';
+        setTimeout(()=>{ if(document.getElementById('edStyle')===btn) btn.textContent = orig; }, 1800);
+        return;
+      }
+      scene.proseVersions = scene.proseVersions || [];
+      scene.proseVersions.unshift(scene.text);   // откат перед любыми правками редактора
+      if(scene.proseVersions.length>10) scene.proseVersions.length=10;
+      if(s.ui.editorAuto){
+        let text = scene.text;
+        suggestions.forEach(sug=>{ if(text.includes(sug.original)) text = text.replace(sug.original, sug.suggestion); });
+        scene.text = text; scene.words = (text.match(/\S+/g)||[]).length;
+        save();
+        btn.disabled = false; btn.textContent = `✓ ${suggestions.length} правок`;
+        setTimeout(()=>{ if(document.getElementById('edStyle')===btn) btn.textContent = orig; }, 1800);
+      } else {
+        _edSuggestions = suggestions;
+        _edReviewOn = true;
+        _edReviewSceneId = scene.id;
+        save();   // ре-рендер подхватит _edReviewOn и покажет подсветку в тексте
+      }
+    }catch(e){ alert('Редактор: '+e.message); btn.disabled=false; btn.textContent=orig; }
+  };
+}
+
+let _edPopupHide = null;   // document-слушатель для скрытия попапа (снимаем перед повторным навешиванием)
+
+function bindEditorMarks(edEl, scene, els){
+  const popup = document.getElementById('edPopup');
+  if(!popup) return;
+  const closePopup = ()=>{ popup.style.display='none'; };
+  edEl.querySelectorAll('.ed-mark').forEach(mk=>{
+    mk.onclick = (e)=>{
+      e.stopPropagation();
+      const idx = parseInt(mk.dataset.idx, 10);
+      const sug = _edSuggestions[idx];
+      if(!sug) return;
+      const rect = mk.getBoundingClientRect();
+      const appRect = document.getElementById('app').getBoundingClientRect();
+      popup.innerHTML = `
+        <div class="ed-pop-orig">«${esc(sug.original)}»</div>
+        <div class="ed-pop-arrow">→</div>
+        <div class="ed-pop-sugg">«${esc(sug.suggestion)}»</div>
+        ${sug.reason?`<div class="ed-pop-reason">${esc(sug.reason)}</div>`:''}
+        <div class="ed-pop-acts">
+          <button class="ed-pop-x" id="edPopReject" title="Отклонить">✗</button>
+          <button class="ed-pop-ok" id="edPopAccept" title="Принять">✓</button>
+        </div>`;
+      popup.style.display = 'block';
+      popup.style.top = (rect.bottom - appRect.top + 6) + 'px';
+      popup.style.left = Math.max(8, Math.min(rect.left - appRect.left, appRect.width - 300)) + 'px';
+      document.getElementById('edPopAccept').onclick = ()=>{ resolveSuggestion(scene, idx, true); closePopup(); };
+      document.getElementById('edPopReject').onclick = ()=>{ resolveSuggestion(scene, idx, false); closePopup(); };
+    };
+  });
+  if(_edPopupHide) document.removeEventListener('mousedown', _edPopupHide);
+  _edPopupHide = (e)=>{ if(!popup.contains(e.target) && !e.target.classList.contains('ed-mark')) closePopup(); };
+  document.addEventListener('mousedown', _edPopupHide);
+}
+
+function resolveSuggestion(scene, idx, accept){
+  const sug = _edSuggestions[idx];
+  if(!sug) return;
+  if(accept && scene.text.includes(sug.original)){
+    scene.text = scene.text.replace(sug.original, sug.suggestion);
+    scene.words = (scene.text.match(/\S+/g)||[]).length;
+  }
+  _edSuggestions.splice(idx, 1);
+  if(!_edSuggestions.length){ _edReviewOn = false; _edReviewSceneId = null; }
+  save();
 }
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────

@@ -6,7 +6,7 @@ import { rebuildBibleVecs } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -69,7 +69,7 @@ export function defaultState(){
       evaluatorMaxIter: 3,
     },
     log: [],
-    ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false },
+    ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false, editorAuto: false },
   };
 }
 
