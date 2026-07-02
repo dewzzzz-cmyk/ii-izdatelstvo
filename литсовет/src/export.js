@@ -2,6 +2,7 @@
 // ZipBuilder + crc32 + md2xhtml перенесены из ИИ-Издательства.
 
 import { exportCheckpoint } from './storage.js';
+import { save } from './state.js';
 
 // ── Лёгкая типографика (RU): кавычки-ёлочки, тире, неразрывные пробелы ──
 export function typo(s){
@@ -70,9 +71,11 @@ function download(blob, filename){
 export function exportMd(state){
   const book = buildBook(state);
   let md = `# ${book.title}\n\n`;
+  if(state.project.author) md += `*${state.project.author}*\n\n`;
   for(const ch of book.chapters){
     if(ch.title) md += `## ${ch.title}\n\n`;
-    for(const sc of ch.scenes){ md += typo(sc.text).trim() + '\n\n'; }
+    // сцены внутри главы разделяются *** (как «* * *» в EPUB)
+    md += ch.scenes.map(sc=>typo(sc.text).trim()).join('\n\n***\n\n') + '\n\n';
   }
   download(new Blob([md],{type:'text/markdown'}), book.title+'.md');
 }
@@ -81,9 +84,10 @@ export function exportMd(state){
 export function exportDocx(state){
   const book = buildBook(state);
   let body = `<h1>${xesc(book.title)}</h1>`;
+  if(state.project.author) body += `<p style="text-align:center;font-style:italic">${xesc(state.project.author)}</p>`;
   for(const ch of book.chapters){
     if(ch.title) body += `<h2>${xesc(ch.title)}</h2>`;
-    for(const sc of ch.scenes){ body += paraXhtml(sc.text); }
+    body += ch.scenes.map(sc=>paraXhtml(sc.text)).join('<p style="text-align:center">*&#160;*&#160;*</p>');
   }
   const html = `<html xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body>${body}</body></html>`;
   download(new Blob([html],{type:'application/msword'}), book.title+'.doc');
@@ -92,11 +96,39 @@ export function exportDocx(state){
 // ── .epub (EPUB 3) ──
 export function exportEpub(state){
   const book = buildBook(state);
+  const p = state.project || {};
+  // Постоянный уникальный идентификатор книги: читалки и магазины различают
+  // книги по dc:identifier — он должен быть уникален и стабилен между экспортами.
+  if(!p.bookUuid){
+    p.bookUuid = (typeof crypto!=='undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'ls-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+    try{ save(); }catch{}
+  }
   const zip = new ZipBuilder();
   zip.add('mimetype','application/epub+zip');
   zip.add('META-INF/container.xml',`<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
+
+  // Обложка (опц.): dataURL jpeg/png из настроек проекта → файл + первая страница
+  let coverItems='', coverSpine='', coverMeta='';
+  const coverM = /^data:image\/(jpeg|png);base64,(.+)$/.exec(p.coverDataUrl||'');
+  if(coverM){
+    const ext = coverM[1]==='png' ? 'png' : 'jpg';
+    const mime = coverM[1]==='png' ? 'image/png' : 'image/jpeg';
+    try{
+      const bin = atob(coverM[2]);
+      const bytes = new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      zip.add('OEBPS/cover.'+ext, bytes);
+      zip.add('OEBPS/cover.xhtml', `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Обложка</title><style>body{margin:0;text-align:center}img{max-width:100%;max-height:100vh}</style></head><body><img src="cover.${ext}" alt="Обложка"/></body></html>`);
+      coverItems = `<item id="cover-img" href="cover.${ext}" media-type="${mime}" properties="cover-image"/><item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
+      coverSpine = `<itemref idref="cover"/>`;
+      coverMeta = `<meta name="cover" content="cover-img"/>`;
+    }catch(e){ console.warn('cover decode failed', e); }
+  }
 
   const items=[], spine=[], nav=[];
   book.chapters.forEach((ch,i)=>{
@@ -113,14 +145,20 @@ export function exportEpub(state){
   zip.add('OEBPS/style.css','body{font-family:serif;line-height:1.6;margin:1em}p{margin:0 0 .2em;text-indent:1.2em}h2{text-align:center;margin:2em 0 1em}hr{border:none;text-align:center;margin:1em 0}hr:after{content:"* * *"}');
   zip.add('OEBPS/nav.xhtml',`<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Оглавление</title></head><body><nav epub:type="toc"><h1>Оглавление</h1><ol>${nav.map(n=>n.replace('<li>','<li>')).join('')}</ol></nav></body></html>`);
+  const now = new Date();
   zip.add('OEBPS/content.opf',`<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-<dc:identifier id="bid">urn:uuid:litsovet-${book.chapters.length}</dc:identifier>
-<dc:title>${xesc(book.title)}</dc:title><dc:language>ru</dc:language></metadata>
+<dc:identifier id="bid">urn:uuid:${xesc(p.bookUuid)}</dc:identifier>
+<dc:title>${xesc(book.title)}</dc:title><dc:language>ru</dc:language>
+${p.author?`<dc:creator>${xesc(p.author)}</dc:creator>`:''}
+${p.synopsis?`<dc:description>${xesc(p.synopsis)}</dc:description>`:''}
+<dc:date>${now.toISOString().slice(0,10)}</dc:date>
+<meta property="dcterms:modified">${now.toISOString().slice(0,19)}Z</meta>
+${coverMeta}</metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-<item id="css" href="style.css" media-type="text/css"/>${items.join('')}</manifest>
-<spine>${spine.join('')}</spine></package>`);
+<item id="css" href="style.css" media-type="text/css"/>${coverItems}${items.join('')}</manifest>
+<spine>${coverSpine}${spine.join('')}</spine></package>`);
 
   download(zip.blob(), book.title+'.epub');
 }

@@ -16,7 +16,7 @@ function escProse(s){
   return norm.split('\n\n').map(p=>esc(p.trim())).filter(Boolean).join('<br><br>');
 }
 
-const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля' };
+const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов' };
 const _openAgents = new Set();
 
 // Параметры агента (реально влияют на прогон). target:'agent' пишет в агента, 'global' — в state.global.
@@ -29,7 +29,7 @@ function paramSpecs(a){
     specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля', min:5, max:9, step:0.5, target:'global', def:7, fmt:v=>v.toFixed(1) });
     specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать', min:1, max:5, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
   }
-  if(['voiceguard','logic','events'].includes(a.role)){
+  if(['voiceguard','logic','events','styleguard','reader','imagery'].includes(a.role) || a.custom){
     specs.push({ key:'strictness', label:'Строгость', hint:'1 мягко · 3 придирчиво', min:1, max:3, step:1, target:'agent', def:2, fmt:v=>['','мягко','обычно','строго'][Math.round(v)]||v });
   }
   if(a.role==='prose'){
@@ -320,7 +320,7 @@ function openAddGuardModal(){
 }
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
-const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom','reader']);
+const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom','reader','imagery']);
 // Фактические стражи — бегут каждую итерацию петли; литературные — только при принятом тексте.
 const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
 
@@ -352,7 +352,7 @@ function renderPipelineFlow(agents){
 }
 const AGENT_FILTER_CATS = ['Все','Основные','Стражи','Мои'];
 const CORE_ROLES = new Set(['architect','prose','evaluator','lineedit']);
-const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard']);
+const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard','reader','imagery']);
 let _agentFilter = 'Все';
 
 function agentMatchesFilter(a, filter){

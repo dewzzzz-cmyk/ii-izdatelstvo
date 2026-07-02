@@ -21,9 +21,12 @@ export function defaultState(){
     updated: Date.now(),
     project: {
       title: '',
+      author: '',              // имя на обложке и в метаданных EPUB
       idea: '',                // «о чём книга» — один вопрос онбординга
       genre: '', subgenre: '', audience: '', era: '',
       synopsis: '',
+      coverDataUrl: '',        // обложка (dataURL jpeg/png) — попадает в EPUB
+      bookUuid: '',            // постоянный уникальный идентификатор книги (dc:identifier)
       targetWords: 80000,
       type: 'single',          // single | series
       seriesTitle: '',
@@ -83,6 +86,8 @@ export function defaultAgents(){
       desc:'Проверяет, что персонаж знает/чувствует то, что должен по прошлым событиям. Видит только факты. Параллельно.' },
     { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'styleguard',
       desc:'Ловит нарушения ваших «Правил автора» (do/don\'t) и показывает цитату. Только флагует. Параллельно с другими стражами.' },
+    { id:'imagery',   name:'Страж образов',    icon:'🎨', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'imagery',
+      desc:'Ловит смешанные, абсурдные или физически невозможные метафоры и сравнения, разъехавшийся регистр образа. Не клише — за это отвечает другой страж. Только флагует. Параллельно с другими стражами.' },
     { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:1600, enabled:false, role:'lineedit',
       desc:'Лёгкая правка: убирает эмоциональные ярлыки, варьирует ритм, чистит клише. Единственный, кто меняет текст после Прозаика.' },
     { id:'reader',    name:'Читатель',          icon:'📖', temp:0.3, maxTokens:700, strictness:2, enabled:false, role:'reader',

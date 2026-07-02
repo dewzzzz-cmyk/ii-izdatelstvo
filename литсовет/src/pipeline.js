@@ -8,7 +8,7 @@ import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
-         parseDebateRevision, styleGuardMessages, readerGuardMessages } from './guards.js';
+         parseDebateRevision, styleGuardMessages, readerGuardMessages, imageryGuardMessages } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -77,12 +77,12 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Стражи — часть той же петли, не отдельный цикл.
     // Прозаик получает объединённую директиву (оценщик + стражи вместе) и разбирает всё в [РАЗБОР].
     // Консенсус = Оценщик принял И Стражи молчат.
-    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель'};
+    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов'};
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
-      agentEnabled('reader') ||
+      agentEnabled('reader') || agentEnabled('imagery') ||
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
     let best = null, bestEval = null;
@@ -202,6 +202,8 @@ export async function runScene(state, scene, opts={}, onProgress){
               guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
             if(agentEnabled('reader'))
               guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, best, ag(state,'reader').strictness), flags));
+            if(agentEnabled('imagery'))
+              guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(best, ag(state,'imagery').strictness), flags));
             (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
               guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
             });
@@ -226,7 +228,7 @@ export async function runScene(state, scene, opts={}, onProgress){
 
             // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
             // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
-            const guardCandidates = ['voiceguard','logic','events','styleguard','reader',
+            const guardCandidates = ['voiceguard','logic','events','styleguard','reader','imagery',
               ...(state.agents||[]).filter(a=>a.custom).map(a=>a.id)];
             const manualGuard = guardCandidates.find(r=>{ const a=ag(state,r); return a.enabled!==false && a.manual===true; });
             if(manualGuard && (evalAccepted || iter >= maxIter)){

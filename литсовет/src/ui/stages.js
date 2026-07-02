@@ -16,7 +16,8 @@ import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 import { runHistoricalResearch } from '../historian.js';
 import { rebuildBibleVecs } from '../bible.js';
-import { openRuleModal } from './rule-modal.js';
+import { openRuleModal, openInputModal } from './rule-modal.js';
+import { proofreadText } from '../proofread.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -56,6 +57,8 @@ function sceneCountHint(tw){
 
 let _topTab = 'analysis';  // analysis | process
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
+let _autoChapter = false;   // автопилот главы: пишем оставшиеся сцены подряд
+let _autoStopReq = false;   // запрошена остановка автопилота (после текущей сцены)
 let _runLog = [];           // лента шагов текущего/последнего прогона
 let _selMenuHide = null;    // ссылки на document-слушатели initSelectionMenu (снимаем перед повторным навешиванием)
 let _selMenuScroll = null;  // scroll-listener на panel-center для скрытия меню при прокрутке
@@ -141,6 +144,9 @@ export function renderConcept(els){
       <div class="field" style="margin-top:14px"><label>Название</label>
         <input type="text" id="title" value="${esc(p.title)}" placeholder="Рабочее название"></div>
 
+      <div class="field"><label>Автор <span class="hint">имя на обложке и в метаданных экспорта (EPUB, Word)</span></label>
+        <input type="text" id="pAuthor" value="${esc(p.author||'')}" placeholder="Имя Фамилия или псевдоним"></div>
+
       <div class="field"><label>Синопсис <span class="hint">необязательно — нить сюжета, ключевые повороты; архитектор будет строить структуру на его основе</span></label>
         <textarea id="synopsis" rows="4" placeholder="Главная героиня приезжает в северный город… встречает загадочного незнакомца… в финале раскрывает тайну…">${esc(p.synopsis)}</textarea></div>
 
@@ -191,6 +197,13 @@ export function renderConcept(els){
             style="width:16px;height:16px;flex-shrink:0">
           <span><b>Голос автора</b> — включить вкладку «Голос» <span class="hint">загрузить образец своей прозы, чтобы модель писала в вашем стиле</span></span>
         </label>
+        <div class="field"><label>Обложка <span class="hint">необязательно — попадёт в EPUB (JPEG/PNG, до 3 МБ)</span></label>
+          <div class="row" style="gap:10px;align-items:center">
+            <input type="file" id="pCover" accept="image/jpeg,image/png" style="display:none">
+            <button class="btn" id="pCoverBtn" type="button">${p.coverDataUrl?'Заменить обложку':'📷 Загрузить обложку'}</button>
+            ${p.coverDataUrl?`<img src="${p.coverDataUrl}" alt="обложка" style="height:72px;border-radius:4px;border:1px solid var(--border)"><button class="btn" id="pCoverDel" type="button" title="Убрать обложку">✕</button>`:''}
+          </div>
+        </div>
       </div>
 
       <div class="row" style="margin-top:16px;justify-content:flex-end">
@@ -201,7 +214,22 @@ export function renderConcept(els){
   const bind = (id, fn)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input',fn); };
   bind('idea', e=>{ p.idea=e.target.value; });
   bind('title', e=>{ p.title=e.target.value; });
+  bind('pAuthor', e=>{ p.author=e.target.value; });
   bind('synopsis', e=>{ p.synopsis=e.target.value; });
+  // Обложка: файл → dataURL в состоянии проекта (уходит в EPUB при экспорте)
+  const coverInput = document.getElementById('pCover');
+  const coverBtn = document.getElementById('pCoverBtn');
+  if(coverBtn) coverBtn.onclick = ()=>coverInput && coverInput.click();
+  if(coverInput) coverInput.onchange = ()=>{
+    const f = coverInput.files && coverInput.files[0];
+    if(!f) return;
+    if(f.size > 3*1024*1024){ alert('Файл больше 3 МБ — сожмите изображение.'); coverInput.value=''; return; }
+    const rd = new FileReader();
+    rd.onload = ()=>{ p.coverDataUrl = rd.result; save(); };
+    rd.readAsDataURL(f);
+  };
+  const coverDel = document.getElementById('pCoverDel');
+  if(coverDel) coverDel.onclick = ()=>{ p.coverDataUrl=''; save(); };
   bind('era', e=>{ p.era=e.target.value; });
   bind('seriesSummary', e=>{ p.seriesSummary=e.target.value; });
   bind('tw', e=>{
@@ -778,14 +806,20 @@ function bindSkeleton(s){
     const n=node(s, b.dataset.revert); if(!n) return;
     if(revertScene(n)) save();
   });
-  document.querySelectorAll('.sk-ch-regen[data-chregen]').forEach(b=>b.onclick=async ()=>{
+  document.querySelectorAll('.sk-ch-regen[data-chregen]').forEach(b=>b.onclick=()=>{
     const ch=node(s, b.dataset.chregen); if(!ch) return;
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
-    const hint=prompt('Перегенерировать все сцены главы «'+ch.title+'». В каком направлении? (пусто — просто усилить)');
-    if(hint===null) return;
-    b.disabled=true; const orig=b.textContent; b.innerHTML='<span class="spinner"></span>';
-    try{ await regenerateChapter(s, ch, hint.trim()); save(); }
-    catch(e){ b.textContent='ошибка'; b.title=e.message; b.disabled=false; setTimeout(()=>{b.textContent=orig;},1500); }
+    openInputModal({
+      title:'↻ Перегенерировать главу',
+      hint:'Все сцены главы «'+ch.title+'» будут переписаны. В каком направлении? (пусто — просто усилить)',
+      placeholder:'напр.: больше напряжения между героями',
+      okLabel:'Перегенерировать',
+      onOk: async (hint)=>{
+        b.disabled=true; const orig=b.textContent; b.innerHTML='<span class="spinner"></span>';
+        try{ await regenerateChapter(s, ch, hint); save(); }
+        catch(e){ b.textContent='ошибка'; b.title=e.message; b.disabled=false; setTimeout(()=>{b.textContent=orig;},1500); }
+      },
+    });
   });
   document.querySelectorAll('.sk-down[data-down]').forEach(b=>b.onclick=async ()=>{
     const n=node(s, b.dataset.down); if(!n) return;
@@ -860,6 +894,7 @@ export function renderWrite(els){
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
       <span style="flex:1"></span>
+      ${scene.text?'<button class="iconbtn" id="edProof" data-tip="ИИ-корректор: орфография, пунктуация, согласование. Стиль не трогает — покажет список правок перед применением.">Аа✓</button>':''}
       <button class="iconbtn" id="edUndo" data-tip="Отменить изменение в тексте (Ctrl+Z)">↶</button>
       <button class="iconbtn" id="edRedo" data-tip="Вернуть изменение (Ctrl+Shift+Z)">↷</button>
     </div>
@@ -889,6 +924,12 @@ export function renderWrite(els){
       <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
       ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
     </div>
+    ${(()=>{ // автопилот: дописать оставшиеся сцены главы подряд
+      if(!ch) return '';
+      const rem = scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
+      if(!rem && !_autoChapter) return '';
+      return `<div class="run-row" style="margin-top:6px"><button class="btn" id="autoChapter" style="flex:1" data-tip="Автопилот: написать все оставшиеся сцены главы подряд, каждая — через полный цикл агентов. Остановится при ошибке или по кнопке. Ручные подтверждения агентов работают как обычно.">${_autoChapter?'■ Стоп (после текущей сцены)':'▶▶ Дописать главу подряд ('+rem+' сц.)'}</button></div>`;
+    })()}
     ${(()=>{ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nx=idx>=0&&idx<scenes.length-1?scenes[idx+1]:null; return nx?`<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="btn" id="nextScene">→ ${esc(nx.title)}</button></div>`:''; })()}`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
   document.querySelectorAll('.pc-cb').forEach(cb=>cb.addEventListener('change', ()=>{
@@ -944,7 +985,94 @@ export function renderWrite(els){
   const nx=document.getElementById('nextScene');
   if(nx){ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nextSc=scenes[idx+1]; if(nextSc) nx.onclick=()=>{ if(_busy) return; s.ui.activeScene=nextSc.id; save(); }; }
 
+  // ИИ-корректор: правописание без вмешательства в стиль, с предпросмотром правок
+  const pf=document.getElementById('edProof');
+  if(pf) pf.onclick = async ()=>{
+    if(_busy) return;
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    if(!scene.text || scene.text.trim().length < 20) return;
+    pf.disabled=true; const orig=pf.textContent; pf.innerHTML='<span class="spinner"></span>';
+    try{
+      const res = await proofreadText(scene.text, s);
+      openProofreadModal(scene, res);
+    }catch(e){ alert('Корректор: '+e.message); }
+    finally{ pf.disabled=false; pf.textContent=orig; }
+  };
+
+  // Автопилот главы
+  const ac=document.getElementById('autoChapter');
+  if(ac) ac.onclick = ()=>{
+    if(_autoChapter){ _autoStopReq=true; ac.disabled=true; ac.textContent='…остановлюсь после этой сцены'; return; }
+    if(_busy) return;
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    runChapterAutopilot(els, s, ch);
+  };
+
   renderRightPanel(els);
+}
+
+// Автопилот главы: последовательно прогоняет через полный цикл агентов все
+// оставшиеся (не готовые) сцены текущей главы. Останавливается по кнопке
+// (после текущей сцены) или при первой ошибке прогона. Ручные гейты агентов
+// (approvalGate) срабатывают как обычно — автопилот просто ждёт ответа.
+async function runChapterAutopilot(els, s, ch){
+  if(_autoChapter || !ch) return;
+  _autoChapter = true; _autoStopReq = false;
+  try{
+    let guard = 0;
+    while(guard++ < 100){
+      if(_autoStopReq) break;
+      const next = scenesOfChapter(s, ch.id).find(sc=>sc.status!=='done');
+      if(!next) break;
+      s.ui.activeScene = next.id;
+      save();                                    // ре-рендер переключает редактор на сцену
+      await new Promise(r=>setTimeout(r, 60));   // даём DOM устояться перед прогоном
+      await doRun(els, s, next, '');
+      if(next.status!=='done' || !next.text) break;  // прогон упал — не идём дальше
+    }
+  } finally {
+    _autoChapter = false; _autoStopReq = false;
+    save();                                      // финальный ре-рендер возвращает кнопку
+  }
+}
+
+// Модалка результата корректора: список правок + применить/отмена.
+function openProofreadModal(scene, res){
+  const root=document.getElementById('modalRoot');
+  if(!res.fixes.length){
+    root.innerHTML=`<div class="modal-bg" id="pfBg"><div class="modal" style="width:380px" onclick="event.stopPropagation()">
+      <h2>Аа✓ Корректор</h2>
+      <div style="margin:6px 0 14px">Ошибок не найдено — текст чистый. ✓</div>
+      <div class="row" style="justify-content:flex-end"><button class="btn btn-primary" id="pfClose">Хорошо</button></div>
+    </div></div>`;
+    const close=()=>root.innerHTML='';
+    document.getElementById('pfBg').onclick=close;
+    document.getElementById('pfClose').onclick=close;
+    return;
+  }
+  root.innerHTML=`<div class="modal-bg" id="pfBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>Аа✓ Корректор · ${res.fixes.length} ${res.fixes.length===1?'правка':res.fixes.length<5?'правки':'правок'}</h2>
+    <div class="muted" style="margin-bottom:8px;font-size:12px">Только орфография, пунктуация и согласование. Стиль не тронут. Применение можно откатить (↶).</div>
+    <div style="max-height:45vh;overflow:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      ${res.fixes.map(f=>`<div class="apv-row"><span>${esc(f)}</span></div>`).join('')}
+    </div>
+    <div class="row" style="justify-content:flex-end;gap:8px">
+      <button class="btn" id="pfCancel">Отмена</button>
+      <button class="btn btn-primary" id="pfApply">✓ Применить правки</button>
+    </div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('pfBg').onclick=close;
+  document.getElementById('pfCancel').onclick=close;
+  document.getElementById('pfApply').onclick=()=>{
+    scene.proseVersions = scene.proseVersions || [];
+    scene.proseVersions.unshift(scene.text);     // прошлый вариант — для отката ↶
+    if(scene.proseVersions.length>10) scene.proseVersions.length=10;
+    scene.text = res.corrected;
+    scene.words = (res.corrected.match(/\S+/g)||[]).length;
+    close();
+    save();
+  };
 }
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
@@ -1004,7 +1132,7 @@ function exportPdf(s){
     h1{font-size:22pt;text-align:center;margin:3cm 0 1cm}h2{font-size:16pt;margin:2cm 0 .5cm;border-bottom:1px solid #ccc;padding-bottom:.3cm}
     h3{font-size:12pt;font-weight:normal;font-style:italic;color:#555;margin:.8cm 0 .2cm}.prose p{text-indent:1.5em;margin:.15em 0}
     .prose p:first-child{text-indent:0}@media print{h2{page-break-before:always}}
-  </style></head><body><h1>${title}</h1>${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
+  </style></head><body><h1>${title}</h1>${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
   const w=window.open('','_blank'); if(!w) return;
   w.document.write(html); w.document.close();
 }

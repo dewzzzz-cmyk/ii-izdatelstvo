@@ -53,3 +53,26 @@ export function openRuleModal(defaultText, opts={}){
     finally{ btn.disabled=false; btn.textContent=orig; }
   };
 }
+
+// Универсальная модалка ввода одной строки — замена нативного prompt().
+// opts: { title, hint, value, placeholder, okLabel, onOk(value) }.
+// Отмена/клик по фону — просто закрыть, onOk не вызывается.
+export function openInputModal({ title, hint='', value='', placeholder='', okLabel='OK', onOk }){
+  const root = ruleModalRoot();
+  root.innerHTML = `<div class="modal-bg" id="inModalBg"><div class="modal" style="width:440px;max-width:92vw" onclick="event.stopPropagation()">
+    <h2>${esc(title||'')}</h2>
+    ${hint?`<div class="muted" style="margin-bottom:8px;font-size:12px">${esc(hint)}</div>`:''}
+    <input type="text" id="inModalText" value="${esc(value)}" placeholder="${esc(placeholder)}" style="width:100%;box-sizing:border-box">
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" id="inModalCancel">Отмена</button>
+      <button class="btn btn-primary" id="inModalOk">${esc(okLabel)}</button>
+    </div>
+  </div></div>`;
+  const close = ()=>{ root.innerHTML=''; };
+  document.getElementById('inModalBg').onclick = close;
+  document.getElementById('inModalCancel').onclick = close;
+  const inp = document.getElementById('inModalText'); inp.focus();
+  const ok = ()=>{ const v = inp.value.trim(); close(); if(onOk) onOk(v); };
+  document.getElementById('inModalOk').onclick = ok;
+  inp.onkeydown = e=>{ if(e.key==='Enter') ok(); else if(e.key==='Escape') close(); };
+}
