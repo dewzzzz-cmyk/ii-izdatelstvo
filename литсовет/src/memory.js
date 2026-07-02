@@ -7,6 +7,7 @@ import { sceneSummaryMessages, parseSceneSummary,
          chapterSummaryMessages, bookSummaryMessages, parseSummary } from './summarizer.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 import { RUBRIC_AXES } from './agents.js';
+import { findOrCreateCharacter } from './state.js';
 
 // Запись памяти с версиями: { current, versions:[{text, at}] }
 function putVersioned(bucket, id, text){
@@ -82,7 +83,10 @@ export async function summarizeScene(state, scene){
   const g = state.global;
   if(!g.apiKey || !scene.text) return null;
   if(!scene.writtenAt) scene.writtenAt = Date.now(); // порядок написания для дрейфа/сворачивания
-  const msgs = sceneSummaryMessages(scene, scene.text);
+  // Известные имена — архивариусу, чтобы переиспользовал их, а не изобретал
+  // новую форму («Олег» vs «Олег К.») и не расщеплял персонажа на два.
+  const knownNames = (state.characters||[]).map(c=>c.name).filter(Boolean);
+  const msgs = sceneSummaryMessages(scene, scene.text, knownNames);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:500, retries:g.retries });
   const parsed = parseSceneSummary(res.text);
   if(!parsed) return null;
@@ -90,10 +94,9 @@ export async function summarizeScene(state, scene){
   state.memory.scenes = state.memory.scenes || {};
   if(parsed.summary) putVersioned(state.memory.scenes, scene.id, parsed.summary);
 
-  // обновляем состояния персонажей
+  // обновляем состояния персонажей (findOrCreateCharacter — защита от дублей форм имени)
   parsed.characters.forEach(c=>{
-    let ch = state.characters.find(x=>x.name.toLowerCase()===c.name.toLowerCase());
-    if(!ch){ ch = { name:c.name, desc:'', stateNote:'', book:state.project.title }; state.characters.push(ch); }
+    const ch = findOrCreateCharacter(state, c.name);
     ch.stateNote = c.state || ch.stateNote;
   });
 

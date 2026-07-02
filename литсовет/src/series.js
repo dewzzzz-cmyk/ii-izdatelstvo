@@ -5,13 +5,18 @@ import { callLLM, extractJSON } from './llm.js';
 import { extractVoice } from './voice.js';
 import { rebuildBibleVecs } from './bible.js';
 import { smartTrunc } from './tokens.js';
+import { findOrCreateCharacter } from './state.js';
 
-function extractMessages(title, text){
+function extractMessages(title, text, knownNames){
   // ограничим вход: начало + конец книги (smartTrunc), чтобы поймать завязку и финал
   const sample = smartTrunc(text, 16000);
   const sys = 'Ты — архивариус серии. Из текста книги извлекаешь канон для продолжения: персонажей с их состоянием НА КОНЕЦ книги, ключевые факты мира, краткую сводку.';
+  const namesNote = knownNames && knownNames.length
+    ? `УЖЕ ИЗВЕСТНЫЕ ПЕРСОНАЖИ (используй ТОЧНО эти формы имени для них, не сокращай и не меняй форму — иначе один человек разделится на две карточки): ${knownNames.join(', ')}.`
+    : '';
   const user = [
     'Книга: ' + (title||''),
+    namesNote,
     '',
     'ТЕКСТ (начало и конец книги):',
     sample,
@@ -22,7 +27,7 @@ function extractMessages(title, text){
     '  "facts": [{"keys":"ключи через запятую","text":"канонический факт о мире/персонажах"}]',
     '}',
     'characters — главные и важные второстепенные. facts — места, предметы, правила мира (5-15). Только JSON.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
@@ -43,17 +48,19 @@ export async function importSeriesBook(state, title, text){
   }
 
   // 2. Канон/персонажи/сводка — через LLM
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:extractMessages(title, text), maxTokens:2000 });
+  const knownNames = (state.characters||[]).map(c=>c.name).filter(Boolean);
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:extractMessages(title, text, knownNames), maxTokens:2000 });
   const j = extractJSON(res.text) || {};
 
-  // персонажи
+  // персонажи (findOrCreateCharacter — защита от дублей форм имени)
   let chAdded=0;
+  const beforeCount = (state.characters||[]).length;
   (Array.isArray(j.characters)?j.characters:[]).forEach(c=>{
     if(!c||!c.name) return;
-    let ex = state.characters.find(x=>x.name.toLowerCase()===c.name.toLowerCase());
-    if(!ex){ ex={name:c.name, desc:'', stateNote:'', book:title}; state.characters.push(ex); chAdded++; }
+    const ex = findOrCreateCharacter(state, c.name, {book:title});
     ex.desc = c.desc||ex.desc; ex.stateNote = c.state||ex.stateNote; ex.book = title;
   });
+  chAdded = (state.characters||[]).length - beforeCount;
 
   // факты в Bible
   let factsAdded=0;

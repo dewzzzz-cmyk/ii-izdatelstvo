@@ -1,7 +1,7 @@
 // Правая панель, вкладка «Память»: сводки (с откатом версий), состояния
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
-import { getState, save } from '../state.js';
+import { getState, save, mergeCharacters, charNamesMatch } from '../state.js';
 import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
@@ -39,13 +39,18 @@ export function renderMemory(){
 
       ${s.characters&&s.characters.length?`
         <div class="mem-h">Персонажи (${s.characters.length})</div>
-        ${s.characters.map((c,i)=>`<div class="mem-card">
+        ${s.characters.map((c,i)=>{
+          const dupOf = s.characters.find((c2,i2)=>i2!==i && charNamesMatch(c.name,c2.name));
+          return `<div class="mem-card">
           <div style="display:flex;justify-content:space-between;align-items:center">
-            <div class="mem-title">${esc(c.name)}</div>
-            <button class="bc-act char-edit" data-chi="${i}" title="Изменить состояние">✏</button>
+            <div class="mem-title">${esc(c.name)}${dupOf?` <span class="stale-dot" title="Похоже на «${esc(dupOf.name)}» — возможно, один и тот же персонаж">⚠</span>`:''}</div>
+            <div style="display:flex;gap:2px">
+              <button class="bc-act char-merge" data-chi="${i}" title="Объединить с другим персонажем (если это дубль)">🔗</button>
+              <button class="bc-act char-edit" data-chi="${i}" title="Изменить состояние">✏</button>
+            </div>
           </div>
           <div class="muted char-state" data-chi="${i}" style="font-size:12px;cursor:pointer" title="Нажмите чтобы редактировать">${esc(c.stateNote||'—')}</div>
-        </div>`).join('')}
+        </div>`;}).join('')}
       `:''}
 
       ${driftBlock(scenes)}
@@ -74,6 +79,37 @@ function renderCalibration(s){
       <div style="font-size:12px;margin-bottom:6px">Оценок: <b>${cal.ratings.length}</b>${adj?` · порог сейчас <b>${adj.threshold}</b> (вы ${adj.authorAvg} / ИИ ${adj.evalAvg})`:` · порог <b>${s.global.evaluatorThreshold??7}</b>`}</div>
       <button class="btn ${pending?'btn-primary':''}" id="calBtn" ${pending?'':'disabled'}>${pending?`Оценить сцену вслепую (${pending})`:'Нет новых сцен'}</button>
     </div>`;
+}
+
+// Объединить дубли персонажа (одно имя в разных формах — «Олег»/«Олег К.»).
+// Показывает всех ОСТАЛЬНЫХ персонажей; выбранный становится каноническим
+// именем, объединённая карточка забирает недостающие поля, а во всех сценах
+// scene.presentChars с именем дубля переписывается на выбранное имя.
+function openMergeCharacterModal(dropIdx){
+  const s = getState();
+  const chars = s.characters||[];
+  const drop = chars[dropIdx]; if(!drop) return;
+  const others = chars.map((c,i)=>({c,i})).filter(x=>x.i!==dropIdx);
+  if(!others.length){ alert('Больше не с кем объединять — это единственный персонаж.'); return; }
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `<div class="modal-bg" id="mrgBg"><div class="modal" style="width:420px" onclick="event.stopPropagation()">
+    <h2>🔗 Объединить «${esc(drop.name)}»</h2>
+    <div class="muted" style="margin-bottom:10px;font-size:12px">Выберите, с кем объединить — если это один и тот же персонаж под другим именем. Состояние/описание объединятся, а в сценах, где отмечен «${esc(drop.name)}», отметка перейдёт на выбранное имя.</div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:40vh;overflow:auto">
+      ${others.map(x=>`<button class="btn mrg-opt" data-keepi="${x.i}" style="text-align:left">${esc(x.c.name)}${x.c.stateNote?` <span class="muted" style="font-size:11px">— ${esc(x.c.stateNote.slice(0,40))}</span>`:''}</button>`).join('')}
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" id="mrgCancel">Отмена</button></div>
+  </div></div>`;
+  const close = ()=>root.innerHTML='';
+  document.getElementById('mrgBg').onclick = close;
+  document.getElementById('mrgCancel').onclick = close;
+  document.querySelectorAll('.mrg-opt').forEach(b=>b.onclick=()=>{
+    const keepIdx = +b.dataset.keepi;
+    const st = getState();
+    const freshDropIdx = st.characters.indexOf(drop); // на случай если массив успел измениться
+    if(freshDropIdx>=0 && mergeCharacters(st, keepIdx, freshDropIdx)) save();
+    close();
+  });
 }
 
 function openBlindRating(){
@@ -134,6 +170,7 @@ function bindMemory(){
     stDiv.querySelector('.btn:not(.btn-primary)').onclick=()=>{ stDiv.innerHTML=`<span class="muted">${esc(oldNote||'—')}</span>`; };
   }
   document.querySelectorAll('.char-edit').forEach(b=>b.onclick=e=>{ e.stopPropagation(); editCharState(+b.dataset.chi); });
+  document.querySelectorAll('.char-merge').forEach(b=>b.onclick=e=>{ e.stopPropagation(); openMergeCharacterModal(+b.dataset.chi); });
   document.querySelectorAll('.char-state').forEach(d=>d.onclick=()=>editCharState(+d.dataset.chi));
 
   // Bible: добавить факт
@@ -144,7 +181,7 @@ function bindMemory(){
     const s=getState(); s.bible.push({keys:keys.trim(), text:text.trim()}); rebuildBibleVecs(s.bible); save();
   };
   // Bible: ред./AI-расширить/удалить
-  document.querySelectorAll('.bc-act:not(.char-edit)').forEach(b=>b.onclick=async (e)=>{
+  document.querySelectorAll('.bc-act:not(.char-edit):not(.char-merge)').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
     if(b.dataset.act==='del'){ s.bible.splice(i,1); rebuildBibleVecs(s.bible); save(); return; }

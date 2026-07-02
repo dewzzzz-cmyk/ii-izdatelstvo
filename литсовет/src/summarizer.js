@@ -6,10 +6,14 @@
 
 import { extractJSON } from './llm.js';
 
-export function sceneSummaryMessages(scene, sceneText){
+export function sceneSummaryMessages(scene, sceneText, knownNames){
   const sys = 'Ты — архивариус. Сжимаешь сцену в краткую сводку для памяти книги. Пиши плотно, только факты и сдвиги состояния.';
+  const namesNote = knownNames && knownNames.length
+    ? `УЖЕ ИЗВЕСТНЫЕ ПЕРСОНАЖИ (используй ТОЧНО эти формы имени, если пишешь про них — не сокращай и не меняй форму, иначе один человек разделится на две разные карточки): ${knownNames.join(', ')}.`
+    : '';
   const user = [
     'Бриф сцены: ' + (scene.brief || scene.title || ''),
+    namesNote,
     '',
     'ТЕКСТ СЦЕНЫ:',
     sceneText,
@@ -17,7 +21,7 @@ export function sceneSummaryMessages(scene, sceneText){
     'Верни JSON: { "summary": "сводка сцены, до 60 слов — что произошло, что изменилось", "characters": [{"name":"имя","state":"состояние/знание персонажа на конец сцены"}], "facts": [{"keys":"ключи через запятую","text":"новый канонический факт о мире/персонаже"}] }',
     'summary — сухо и по делу. characters — только те, чьё состояние реально изменилось. facts — только действительно новые факты (0-3).',
     'Только JSON.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 

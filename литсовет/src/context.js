@@ -6,14 +6,17 @@ import { estimateTokens, smartTrunc, trimToTokens } from './tokens.js';
 import { bibleForPrompt } from './bible.js';
 import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
+import { charNamesMatch } from './state.js';
 
 const SEP = '\n\n';
 
 // Сериализация состояний персонажей, присутствующих в сцене.
+// charNamesMatch (не точное сравнение) — чтобы отметка «Олег» в сцене всё
+// равно находила карточку «Олег К.», если форма имени успела разъехаться.
 export function serializeCharacterStates(characters, presentNames){
   if(!characters || !characters.length) return '';
   const present = presentNames && presentNames.length
-    ? characters.filter(c=>presentNames.includes(c.name))
+    ? characters.filter(c=>presentNames.some(nm=>charNamesMatch(nm, c.name)))
     : characters;
   return present.filter(c=>c.stateNote).map(c=>`${c.name} — ${c.stateNote}`).join('\n');
 }

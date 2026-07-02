@@ -1,7 +1,7 @@
 // Рендереры стадий. ПП1+2: Концепция (онбординг+режим), Голос (образец→примеры),
 // Структура (минимальный список сцен), Написание (редактор + запуск ядра).
 
-import { getState, save, uid, addRule } from '../state.js';
+import { getState, save, uid, addRule, charNamesMatch } from '../state.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { runScene, isRunning } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
@@ -954,7 +954,7 @@ export function renderWrite(els){
       ${s.characters&&s.characters.length?`<div class="field" style="margin:0 0 10px">
         <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Персонажи в сцене <span class="hint">(отметьте присутствующих — Стражи увидят их состояния)</span></label>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">
-          ${s.characters.map(c=>{const on=(scene.presentChars||[]).includes(c.name); return `<label class="pc-tag${on?' active':''}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:12px;border:1px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent-dim)':'transparent'};cursor:pointer"><input type="checkbox" class="pc-cb" data-name="${esc(c.name)}" ${on?'checked':''} style="display:none"><span>${esc(c.name)}</span></label>`; }).join('')}
+          ${s.characters.map(c=>{const on=(scene.presentChars||[]).some(nm=>charNamesMatch(nm,c.name)); return `<label class="pc-tag${on?' active':''}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:12px;border:1px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent-dim)':'transparent'};cursor:pointer"><input type="checkbox" class="pc-cb" data-name="${esc(c.name)}" ${on?'checked':''} style="display:none"><span>${esc(c.name)}</span></label>`; }).join('')}
         </div>
       </div>`:''}
       <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Сказать агенту, что изменить</label>

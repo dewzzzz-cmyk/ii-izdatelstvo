@@ -6,7 +6,7 @@ import { rebuildBibleVecs } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.6.1';
+export const APP_VERSION = '1.7.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -101,6 +101,61 @@ export function defaultAgents(){
     { id:'dialogue',  name:'Страж диалога',     icon:'💬', temp:0.3, maxTokens:700, strictness:2, enabled:false, role:'dialogue',
       desc:'Ловит реплики «в лоб» (без подтекста), избыточные теги вместо экшн-бит, неразличимые голоса персонажей. Только флагует. Параллельно с другими стражами.' },
   ];
+}
+
+// ── Персонажи: единая точка разрешения имени (спека — устраняет расщепление
+// одного персонажа на несколько карточек). Раньше memory.js и series.js
+// матчили ТОЛЬКО точным совпадением строки — «Олег» и «Олег К.» из разных
+// сцен превращались в двух разных персонажей, потому что архивариус каждый
+// раз не знал, что имя уже встречалось, и модель свободно выбирала форму.
+//
+// Слово-в-слово сравнение (не посимвольный prefix!) — иначе «Оля» ложно
+// матчилась бы с «Олег». Сокращение с точкой («К.») считается совпадением
+// с полным словом на ту же букву («Крылов»).
+function wordsMatch(w1, w2){
+  if(w1===w2) return true;
+  const d1=w1.replace(/\.$/,''), d2=w2.replace(/\.$/,'');
+  if(w1.endsWith('.') && d1 && w2.startsWith(d1)) return true;
+  if(w2.endsWith('.') && d2 && w1.startsWith(d2)) return true;
+  return false;
+}
+export function charNamesMatch(a, b){
+  const an=(a||'').trim().toLowerCase(), bn=(b||'').trim().toLowerCase();
+  if(!an || !bn) return false;
+  if(an===bn) return true;
+  const aw=an.split(/\s+/).filter(Boolean), bw=bn.split(/\s+/).filter(Boolean);
+  if(!aw.length || !bw.length) return false;
+  const short = aw.length<=bw.length ? aw : bw;
+  const long  = aw.length<=bw.length ? bw : aw;
+  return short.every((w,i)=>wordsMatch(w, long[i]));
+}
+// Найти персонажа по имени (с защитой от дублей форм) или создать нового.
+// extra — доп. поля (desc/book) для НОВОЙ карточки, не перезаписывает существующую.
+export function findOrCreateCharacter(state, name, extra={}){
+  state.characters = state.characters || [];
+  let ch = state.characters.find(x=>charNamesMatch(x.name, name));
+  if(!ch){
+    ch = { name, desc:'', stateNote:'', book: state.project?.title||'', ...extra };
+    state.characters.push(ch);
+  }
+  return ch;
+}
+// Объединить два персонажа вручную (панель «Память»): оставляет запись keepIdx,
+// переносит недостающие desc/stateNote из dropIdx, чинит scene.presentChars
+// во всех сценах (там могло остаться старое имя дубля) и удаляет дубль.
+export function mergeCharacters(state, keepIdx, dropIdx){
+  const chars = state.characters||[];
+  const keep = chars[keepIdx], drop = chars[dropIdx];
+  if(!keep || !drop || keepIdx===dropIdx) return false;
+  if(!keep.desc && drop.desc) keep.desc = drop.desc;
+  if(!keep.stateNote && drop.stateNote) keep.stateNote = drop.stateNote;
+  (state.structure||[]).forEach(n=>{
+    if(n.type==='scene' && Array.isArray(n.presentChars) && n.presentChars.includes(drop.name)){
+      n.presentChars = [...new Set(n.presentChars.map(nm=>nm===drop.name?keep.name:nm))];
+    }
+  });
+  state.characters = chars.filter((_,i)=>i!==dropIdx);
+  return true;
 }
 
 // Добавить правило автора (do/don't). Дедуп по тексту. Возвращает true, если добавлено.
