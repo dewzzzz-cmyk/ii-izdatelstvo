@@ -9,7 +9,7 @@ import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval } from '../architect-book.js';
-import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter } from './author-control.js';
+import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter, isChapterLocked } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
 import { importSeriesBook } from '../series.js';
@@ -892,8 +892,9 @@ function renderSceneList(s){
       const sc = n.lastEval?.weighted;
       const scoreBadge = sc ? `<span class="sr-score ${n.lastEval.pass?'score-pass':'score-fail'}" title="Оценка оценщика: ${sc}">${sc}</span>` : '';
       const seqBadge = n.sceneType==='sequel' ? '<span class="sk-seq-badge" title="Секвель — сцена реакции/передышки">↺</span> ' : '';
+      const lockBadge = isChapterLocked(s, n.chapterId) ? '<span class="stale-dot" title="Заблокировано: закройте предыдущую главу">🔒</span> ' : '';
       html+=`<div class="scene-row ${s.ui.activeScene===n.id?'active':''}" data-sc="${n.id}">
-        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${seqBadge}${esc(n.title)}</span>${scoreBadge}<span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
+        <span class="sr-name">${n.stale?'<span class="stale-dot" title="возможно устарела">⚠</span> ':''}${lockBadge}${seqBadge}${esc(n.title)}</span>${scoreBadge}<span class="sr-meta">${n.words||(n.status==='done'?'':'—')}</span></div>`;
     }
   });
   return html;
@@ -915,6 +916,7 @@ export function renderWrite(els){
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ if(_busy){ return; } s.ui.activeScene=r.dataset.sc; save(); });
 
   const ch = chapterOf(s, scene);
+  const locked = ch && isChapterLocked(s, ch.id);
   const showStop = ch && chapterComplete(s, ch.id) && !chapterClosed(s, ch.id);
   const isFactoryMode = s.project.mode==='factory';
   // «Фабрика»: стоп не блокирует — глава закрывается сама, без клика.
@@ -945,7 +947,7 @@ export function renderWrite(els){
     <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${_edReviewOn?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):esc(scene.text)):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
     <div id="edPopup" class="ed-popup" style="display:none"></div>
-    ${showStop?renderEditorialStop(s, ch, isFactoryMode):''}
+    ${locked?renderChapterLockedBanner(s, ch):(showStop?renderEditorialStop(s, ch, isFactoryMode):'')}
     <div class="brief-box">
       <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
         <textarea id="brief" rows="4">${esc(scene.brief)}</textarea></div>
@@ -965,7 +967,7 @@ export function renderWrite(els){
       </div>
     </div>
     <div class="run-row">
-      <button class="btn btn-primary" id="runBtn" style="flex:1">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
+      <button class="btn btn-primary" id="runBtn" style="flex:1" ${locked?'disabled':''} data-tip="${locked?'Заблокировано: закройте предыдущую главу.':''}">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
       <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
       ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
     </div>
@@ -973,6 +975,7 @@ export function renderWrite(els){
       if(!ch) return '';
       const rem = scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
       if(!rem && !_autoChapter) return '';
+      if(locked) return `<div class="run-row" style="margin-top:6px"><button class="btn" style="flex:1" disabled data-tip="Заблокировано: закройте предыдущую главу, прежде чем писать здесь.">🔒 Заблокировано</button></div>`;
       const isFactoryMode = s.project.mode==='factory';
       const label = _autoChapter ? '■ Стоп (после текущей сцены)'
         : isFactoryMode ? '▶▶ Написать книгу подряд ('+rem+'+ сц.)'
@@ -1041,6 +1044,17 @@ export function renderWrite(els){
   const nx=document.getElementById('nextScene');
   if(nx){ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nextSc=scenes[idx+1]; if(nextSc) nx.onclick=()=>{ if(_busy) return; s.ui.activeScene=nextSc.id; save(); }; }
 
+  const gpc=document.getElementById('goToPrevChapter');
+  if(gpc) gpc.onclick=()=>{
+    if(_busy) return;
+    const chapters=(s.structure||[]).filter(n=>n.type==='chapter');
+    const idx=chapters.findIndex(c=>c.id===ch.id);
+    const prevCh=idx>0?chapters[idx-1]:null; if(!prevCh) return;
+    const prevScenes=scenesOfChapter(s, prevCh.id);
+    const target=prevScenes.find(sc=>sc.status!=='done') || prevScenes[prevScenes.length-1];
+    if(target){ s.ui.activeScene=target.id; save(); }
+  };
+
   // ИИ-корректор: правописание без вмешательства в стиль, с предпросмотром правок
   const pf=document.getElementById('edProof');
   if(pf) pf.onclick = async ()=>{
@@ -1063,6 +1077,7 @@ export function renderWrite(els){
     if(_autoChapter){ _autoStopReq=true; ac.disabled=true; ac.textContent='…остановлюсь после этой сцены'; return; }
     if(_busy) return;
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    if(ch && isChapterLocked(s, ch.id)){ alert('Глава заблокирована: закройте предыдущую главу, прежде чем писать здесь.'); return; }
     runChapterAutopilot(els, s, ch);
   };
 
@@ -1471,6 +1486,20 @@ function renderEditorialStop(s, ch, isFactoryMode){
   </div>`;
 }
 
+// Глава заблокирована: предыдущая ещё не закрыта (не пройден редакторский стоп).
+// Прозаик/автопилот здесь не работают (гейт — в doRun и обработчике autoChapter),
+// это только объяснение и переход к тому, что нужно закрыть.
+function renderChapterLockedBanner(s, ch){
+  const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+  const idx = chapters.findIndex(c=>c.id===ch.id);
+  const prevCh = idx>0 ? chapters[idx-1] : null;
+  return `<div class="stop-banner stop-banner-lock">
+    <div class="sb-title">🔒 Глава «${esc(ch.title)}» заблокирована</div>
+    <div class="sb-text">Сначала закройте главу${prevCh?` «${esc(prevCh.title)}»`:''} — редакторский стоп там ещё не пройден. Прозаик и автопилот не будут работать здесь, пока предыдущая глава не закрыта.</div>
+    ${prevCh?`<button class="btn" id="goToPrevChapter">← К главе «${esc(prevCh.title)}»</button>`:''}
+  </div>`;
+}
+
 // Настройки перегенерации: креативность Прозаика (temp) + объём этой сцены.
 function openRegenSettings(s, scene){
   const prose = (s.agents||[]).find(a=>a.role==='prose')||{};
@@ -1555,6 +1584,14 @@ async function doRun(els, s, scene, directive, runFlags={}){
   const g=s.global;
   if(_busy) return;
   if(!g.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+  // Последовательность глав: пока предыдущая глава не закрыта — эту не пишем.
+  // Единая точка входа (кнопка, чипы, флаги «→ Прозаику», автопилот) — гейт
+  // здесь ловит все пути, а не только ручной клик по «▶ Запустить».
+  const chForScene = chapterOf(s, scene);
+  if(chForScene && isChapterLocked(s, chForScene.id)){
+    alert('Глава заблокирована: закройте предыдущую главу (редакторский стоп), прежде чем писать здесь.');
+    return;
+  }
   _busy = true;
   _runLog = []; _runCurrent = 'Запуск…'; _topTab = 'process';   // показываем «Процесс» во время прогона
   renderRightPanel(els);

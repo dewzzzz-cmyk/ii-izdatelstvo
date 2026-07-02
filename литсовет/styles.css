@@ -323,6 +323,9 @@ textarea{resize:vertical;min-height:60px}
 .stop-banner-auto{background:var(--accent-bg);border-color:var(--accent-border)}
 .stop-banner-auto .sb-title{color:var(--accent);display:flex;align-items:center;gap:6px;margin-bottom:0}
 .stop-banner-auto .sb-text{color:var(--text-3);margin-bottom:0}
+.stop-banner-lock{background:var(--surface-2);border-color:var(--border-2)}
+.stop-banner-lock .sb-title{color:var(--text)}
+.stop-banner-lock .sb-text{color:var(--text-2);margin-bottom:8px}
 .sb-title{font-size:12px;font-weight:500;color:var(--warn);margin-bottom:3px}
 .sb-text{font-size:11px;color:#633806;line-height:1.5;margin-bottom:8px}
 .sb-warn{font-size:11px;color:var(--err);margin-bottom:8px}
