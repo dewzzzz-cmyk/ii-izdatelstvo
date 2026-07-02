@@ -1103,6 +1103,7 @@ function openProofreadModal(scene, res){
     if(scene.proseVersions.length>10) scene.proseVersions.length=10;
     scene.text = res.corrected;
     scene.words = (res.corrected.match(/\S+/g)||[]).length;
+    scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правок
     close();
     save();
   };
@@ -1162,6 +1163,7 @@ function bindEditorButton(els, s, scene){
         let text = scene.text;
         suggestions.forEach(sug=>{ if(text.includes(sug.original)) text = text.replace(sug.original, sug.suggestion); });
         scene.text = text; scene.words = (text.match(/\S+/g)||[]).length;
+        scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правок
         save();
         btn.disabled = false; btn.textContent = `✓ ${suggestions.length} правок`;
         setTimeout(()=>{ if(document.getElementById('edStyle')===btn) btn.textContent = orig; }, 1800);
@@ -1216,6 +1218,7 @@ function resolveSuggestion(scene, idx, accept){
   if(accept && scene.text.includes(sug.original)){
     scene.text = scene.text.replace(sug.original, sug.suggestion);
     scene.words = (scene.text.match(/\S+/g)||[]).length;
+    scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
   }
   _edSuggestions.splice(idx, 1);
   if(!_edSuggestions.length){ _edReviewOn = false; _edReviewSceneId = null; }
@@ -1669,6 +1672,7 @@ async function applyInlineEdit(scene, edEl, action, start, end){
     scene.proseVersions.unshift(scene.text);            // прошлый вариант — для отката
     if(scene.proseVersions.length>10) scene.proseVersions.length=10;
     scene.text = newText; scene.words=(newText.match(/\S+/g)||[]).length;
+    scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
     save();
   }catch(e){ edEl.style.opacity=''; alert('Не удалось: '+e.message); }
 }

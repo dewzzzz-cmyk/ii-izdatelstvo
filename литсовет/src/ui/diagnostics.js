@@ -627,7 +627,9 @@ function openAgentResult(agent, result, scene){
       const fixed=await patchScene(s, sc, b.dataset.fix);
       sc.proseVersions=sc.proseVersions||[]; sc.proseVersions.unshift(sc.text);
       if(sc.proseVersions.length>10) sc.proseVersions.length=10;
-      sc.text=fixed; sc.words=(fixed.match(/\S+/g)||[]).length; save(); // перерисует редактор за модалкой
+      sc.text=fixed; sc.words=(fixed.match(/\S+/g)||[]).length;
+      sc.lastEval=null; sc.flags={};   // оценка/флаги относились к тексту до правки
+      save(); // перерисует редактор за модалкой
       b.textContent='✓ применено'; b.classList.add('done'); b.disabled=true;
     }catch(e){ b.textContent=prev; b.disabled=false; alert('Не удалось: '+e.message); }
   });
@@ -641,7 +643,9 @@ function openAgentResult(agent, result, scene){
     const s=getState(); const sc=(s.structure||[]).find(n=>n.id===scene.id); if(!sc) return;
     sc.proseVersions=sc.proseVersions||[]; sc.proseVersions.unshift(sc.text);
     if(sc.proseVersions.length>10) sc.proseVersions.length=10;
-    sc.text=result.text; sc.words=(result.text.match(/\S+/g)||[]).length; save(); close();
+    sc.text=result.text; sc.words=(result.text.match(/\S+/g)||[]).length;
+    sc.lastEval=null; sc.flags={};   // оценка/флаги относились к тексту до правки
+    save(); close();
   };
   document.querySelectorAll('.ares-rule').forEach(b=>b.onclick=()=>{
     openRuleModal(b.dataset.rule, { onSave:()=>{ b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true; } });
