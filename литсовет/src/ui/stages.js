@@ -68,6 +68,7 @@ let _runCurrent = '';       // что происходит прямо сейча
 let _edReviewOn = false;    // редактор в режиме ручного ревью (подсветка правок в тексте)
 let _edSuggestions = [];    // необработанные предложения редактора текущей сцены
 let _edReviewSceneId = null; // id сцены, к которой относятся _edSuggestions (сброс при смене сцены)
+let _autoClosingChapters = new Set(); // главы, которые сейчас автозакрываются в «Фабрике» (защита от повторного вызова)
 
 // Лента «Процесс»: пошагово что делают агенты и почему (особенно доработки).
 function renderProcess(){
@@ -164,9 +165,10 @@ export function renderConcept(els){
 
       <div class="field"><label>Режим работы</label>
         <div class="mode-switch" id="modeSwitch">
-          <div class="mode-opt ${p.mode==='director'?'sel':''}" data-mode="director">Режиссёр<small>качество · контроль обязателен</small></div>
-          <div class="mode-opt ${p.mode==='factory'?'sel':''}" data-mode="factory">Фабрика<small>скорость · контроль опционален</small></div>
+          <div class="mode-opt ${p.mode==='director'?'sel':''}" data-mode="director">Режиссёр<small>обязательная правка рукой · стоп после каждой главы</small></div>
+          <div class="mode-opt ${p.mode==='factory'?'sel':''}" data-mode="factory">Фабрика<small>без остановок · автопилот идёт через всю книгу</small></div>
         </div>
+        ${p.mode==='factory'?`<button class="btn" id="disableAllManual" style="margin-top:8px" data-tip="Переводит всех агентов (Прозаик, Оценщик, Стражи, редакторы) в автоматический режим — без пауз на подтверждение. Настройки температуры/токенов и включённость агентов не трогает, только флаг «ручной».">⚡ Выключить ручные подтверждения у всех агентов</button>`:''}
       </div>
 
       <button class="adv-toggle" id="advBtn">▾ Дополнительные настройки</button>
@@ -273,6 +275,13 @@ export function renderConcept(els){
     document.getElementById('seriesFields').style.display=p.type==='series'?'':'none';
   };
   document.getElementById('modeSwitch').onclick = (ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; p.mode=o.dataset.mode; save(); };
+  const dam = document.getElementById('disableAllManual');
+  if(dam) dam.onclick = ()=>{
+    (s.agents||[]).forEach(a=>{ a.manual=false; });
+    dam.textContent = '✓ Все агенты переведены в авто-режим';
+    dam.disabled = true;
+    setTimeout(()=>save(), 900); // задержка — чтобы подтверждение успело мелькнуть перед ре-рендером
+  };
   document.getElementById('useVoice').onchange = (ev)=>{
     p.useVoice = ev.target.checked;
     const btn = document.getElementById('toNext');
@@ -907,6 +916,15 @@ export function renderWrite(els){
 
   const ch = chapterOf(s, scene);
   const showStop = ch && chapterComplete(s, ch.id) && !chapterClosed(s, ch.id);
+  const isFactoryMode = s.project.mode==='factory';
+  // «Фабрика»: стоп не блокирует — глава закрывается сама, без клика.
+  // Гвард по id не даёт запустить closeChapter повторно, пока первый вызов
+  // ещё не долетел до save() (ch.closed выставляется внутри синхронно,
+  // но до этого момента промежуточные ре-рендеры видели бы showStop=true снова).
+  if(showStop && isFactoryMode && !_autoChapter && !_autoClosingChapters.has(ch.id)){
+    _autoClosingChapters.add(ch.id);
+    setTimeout(async ()=>{ await closeChapter(s, ch.id); _autoClosingChapters.delete(ch.id); }, 500);
+  }
 
   els.center.innerHTML = `
     <div class="scene-bar">
@@ -927,7 +945,7 @@ export function renderWrite(els){
     <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${_edReviewOn?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):esc(scene.text)):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
     <div id="edPopup" class="ed-popup" style="display:none"></div>
-    ${showStop?renderEditorialStop(s, ch):''}
+    ${showStop?renderEditorialStop(s, ch, isFactoryMode):''}
     <div class="brief-box">
       <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
         <textarea id="brief" rows="4">${esc(scene.brief)}</textarea></div>
@@ -951,11 +969,18 @@ export function renderWrite(els){
       <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
       ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
     </div>
-    ${(()=>{ // автопилот: дописать оставшиеся сцены главы подряд
+    ${(()=>{ // автопилот: дописать оставшиеся сцены главы подряд (в «Фабрике» — и дальше по книге)
       if(!ch) return '';
       const rem = scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
       if(!rem && !_autoChapter) return '';
-      return `<div class="run-row" style="margin-top:6px"><button class="btn" id="autoChapter" style="flex:1" data-tip="Автопилот: написать все оставшиеся сцены главы подряд, каждая — через полный цикл агентов. Остановится при ошибке или по кнопке. Ручные подтверждения агентов работают как обычно.">${_autoChapter?'■ Стоп (после текущей сцены)':'▶▶ Дописать главу подряд ('+rem+' сц.)'}</button></div>`;
+      const isFactoryMode = s.project.mode==='factory';
+      const label = _autoChapter ? '■ Стоп (после текущей сцены)'
+        : isFactoryMode ? '▶▶ Написать книгу подряд ('+rem+'+ сц.)'
+        : '▶▶ Дописать главу подряд ('+rem+' сц.)';
+      const tip = isFactoryMode
+        ? 'Автопилот «Фабрика»: пишет все сцены, сам закрывает главу и переходит к следующей — без остановок до конца книги или ошибки.'
+        : 'Автопилот: написать все оставшиеся сцены главы подряд, каждая — через полный цикл агентов. Остановится при ошибке или по кнопке. Ручные подтверждения агентов работают как обычно.';
+      return `<div class="run-row" style="margin-top:6px"><button class="btn" id="autoChapter" style="flex:1" data-tip="${tip}">${label}</button></div>`;
     })()}
     ${(()=>{ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nx=idx>=0&&idx<scenes.length-1?scenes[idx+1]:null; return nx?`<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="btn" id="nextScene">→ ${esc(nx.title)}</button></div>`:''; })()}`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
@@ -1048,20 +1073,31 @@ export function renderWrite(els){
 // оставшиеся (не готовые) сцены текущей главы. Останавливается по кнопке
 // (после текущей сцены) или при первой ошибке прогона. Ручные гейты агентов
 // (approvalGate) срабатывают как обычно — автопилот просто ждёт ответа.
-async function runChapterAutopilot(els, s, ch){
-  if(_autoChapter || !ch) return;
+async function runChapterAutopilot(els, s, startCh){
+  if(_autoChapter || !startCh) return;
   _autoChapter = true; _autoStopReq = false;
+  const isFactoryMode = s.project.mode==='factory';
   try{
-    let guard = 0;
-    while(guard++ < 100){
+    let ch = startCh, guard = 0;
+    while(ch && guard++ < 200){
       if(_autoStopReq) break;
-      const next = scenesOfChapter(s, ch.id).find(sc=>sc.status!=='done');
-      if(!next) break;
-      s.ui.activeScene = next.id;
-      save();                                    // ре-рендер переключает редактор на сцену
-      await new Promise(r=>setTimeout(r, 60));   // даём DOM устояться перед прогоном
-      await doRun(els, s, next, '');
-      if(next.status!=='done' || !next.text) break;  // прогон упал — не идём дальше
+      const chScenes = scenesOfChapter(s, ch.id);
+      const next = chScenes.find(sc=>sc.status!=='done');
+      if(next){
+        s.ui.activeScene = next.id;
+        save();                                    // ре-рендер переключает редактор на сцену
+        await new Promise(r=>setTimeout(r, 60));   // даём DOM устояться перед прогоном
+        await doRun(els, s, next, '');
+        if(next.status!=='done' || !next.text) break;  // прогон упал — не идём дальше
+        continue;                                  // в главе могут остаться ещё сцены
+      }
+      // Глава дописана. В «Режиссёре» закрытие — дело автора, останавливаемся.
+      if(!isFactoryMode || _autoStopReq) break;
+      // Пустая глава (сцен вообще нет) — писать нечего, дальше молча не идём.
+      if(!chScenes.length) break;
+      await closeChapter(s, ch.id);
+      const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+      ch = chapters[chapters.findIndex(c=>c.id===ch.id)+1] || null;
     }
   } finally {
     _autoChapter = false; _autoStopReq = false;
@@ -1415,7 +1451,15 @@ function stageDoneFor(s,id){
   }
 }
 
-function renderEditorialStop(s, ch){
+function renderEditorialStop(s, ch, isFactoryMode){
+  if(isFactoryMode){
+    // «Фабрика»: стоп не блокирует — информирует и закрывает главу сам
+    // (см. setTimeout-триггер в renderWrite), без клика и без правки рукой.
+    return `<div class="stop-banner stop-banner-auto">
+      <div class="sb-title"><span class="spinner"></span> Глава «${esc(ch.title)}» готова — закрываю автоматически…</div>
+      <div class="sb-text">Режим «Фабрика»: редакторский стоп не блокирует работу, суммаризация идёт в фоне.</div>
+    </div>`;
+  }
   const needHand = needsAuthorHand(s);
   const scenes = scenesOfChapter(s, ch.id);
   const handOk = !needHand || scenes.some(sc=>sc.handDone);
