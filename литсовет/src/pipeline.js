@@ -84,7 +84,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         onProgress && onProgress({stage:'architect', text:'Архитектор планирует сцену…'});
         const aRes = await callLLM({ ...llmBase, temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??600 });
         const plan = parseArchitect(aRes.text);
-        architectText = architectToText(plan);
+        architectText = architectToText(plan, scene);
         if(plan && plan.presentChars.length) scene.presentChars = plan.presentChars;
         logStep({ agent:'architect', input:aMsgs[1].content, output:aRes.text,
           tokensIn:aRes.tokensIn, tokensOut:aRes.tokensOut, cost:aRes.cost });

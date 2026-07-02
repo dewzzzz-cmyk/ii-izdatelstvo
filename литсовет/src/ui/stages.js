@@ -19,6 +19,7 @@ import { rebuildBibleVecs } from '../bible.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
+import { runBetaRead, runChekhovCheck } from '../bookreview.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -763,14 +764,19 @@ function renderSkeletonEditor(s){
       html += `<div class="sk-chapter"><span class="sk-arc">${esc(n.arc||'')}</span> <span style="flex:1">${esc(n.title)}</span><button class="sk-ch-regen" data-chregen="${n.id}" title="Перегенерировать все сцены этой главы по подсказке">↻ глава</button></div>`;
     } else if(n.type==='scene'){
       const open = s.ui.editScene===n.id;
+      const isSeq = n.sceneType==='sequel';
       html += `<div class="sk-scene ${open?'open':''}" data-sc="${n.id}">
         <div class="sk-scene-head" data-toggle="${n.id}">
-          <span class="sk-sc-title">${esc(n.title)}</span>
+          <span class="sk-sc-title">${isSeq?'<span class="sk-seq-badge" title="Секвель — сцена реакции/передышки">↺</span> ':''}${esc(n.title)}</span>
           <span class="sr-meta">${n.text?(n.words+' сл'):('~'+(n.targetWords||700))}</span>
         </div>
         ${open?`<div class="sk-scene-body">
           <textarea class="sk-brief" data-id="${n.id}" rows="4" placeholder="бриф">${esc(n.brief)}</textarea>
           <input type="text" class="sk-emo" data-id="${n.id}" value="${esc(n.emotion||'')}" placeholder="эмоция читателя">
+          <div class="mode-mini" data-tip="Сцена — растущее напряжение (цель→конфликт→поражение). Секвель — передышка (реакция→дилемма→решение). Влияет на инструкцию Прозаику при написании.">
+            <button class="mm-btn sk-type-btn ${!isSeq?'on':''}" data-typeid="${n.id}" data-type="scene">Сцена</button>
+            <button class="mm-btn sk-type-btn ${isSeq?'on':''}" data-typeid="${n.id}" data-type="sequel">Секвель</button>
+          </div>
           <div class="sk-regen">
             <input type="text" class="sk-hint" data-id="${n.id}" placeholder="в каком направлении переделать (подсказка ИИ)…">
             <button class="sk-ic" data-regen="${n.id}" title="Перегенерировать эту сцену по подсказке">↻</button>
@@ -792,6 +798,10 @@ function bindSkeleton(s){
   });
   document.querySelectorAll('.sk-brief').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.brief=t.value;save();} }));
   document.querySelectorAll('.sk-emo').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.emotion=t.value;save();} }));
+  document.querySelectorAll('.sk-type-btn').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const n=node(s,b.dataset.typeid); if(n){ n.sceneType=b.dataset.type; save(); }
+  });
 
   document.querySelectorAll('.sk-ic[data-regen]').forEach(b=>b.onclick=async ()=>{
     const n=node(s, b.dataset.regen); if(!n) return;
@@ -1291,6 +1301,8 @@ export function renderEdit(els){
       <span class="read-title">${esc(s.project.title||'Книга')}</span>
       <span class="read-meta">${doneScenes.length} сцен · ${doneScenes.reduce((a,x)=>a+(x.words||0),0).toLocaleString('ru')} сл.</span>
       <span style="flex:1"></span>
+      <button class="btn" id="betaRead" data-tip="Читает книгу целиком (не по сценам) и честно отвечает вопросами анкеты бета-ридера: цепляет ли начало, ясны ли мотивации героя, где проседает интерес, satisfying ли финал.">📖 Бета-ридер</button>
+      <button class="btn" id="chekhovCheck" data-tip="Отслеживает заявленные сюжетные заготовки (предмет, тайна, обещание) на масштабе всей книги — получили ли они развязку.">🔫 Ружья Чехова</button>
       <button class="btn" id="exMd">📕 .md</button>
       <button class="btn" id="exDocx">📄 .doc</button>
       <button class="btn" id="exEpub">📗 .epub</button>
@@ -1304,6 +1316,83 @@ export function renderEdit(els){
   document.getElementById('exEpub').onclick=()=>exportEpub(s);
   document.getElementById('exJson').onclick=()=>exportJson(s);
   document.getElementById('exPdf').onclick=()=>exportPdf(s);
+
+  const br=document.getElementById('betaRead');
+  if(br) br.onclick=async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    br.disabled=true; const orig=br.textContent; br.innerHTML='<span class="spinner"></span> Читаю книгу…';
+    try{ const report=await runBetaRead(s); openBetaReadModal(report); }
+    catch(e){ alert('Бета-ридер: '+e.message); }
+    finally{ br.disabled=false; br.textContent=orig; }
+  };
+  const cc=document.getElementById('chekhovCheck');
+  if(cc) cc.onclick=async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    cc.disabled=true; const orig=cc.textContent; cc.innerHTML='<span class="spinner"></span> Ищу заготовки…';
+    try{ const setups=await runChekhovCheck(s); openChekhovModal(setups); }
+    catch(e){ alert('Ружья Чехова: '+e.message); }
+    finally{ cc.disabled=false; cc.textContent=orig; }
+  };
+}
+
+function scoreColor(n){ return n>=7?'var(--ok)':n>=4?'var(--warn)':'var(--err)'; }
+
+function openBetaReadModal(r){
+  const root=document.getElementById('modalRoot');
+  const row=(label, score, note)=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px">
+    <div class="row" style="justify-content:space-between"><b>${label}</b><span style="font-weight:700;color:${scoreColor(score)}">${score}/10</span></div>
+    <div class="muted" style="font-size:12px">${esc(note||'—')}</div>
+  </div>`;
+  root.innerHTML=`<div class="modal-bg" id="brBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>📖 Бета-ридер</h2>
+    <div class="muted" style="margin-bottom:10px;font-size:12px">Читает книгу целиком (первая и последняя сцена — дословно, остальное — по сводкам) и честно отвечает как реальный читатель, не редактор.</div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto">
+      ${row('Крючок начала', r.hookScore, r.hookNote)}
+      ${row('Ясность мотивации героя', r.motivationClarity, r.motivationNote)}
+      ${row('Финал', r.endingScore, r.endingNote)}
+      ${r.paceDrops.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
+        <b>Где проседал интерес</b>
+        ${r.paceDrops.map(p=>`<div style="font-size:12px;color:var(--text-2)">• ${esc(p)}</div>`).join('')}
+      </div>`:''}
+      <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:var(--accent-bg)">
+        <b>Общее впечатление</b><div style="font-size:13px">${esc(r.overall||'—')}</div>
+      </div>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="brClose">Закрыть</button></div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('brBg').onclick=close;
+  document.getElementById('brClose').onclick=close;
+}
+
+function openChekhovModal(setups){
+  const root=document.getElementById('modalRoot');
+  if(!setups.length){
+    root.innerHTML=`<div class="modal-bg" id="chBg"><div class="modal" style="width:380px" onclick="event.stopPropagation()">
+      <h2>🔫 Ружья Чехова</h2>
+      <div style="margin:6px 0 14px">Заметных сюжетных заготовок не нашлось.</div>
+      <div class="row" style="justify-content:flex-end"><button class="btn btn-primary" id="chClose">Хорошо</button></div>
+    </div></div>`;
+    const close=()=>root.innerHTML='';
+    document.getElementById('chBg').onclick=close;
+    document.getElementById('chClose').onclick=close;
+    return;
+  }
+  const unresolved = setups.filter(x=>!x.resolved).length;
+  root.innerHTML=`<div class="modal-bg" id="chBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>🔫 Ружья Чехова${unresolved?` · ${unresolved} без развязки`:''}</h2>
+    <div class="muted" style="margin-bottom:10px;font-size:12px">Значимые сюжетные заготовки и получили ли они развязку. Если книга не закончена — заготовки из последних сцен намеренно не отмечены как «без развязки».</div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto">
+      ${setups.map(x=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:${x.resolved?'var(--ok-bg,#f0faf0)':'var(--warn-bg,#fffbf0)'}">
+        <div style="font-weight:500">${x.resolved?'✓':'⚠'} ${esc(x.what)}</div>
+        <div class="muted" style="font-size:11px">введено: ${esc(x.introducedIn||'—')}${x.resolved?` · развязка: ${esc(x.resolvedIn||'—')}`:' · развязки не найдено'}</div>
+      </div>`).join('')}
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="chClose">Закрыть</button></div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('chBg').onclick=close;
+  document.getElementById('chClose').onclick=close;
 }
 function stageDoneFor(s,id){
   switch(id){

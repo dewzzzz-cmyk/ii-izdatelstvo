@@ -145,6 +145,7 @@ textarea{resize:vertical;min-height:60px}
 .sk-scene-head{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer}
 .sk-scene-head:hover{background:var(--surface-2)}
 .sk-sc-title{flex:1;font-size:13px;font-weight:500}
+.sk-seq-badge{font-size:11px;color:var(--text-3)}
 .sk-scene-body{padding:0 10px 10px;display:flex;flex-direction:column;gap:6px}
 .sk-brief,.sk-emo{width:100%;font-size:12px;padding:5px 8px;border:1px solid var(--border-2);border-radius:6px}
 .sk-brief{resize:vertical}

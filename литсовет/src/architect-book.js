@@ -24,6 +24,10 @@ export function bookArchitectMessages(state, opts={}){
     `Каждая сцена — единица письма. Базовый объём: ${wPerScene} слов. Диапазон: ${wMin}–${wMax} слов (±20%).`,
     `Варьируй targetWords по событию: переход/экспозиция → ${wMin}–${Math.round(wPerScene*0.9)} сл; стандартная сцена → ${Math.round(wPerScene*0.9)}–${Math.round(wPerScene*1.1)} сл; кульминация/откровение → ${Math.round(wPerScene*1.1)}–${wMax} сл.`,
     'НЕ выходи за пределы диапазона. Общая сумма targetWords должна быть близка к целевому объёму.',
+    'Классифицируй КАЖДУЮ сцену по sceneType (техника Дуайта Свейна — «сцена/секвель», основа ритма профессиональной прозы):',
+    '  "scene" — сцена действия: цель героя → конфликт/препятствие → поражение или осложнение (кончается ХУЖЕ, чем начиналась, не разрешением). Растущее напряжение.',
+    '  "sequel" — секвель: эмоциональная реакция героя на произошедшее → дилемма (взвешивание вариантов) → решение, которое ставит новую цель. Передышка для читателя, меньше внешнего действия.',
+    'После сильной сцены-потрясения почти всегда нужен короткий sequel — но НЕ жёстко через одну: используй по ощущению ритма, обычно 20-35% сцен книги — sequel.',
   ].join('\n');
   // Нарративная инструкция по позиции в серии
   let seriesArcNote = '';
@@ -58,7 +62,7 @@ export function bookArchitectMessages(state, opts={}){
     opts.hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${opts.hint}` : '',
     '',
     opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
-    '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число } ] } ] }',
+    '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
     `Итого ~${targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -92,6 +96,7 @@ export function validateSkeleton(raw){
         brief: (typeof s.brief==='string' ? s.brief : typeof s.description==='string' ? s.description : typeof s.summary==='string' ? s.summary : '').trim(),
         emotion: (s.emotion||'').trim(),
         targetWords: Number(s.targetWords)>0 ? Math.round(Number(s.targetWords)) : 700,
+        sceneType: s.sceneType==='sequel' ? 'sequel' : 'scene',
       })),
     });
   }
@@ -160,7 +165,7 @@ export async function regenerateScene(state, scene, hint){
     '',
     'ПОДСКАЗКА АВТОРА (в каком направлении переделать): ' + (hint||'сделай сильнее и конкретнее'),
     '',
-    'Верни JSON одной сцены: { "title":"…", "brief":"что происходит, тон, чем заканчивается", "emotion":"эмоция читателя", "targetWords":число }. Только JSON.',
+    'Верни JSON одной сцены: { "title":"…", "brief":"что происходит, тон, чем заканчивается", "emotion":"эмоция читателя", "targetWords":число, "sceneType":"scene|sequel" }. sceneType: "scene" — растущее напряжение (цель→конфликт→поражение), "sequel" — передышка (реакция→дилемма→решение). Только JSON.',
   ].filter(Boolean).join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
@@ -172,6 +177,7 @@ export async function regenerateScene(state, scene, hint){
         brief:j.brief.trim(),
         emotion:(j.emotion||scene.emotion||'').trim(),
         targetWords: Number(j.targetWords)>0?Math.round(Number(j.targetWords)):(scene.targetWords||700),
+        sceneType: j.sceneType==='sequel' ? 'sequel' : 'scene',
       };
     }
     lastErr='невалидный JSON';
@@ -204,7 +210,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
     `ПОСЛЕДУЮЩИЕ СЦЕНЫ (${downstream.length}) — перепиши каждую под новый поворот, по порядку:`,
     list,
     '',
-    `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"…","emotion":"…","targetWords":число} ] }. Ровно ${downstream.length} сцен. Только JSON.`,
+    `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"…","emotion":"…","targetWords":число,"sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Ровно ${downstream.length} сцен. Только JSON.`,
   ].filter(Boolean).join('\n');
 
   let lastErr='';
@@ -222,6 +228,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
         sc.brief=fr.brief.trim();
         sc.emotion=(fr.emotion||sc.emotion||'').trim();
         if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
+        sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';
         applied.push(sc.id);
       }
       return applied;
@@ -232,7 +239,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
 }
 
 // История версий сцены-скелета: сохранить текущие поля перед заменой / откатить.
-const SCENE_FIELDS = ['title','brief','emotion','targetWords'];
+const SCENE_FIELDS = ['title','brief','emotion','targetWords','sceneType'];
 export function pushSceneVersion(scene){
   scene.briefVersions = scene.briefVersions || [];
   scene.briefVersions.unshift(Object.fromEntries(SCENE_FIELDS.map(f=>[f, scene[f]])));
@@ -255,7 +262,7 @@ export function applySkeleton(state, skeleton, uid){
     nodes.push({ id:chId, type:'chapter', title:ch.title, arc:ch.arc });
     for(const sc of ch.scenes){
       nodes.push({ id:uid('sc'), type:'scene', chapterId:chId, title:sc.title, brief:sc.brief,
-        emotion:sc.emotion, targetWords:sc.targetWords, text:'', words:0, status:'todo' });
+        emotion:sc.emotion, targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
     }
   }
   state.structure = nodes;
@@ -366,7 +373,7 @@ export async function regenerateChapter(state, chapter, hint){
     '',
     'ПОДСКАЗКА АВТОРА: ' + (hint||'сделай сильнее и конкретнее, сохрани сюжетные функции'),
     '',
-    `Верни JSON: { "scenes": [ ровно ${scenes.length} объектов: {"title","brief","emotion","targetWords"} ] }. Только JSON.`,
+    `Верни JSON: { "scenes": [ ровно ${scenes.length} объектов: {"title","brief","emotion","targetWords","sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Только JSON.`,
   ].join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
@@ -380,6 +387,7 @@ export async function regenerateChapter(state, chapter, hint){
         pushSceneVersion(sc);
         sc.title=(fr.title||sc.title).trim(); sc.brief=fr.brief.trim(); sc.emotion=(fr.emotion||sc.emotion||'').trim();
         if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
+        sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';
         applied.push(sc.id);
       }
       return applied;

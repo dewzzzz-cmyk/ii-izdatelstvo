@@ -6,16 +6,23 @@ import { extractJSON } from './llm.js';
 // ── Архитектор сцены (temp 0.4) — JSON якорей/деталей/запретов, НЕ пишет прозу ──
 export function architectMessages(state, scene){
   const proj = state.project;
+  const isSequel = scene.sceneType==='sequel';
   const sys = [
     'Ты — архитектор сцены. Ты НЕ пишешь прозу. Ты возвращаешь структурный план сцены в JSON.',
     `Жанр: ${proj.genre||'—'}. Эпоха: ${proj.era||'—'}.`,
   ].join('\n');
+  const goalDesc = isSequel
+    ? '"goal": "к какому РЕШЕНИЮ должен прийти ПОВ-персонаж к концу сцены (эта сцена — секвель: реакция→дилемма→решение)"'
+    : '"goal": "чего хочет ПОВ-персонаж в этой сцене"';
+  const obstacleDesc = isSequel
+    ? '"obstacle": "в чём дилемма — какие варианты решения конфликтуют между собой"'
+    : '"obstacle": "что конкретно мешает"';
   const user = [
     'Бриф сцены: ' + (scene.brief || scene.title || ''),
     scene.emotion ? 'Эмоция читателя в финале: ' + scene.emotion : '',
     '',
     'Верни JSON со схемой:',
-    '{ "anchors": [ключевые детали/образы, 2-4], "presentChars": [имена персонажей], "forbiddenWords": [слова избегать, 0-5], "beats": [шаги развития, 2-4], "goal": "чего хочет ПОВ-персонаж в этой сцене", "obstacle": "что конкретно мешает", "historicalDetail": "одна точная деталь эпохи (одежда/предмет/обычай/технология) для достоверности" }',
+    `{ "anchors": [ключевые детали/образы, 2-4], "presentChars": [имена персонажей], "forbiddenWords": [слова избегать, 0-5], "beats": [шаги развития, 2-4], ${goalDesc}, ${obstacleDesc}, "historicalDetail": "одна точная деталь эпохи (одежда/предмет/обычай/технология) для достоверности" }`,
     'Только JSON, без пояснений.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -33,13 +40,14 @@ export function parseArchitect(text){
     historicalDetail: typeof j.historicalDetail==='string'? j.historicalDetail : '',
   };
 }
-export function architectToText(plan){
+export function architectToText(plan, scene){
   if(!plan) return '';
+  const isSequel = scene?.sceneType==='sequel';
   const lines = [];
   if(plan.anchors.length) lines.push('Якоря (обязательно отрази): ' + plan.anchors.join('; '));
   if(plan.beats.length) lines.push('Шаги сцены: ' + plan.beats.join(' → '));
-  if(plan.goal) lines.push('Цель ПОВ-персонажа в сцене: ' + plan.goal);
-  if(plan.obstacle) lines.push('Препятствие: ' + plan.obstacle);
+  if(plan.goal) lines.push((isSequel?'Решение, к которому должен прийти герой: ':'Цель ПОВ-персонажа в сцене: ') + plan.goal);
+  if(plan.obstacle) lines.push((isSequel?'Дилемма (конфликт вариантов): ':'Препятствие: ') + plan.obstacle);
   if(plan.historicalDetail) lines.push('Деталь эпохи (вставь в текст): ' + plan.historicalDetail);
   if(plan.forbiddenWords.length) lines.push('Избегай слов: ' + plan.forbiddenWords.join(', '));
   return lines.join('\n');
