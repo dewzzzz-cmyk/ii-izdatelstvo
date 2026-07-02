@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c6cff"/>
+      <stop offset="100%" stop-color="#5247e6"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="40" fill="url(#bg)"/>
+  <rect width="192" height="192" rx="40" fill="url(#shine)"/>
+  <!-- Book -->
+  <rect x="38" y="42" width="90" height="108" rx="8" fill="#ffffff" opacity="0.95"/>
+  <rect x="38" y="42" width="16" height="108" rx="6" fill="#19d3c5" opacity="0.9"/>
+  <!-- Lines -->
+  <rect x="66" y="66" width="46" height="7" rx="3.5" fill="#6c63ff" opacity="0.5"/>
+  <rect x="66" y="84" width="38" height="7" rx="3.5" fill="#6c63ff" opacity="0.35"/>
+  <rect x="66" y="102" width="42" height="7" rx="3.5" fill="#6c63ff" opacity="0.3"/>
+  <rect x="66" y="120" width="30" height="7" rx="3.5" fill="#6c63ff" opacity="0.25"/>
+  <!-- Pen -->
+  <g transform="translate(104,96) rotate(-40)">
+    <rect x="-7" y="-34" width="14" height="58" rx="7" fill="#fbbf24"/>
+    <polygon points="0,-44 -8,-34 8,-34" fill="#f59e0b"/>
+    <rect x="-3.5" y="23" width="7" height="11" rx="3.5" fill="#1a1a2e"/>
+  </g>
+  <!-- Dot -->
+  <circle cx="152" cy="46" r="11" fill="#19d3c5" opacity="0.9"/>
+  <circle cx="152" cy="46" r="5" fill="#ffffff"/>
+</svg>

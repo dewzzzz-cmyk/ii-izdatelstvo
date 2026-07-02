@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c6cff"/>
+      <stop offset="100%" stop-color="#5247e6"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <rect width="64" height="64" rx="14" fill="url(#shine)"/>
+  <!-- Book body -->
+  <rect x="13" y="14" width="30" height="36" rx="3" fill="#ffffff" opacity="0.95"/>
+  <!-- Book spine -->
+  <rect x="13" y="14" width="5" height="36" rx="2" fill="#19d3c5" opacity="0.9"/>
+  <!-- Lines on page -->
+  <rect x="22" y="22" width="16" height="2.5" rx="1.2" fill="#6c63ff" opacity="0.5"/>
+  <rect x="22" y="28" width="13" height="2.5" rx="1.2" fill="#6c63ff" opacity="0.35"/>
+  <rect x="22" y="34" width="14" height="2.5" rx="1.2" fill="#6c63ff" opacity="0.35"/>
+  <rect x="22" y="40" width="10" height="2.5" rx="1.2" fill="#6c63ff" opacity="0.25"/>
+  <!-- Pen / feather -->
+  <g transform="translate(34,30) rotate(-40)">
+    <rect x="-2.5" y="-11" width="5" height="20" rx="2.5" fill="#fbbf24"/>
+    <polygon points="0,-15 -3,-11 3,-11" fill="#f59e0b"/>
+    <rect x="-1" y="8" width="2" height="4" rx="1" fill="#1a1a2e"/>
+  </g>
+  <!-- Sparkle dot top-right -->
+  <circle cx="50" cy="16" r="3.5" fill="#19d3c5" opacity="0.9"/>
+  <circle cx="50" cy="16" r="1.5" fill="#ffffff"/>
+</svg>

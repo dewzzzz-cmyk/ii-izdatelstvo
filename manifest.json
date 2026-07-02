@@ -1,0 +1,23 @@
+{
+  "name": "ИИ-Издательство",
+  "short_name": "Издательство",
+  "description": "Локальный ИИ-редактор для написания книг с помощью агентов",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0c12",
+  "theme_color": "#6c63ff",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
