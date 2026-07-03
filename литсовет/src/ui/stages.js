@@ -1002,7 +1002,9 @@ export function renderWrite(els){
   const edEl = document.getElementById('editor');
   if(scene.text && !_edReviewOn){
     edEl.addEventListener('input', ()=>{ scene.text=edEl.innerText; if(!scene.handDone){ scene.handDone=true; } scene._dirty=true; });
-    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; scene._dirty=false; save(); } });
+    // Коммит правки (тут же ловит и Undo/Redo ниже — оба лишь ставят _dirty=true
+    // и полагаются на этот blur): оценка/флаги относились к тексту ДО правки рукой.
+    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; scene.lastEval=null; scene.flags={}; scene._dirty=false; save(); } });
     initSelectionMenu(edEl, scene, els);
   }
   if(scene.text && _edReviewOn) bindEditorMarks(edEl, scene, els);

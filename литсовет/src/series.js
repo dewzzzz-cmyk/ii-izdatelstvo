@@ -3,7 +3,7 @@
 
 import { callLLM, extractJSON } from './llm.js';
 import { extractVoice } from './voice.js';
-import { rebuildBibleVecs } from './bible.js';
+import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 import { smartTrunc } from './tokens.js';
 import { findOrCreateCharacter } from './state.js';
 
@@ -62,11 +62,20 @@ export async function importSeriesBook(state, title, text){
   });
   chAdded = (state.characters||[]).length - beforeCount;
 
-  // факты в Bible
+  // факты в Bible — дедуп по СХОДСТВУ (не только точному совпадению), как при
+  // обычной посценной суммаризации (memory.js): при импорте книги 2 «Олег — врач
+  // в горбольнице» не должно завестись рядом с уже существующим «Олег работает
+  // врачом в городской больнице» только из-за разной формулировки одного факта.
   let factsAdded=0;
   (Array.isArray(j.facts)?j.facts:[]).forEach(f=>{
     if(!f||!f.text) return;
-    if(!state.bible.some(b=>(b.text||'').toLowerCase()===f.text.toLowerCase())){ state.bible.push({keys:f.keys||'', text:f.text}); factsAdded++; }
+    const fvec = tfvec(tokensOf((f.keys||'')+' '+f.text));
+    const dup = state.bible.some(b=>{
+      if((b.text||'').toLowerCase()===f.text.toLowerCase()) return true;
+      const bv = b._vec || tfvec(tokensOf((b.keys||'')+' '+(b.text||'')));
+      return cosine(fvec, bv) > 0.6;
+    });
+    if(!dup){ state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); factsAdded++; }
   });
   if(factsAdded) rebuildBibleVecs(state.bible);
 

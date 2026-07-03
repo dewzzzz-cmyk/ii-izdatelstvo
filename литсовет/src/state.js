@@ -6,7 +6,7 @@ import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.9.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -158,16 +158,18 @@ export function mergeCharacters(state, keepIdx, dropIdx){
   return true;
 }
 
-// Добавить правило автора (do/don't). Дедуп по тексту. Возвращает true, если добавлено.
+const OBSERVE_SIM = 0.5;
+function sameNote(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))) >= OBSERVE_SIM; }
+
+// Добавить правило автора (do/don't). Дедуп по СХОДСТВУ (не только точному
+// тексту) — «✨ Обобщить» и ручной ввод могут дать чуть разные формулировки
+// одного и того же принципа. Возвращает true, если добавлено.
 export function addRule(state, text){
   text = (text||'').trim(); if(!text) return false;
   state.style = state.style || {}; state.style.rules = state.style.rules || [];
-  if(state.style.rules.includes(text)) return false;
+  if(state.style.rules.some(r=>sameNote(r, text))) return false;
   state.style.rules.push(text); return true;
 }
-
-const OBSERVE_SIM = 0.5;
-function sameNote(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))) >= OBSERVE_SIM; }
 
 // Мягкая память замеченных Оценщиком клише-категорий (state.style.observed[]).
 // В отличие от rules — не «соблюдай неукоснительно», а «уже случалось в этой

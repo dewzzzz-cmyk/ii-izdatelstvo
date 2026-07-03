@@ -102,6 +102,7 @@ function bindChat(){
     }
     scene.text = lastAI.content;
     scene.words = (lastAI.content.match(/\S+/g)||[]).length;
+    scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
     save();
   };
 
