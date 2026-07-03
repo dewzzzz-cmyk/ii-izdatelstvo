@@ -109,7 +109,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       agentEnabled('reader') || agentEnabled('imagery') || agentEnabled('pov') || agentEnabled('dialogue') ||
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
-    let best = null, bestEval = null, bestClean = false;
+    let best = null, bestEval = null, bestClean = false, bestFlags = {};
     let directive = opts.directive || '';
     let prevDraft = opts.initialDraft || '';
     let iter = 0, safety = 0;
@@ -309,7 +309,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       const thisClean = criticals.length === 0;
       if(!bestEval || (thisClean && !bestClean) ||
          (thisClean === bestClean && (!agentEnabled('evaluator') || (verdict.ok && verdict.weighted > (bestEval.weighted||0))))){
-        best = pRes.text; bestEval = verdict; bestClean = thisClean;
+        // bestFlags — снимок flags ИМЕННО этой итерации (flags — общая переменная,
+        // сбрасывается и переписывается на каждой итерации; без снимка возвращённые
+        // флаги могли бы описывать текст из ДРУГОЙ, не победившей итерации —
+        // например, дубль фразы, исправленный на итерации 2 (best), но снова
+        // возникший на итерации 3 (не выигравшей) — так итог показывал бы
+        // критическую находку для текста, которого в возвращённом best уже нет.
+        best = pRes.text; bestEval = verdict; bestClean = thisClean; bestFlags = {...flags};
       }
 
       if(!agentEnabled('evaluator')){
@@ -321,7 +327,15 @@ export async function runScene(state, scene, opts={}, onProgress){
 
       if(manual(state,'evaluator')){
         const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, '', opts, {draft:pRes.text, editable:true, verdict});
-        if(gt.approve){ best=(gt.text?.trim())||pRes.text; bestEval=verdict; break; }
+        if(gt.approve){
+          const edited = gt.text?.trim();
+          best = edited || pRes.text; bestEval = verdict;
+          // Если автор правил текст в гейте вручную — flags этой итерации относились
+          // к тексту ДО правки, дальше недостоверны (тот же принцип, что и сброс
+          // lastEval/flags при ручной правке в редакторе — см. фикс в ui/stages.js).
+          bestFlags = edited ? {} : {...flags};
+          break;
+        }
         if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
         directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals) || directive;
         continue;
@@ -362,6 +376,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     // ── 4. Линейный редактор (опц.) — единственный, кто правит текст ──
     if(agentEnabled('lineedit')){
       const leAg = ag(state,'lineedit');
+      const beforeLineEdit = best;
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
@@ -376,10 +391,15 @@ export async function runScene(state, scene, opts={}, onProgress){
           } else break;
         }catch(e){ logStep({ agent:'lineedit', output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message }); break; }
       }
+      // Линейный редактор — последний шаг, Стражи его результат уже не проверяют.
+      // Если текст изменился, bestFlags относились к тексту ДО этой правки и
+      // больше недостоверны (тот же принцип, что и сброс lastEval/flags при любой
+      // правке текста мимо основного прогона — см. фиксы в ui/stages.js, ui/chat.js).
+      if(best !== beforeLineEdit) bestFlags = {};
     }
 
     const run = endRun('done');
-    return { text: best || '', eval: bestEval, flags, runId, run };
+    return { text: best || '', eval: bestEval, flags: bestFlags, runId, run };
   } catch(e){
     logStep({ agent:'error', output: e.message });
     const run = endRun('error');
