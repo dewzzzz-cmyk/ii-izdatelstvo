@@ -9,7 +9,7 @@ import { architectMessages, parseArchitect, architectToText,
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          parseDebateRevision, styleGuardMessages, readerGuardMessages, imageryGuardMessages,
-         povGuardMessages, dialogueGuardMessages } from './guards.js';
+         povGuardMessages, dialogueGuardMessages, findDuplicatePhrases } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern } from './state.js';
@@ -101,7 +101,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Стражи — часть той же петли, не отдельный цикл.
     // Прозаик получает объединённую директиву (оценщик + стражи вместе) и разбирает всё в [РАЗБОР].
     // Консенсус = Оценщик принял И Стражи молчат.
-    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога'};
+    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', repeat:'Проверка повторов'};
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
@@ -212,6 +212,18 @@ export async function runScene(state, scene, opts={}, onProgress){
       flags = {};
       let criticals = [];
       const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
+
+      // Проверка механических повторов (не LLM, см. guards.js) — не завязана на
+      // hasGuards/agentEnabled: это не творческое суждение, а детерминированная
+      // проверка на артефакт стыковки правки, дешёвая и без ложных срабатываний
+      // на обычный повтор имён/слов по сцене. Всегда обязательна к исправлению.
+      const dupFound = findDuplicatePhrases(pRes.text);
+      if(dupFound.length){
+        flags.repeat = dupFound.map(d=>({ severity:'critical', title:'Механический повтор фразы',
+          detail:'Фрагмент текста повторён почти дословно рядом с собой — похоже на артефакт правки, не осознанный приём.',
+          quote:d.quote }));
+      }
+
       if(hasGuards){
         const guardJobs = [];
         // Фактические стражи — запускаем на каждой итерации
@@ -242,35 +254,44 @@ export async function runScene(state, scene, opts={}, onProgress){
         if(guardJobs.length){
           onProgress && onProgress({stage:'guards', text:iter>1?`Стражи перепроверяют (итерация ${iter})…`:'Стражи проверяют сцену…'});
           await Promise.all(guardJobs);
+        }
+      }
 
-          // Замечания, которые Прозаик уже мотивированно отклонил (художественный
-          // приём) — не подсвечиваем повторно и не гоняем по кругу в директиве.
-          if(scene.rejectedNotes && scene.rejectedNotes.length){
-            let droppedCount = 0;
-            Object.keys(flags).forEach(role=>{
-              const before = (flags[role]||[]).length;
-              flags[role] = (flags[role]||[]).filter(f=>f.severity==='ok' || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes));
-              droppedCount += before - flags[role].length;
-            });
-            if(droppedCount) onProgress && onProgress({log:{icon:'🖋', text:`Скрыто ${droppedCount} замеч. — уже отклонено автором ранее как приём`}});
-          }
+      // ── Свод замечаний — ВСЕГДА, не только когда сработали LLM-стражи: проверка
+      // повторов (findDuplicatePhrases выше) не завязана на hasGuards и должна
+      // доходить до criticals/директивы, даже если все LLM-стражи выключены.
+      {
+        // Замечания, которые Прозаик уже мотивированно отклонил (художественный
+        // приём) — не подсвечиваем повторно и не гоняем по кругу в директиве.
+        if(scene.rejectedNotes && scene.rejectedNotes.length){
+          let droppedCount = 0;
+          Object.keys(flags).forEach(role=>{
+            const before = (flags[role]||[]).length;
+            flags[role] = (flags[role]||[]).filter(f=>f.severity==='ok' || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes));
+            droppedCount += before - flags[role].length;
+          });
+          if(droppedCount) onProgress && onProgress({log:{icon:'🖋', text:`Скрыто ${droppedCount} замеч. — уже отклонено автором ранее как приём`}});
+        }
 
-          const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
-          // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):
-          // они одни из немногих, что бегут каждую итерацию, и их предупреждения иначе тонут
-          // молча (Прозаик их никогда не видит), пока не эскалируются в critical — обычно уже
-          // на последней итерации, когда чинить поздно.
-          criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
-            .filter(f=>f.severity==='critical' || (f.severity==='warning' && FACTUAL_GUARD_ROLES.has(role)))
-            .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+        const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
+        // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):
+        // они одни из немногих, что бегут каждую итерацию, и их предупреждения иначе тонут
+        // молча (Прозаик их никогда не видит), пока не эскалируются в critical — обычно уже
+        // на последней итерации, когда чинить поздно.
+        criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+          .filter(f=>f.severity==='critical' || (f.severity==='warning' && FACTUAL_GUARD_ROLES.has(role)))
+          .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+        if(flagList.length || dupFound.length){
           onProgress && onProgress({log:{icon:'🛡',
             text: flagList.length
               ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
               : 'Стражи: замечаний нет',
             flags:flagList, state: flagList.length?'warn':'ok'}});
+        }
 
-          // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
-          // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
+        // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
+        // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
+        if(hasGuards){
           const guardCandidates = ['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue',
             ...(state.agents||[]).filter(a=>a.custom).map(a=>a.id)];
           const manualGuard = guardCandidates.find(r=>{ const a=ag(state,r); return a.enabled!==false && a.manual===true; });

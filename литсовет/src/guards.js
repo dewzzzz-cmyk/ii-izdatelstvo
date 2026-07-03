@@ -28,6 +28,57 @@ function parseFlags(text){
   }));
 }
 
+// ── Детектор механических повторов фразы (НЕ LLM — быстрая проверка n-грамм). ──
+// Ловит артефакты вроде повторно вставленного при правке куска текста
+// («пятно на потолке, трещина на стене... пятно на потолке, трещина на стене»),
+// не путая с естественным повтором имён/слов по всей сцене: флагует только
+// длинные (4+ слова подряд) буквальные совпадения В БЛИЗКОЙ БЛИЗОСТИ друг к
+// другу (окно DUP_MAX_GAP_CHARS) — случайная стыковка правки, а не сюжетный
+// рефрен через полсцены, который может быть осознанным приёмом.
+const DUP_SHINGLE_WORDS = 4;
+const DUP_MAX_GAP_CHARS = 400;
+
+export function findDuplicatePhrases(text){
+  if(!text) return [];
+  const re = /[а-яё]+/gi;
+  const words = []; let m;
+  while((m = re.exec(text))){ words.push({ w: m[0].toLowerCase(), idx: m.index, len: m[0].length }); }
+  if(words.length < DUP_SHINGLE_WORDS*2) return [];
+
+  const seen = new Map(); // shingle → индекс первого слова совпадения
+  const ranges = [];
+  for(let i=0; i<=words.length-DUP_SHINGLE_WORDS; i++){
+    const key = words.slice(i, i+DUP_SHINGLE_WORDS).map(w=>w.w).join(' ');
+    const prev = seen.get(key);
+    if(prev!=null){
+      const prevEnd = words[prev+DUP_SHINGLE_WORDS-1];
+      const gap = words[i].idx - (prevEnd.idx + prevEnd.len);
+      if(gap >= 0 && gap <= DUP_MAX_GAP_CHARS) ranges.push({ from:i, to:i+DUP_SHINGLE_WORDS-1 });
+    } else {
+      seen.set(key, i);
+    }
+  }
+  if(!ranges.length) return [];
+
+  // соседние/перекрывающиеся диапазоны слов (длинная фраза матчится несколькими
+  // сдвинутыми окнами) объединяем в один читаемый фрагмент цитаты.
+  ranges.sort((a,b)=>a.from-b.from);
+  const merged = [];
+  let cur = { ...ranges[0] };
+  for(let i=1;i<ranges.length;i++){
+    if(ranges[i].from <= cur.to+1) cur.to = Math.max(cur.to, ranges[i].to);
+    else { merged.push(cur); cur = { ...ranges[i] }; }
+  }
+  merged.push(cur);
+
+  return merged.map(r=>{
+    const startChar = words[r.from].idx;
+    const last = words[r.to];
+    const endChar = last.idx + last.len;
+    return { quote: text.slice(startChar, endChar).trim() };
+  });
+}
+
 // ── Страж голоса (0.2): стиль/ритм против образца. Цитирует образец. ──
 export function voiceGuardMessages(scene, draft, voiceExamples, strictness){
   const sys = 'Ты — страж голоса. Ты НЕ переписываешь текст. Ты отмечаешь отклонения стиля/ритма от образца автора. По каждому флагу цитируй релевантное предложение из образца.\n'
