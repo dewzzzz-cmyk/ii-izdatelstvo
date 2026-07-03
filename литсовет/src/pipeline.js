@@ -109,7 +109,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       agentEnabled('reader') || agentEnabled('imagery') || agentEnabled('pov') || agentEnabled('dialogue') ||
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
-    let best = null, bestEval = null;
+    let best = null, bestEval = null, bestClean = false;
     let directive = opts.directive || '';
     let prevDraft = opts.initialDraft || '';
     let iter = 0, safety = 0;
@@ -169,8 +169,8 @@ export async function runScene(state, scene, opts={}, onProgress){
         if(gt.text!=null && gt.text.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
       }
 
-      if(!agentEnabled('evaluator')){ best=pRes.text; bestEval=null; }
-      else {
+      let verdict = null;
+      if(agentEnabled('evaluator')){
         onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
         const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
         // Anchor-score: передаём baseline итерации 1 чтобы Оценщик не дрейфовал между итерациями
@@ -179,7 +179,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           eMsgs[1].content += `\n\nИтерация ${iter}. Базовые оценки черновика 1: [${baseStr}]. Оценивай ТЕКУЩИЙ черновик относительно baseline — ось должна расти там где проблема устранена, и падать если добавлена новая.`;
         }
         const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??900 });
-        const verdict = parseEvaluator(eRes.text, threshold);
+        verdict = parseEvaluator(eRes.text, threshold);
         if(iter === 1 && verdict.ok) anchorVerdict = verdict;
         if(verdict.ok) scoreHistory.push({...verdict.scores});
         logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
@@ -194,124 +194,147 @@ export async function runScene(state, scene, opts={}, onProgress){
             + (verdict.cliches?.length?` · клише: ${verdict.cliches.join(', ')}`
                : (verdict.notes?.length?` · ${verdict.notes[0]}`:'')+evalLogExtra),
           state: verdict.pass?'ok':'warn' }});
-        if(!bestEval || verdict.ok && verdict.weighted > (bestEval.weighted||0)){ best=pRes.text; bestEval=verdict; }
         (verdict.cliches||[]).forEach(c=>bannedCliches.add(c));
-        const allBanned = [...bannedCliches];
-
-        if(manual(state,'evaluator')){
-          const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, '', opts, {draft:pRes.text, editable:true, verdict});
-          if(gt.approve){ best=(gt.text?.trim())||pRes.text; bestEval=verdict; break; }
-          if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
-          directive = gt.note || buildUnifiedDirective(verdict, allBanned, []) || directive;
-          continue;
-        }
-
-        // Стражи: фактические (логика, события) — каждую итерацию, пока текст ещё меняется.
-        // Литературные (голос, стиль) — только когда оценщик принял ИЛИ последняя итерация.
-        const hasCliches = (verdict.cliches||[]).length > 0;
-        const evalAccepted = verdict.ok && verdict.pass && !(hasCliches && iter < maxIter);
-        const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
-        let criticals = [];
-        if(hasGuards){
-          flags = {};
-          const guardJobs = [];
-          // Фактические стражи — запускаем на каждой итерации
-          if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, best, ag(state,'logic').strictness), flags));
-          if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, best, ag(state,'events').strictness), flags));
-          // Литературные стражи — только когда текст принят или итерации кончились
-          if(evalAccepted || iter >= maxIter){
-            if(agentEnabled('voiceguard')){
-              if(voiceExamples.length > 0)
-                guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, best, voiceExamples, ag(state,'voiceguard').strictness), flags));
-              else
-                onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
-            }
-            if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
-              guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(best, state.style.rules, ag(state,'styleguard').strictness), flags));
-            if(agentEnabled('reader'))
-              guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, best, ag(state,'reader').strictness), flags));
-            if(agentEnabled('imagery'))
-              guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(best, ag(state,'imagery').strictness), flags));
-            if(agentEnabled('pov'))
-              guardJobs.push(guardJob(state,'pov', llmBase, povGuardMessages(best, ag(state,'pov').strictness), flags));
-            if(agentEnabled('dialogue'))
-              guardJobs.push(guardJob(state,'dialogue', llmBase, dialogueGuardMessages(best, ag(state,'dialogue').strictness), flags));
-            (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
-              guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, best, a.prompt, a.strictness), flags));
-            });
-          }
-          if(guardJobs.length){
-            onProgress && onProgress({stage:'guards', text:iter>1?`Стражи перепроверяют (итерация ${iter})…`:'Стражи проверяют сцену…'});
-            await Promise.all(guardJobs);
-
-            // Замечания, которые Прозаик уже мотивированно отклонил (художественный
-            // приём) — не подсвечиваем повторно и не гоняем по кругу в директиве.
-            if(scene.rejectedNotes && scene.rejectedNotes.length){
-              let droppedCount = 0;
-              Object.keys(flags).forEach(role=>{
-                const before = (flags[role]||[]).length;
-                flags[role] = (flags[role]||[]).filter(f=>f.severity==='ok' || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes));
-                droppedCount += before - flags[role].length;
-              });
-              if(droppedCount) onProgress && onProgress({log:{icon:'🖋', text:`Скрыто ${droppedCount} замеч. — уже отклонено автором ранее как приём`}});
-            }
-
-            const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
-            // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):
-            // они одни из немногих, что бегут каждую итерацию, и их предупреждения иначе тонут
-            // молча (Прозаик их никогда не видит), пока не эскалируются в critical — обычно уже
-            // на последней итерации, когда чинить поздно.
-            criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
-              .filter(f=>f.severity==='critical' || (f.severity==='warning' && FACTUAL_GUARD_ROLES.has(role)))
-              .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
-            onProgress && onProgress({log:{icon:'🛡',
-              text: flagList.length
-                ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
-                : 'Стражи: замечаний нет',
-              flags:flagList, state: flagList.length?'warn':'ok'}});
-
-            // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
-            // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
-            const guardCandidates = ['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue',
-              ...(state.agents||[]).filter(a=>a.custom).map(a=>a.id)];
-            const manualGuard = guardCandidates.find(r=>{ const a=ag(state,r); return a.enabled!==false && a.manual===true; });
-            if(manualGuard && (evalAccepted || iter >= maxIter)){
-              const gt = await gate(state, manualGuard, 'Стражи · флаги сцены', flagsText(flags), opts);
-              if(gt.approve) criticals = [];
-            }
-          }
-        }
-
-        // Консенсус: оценщик принял И стражи не нашли критических проблем → готово.
-        if(evalAccepted && criticals.length === 0){ break; }
-
-        // Директива строится от лучшего оценщика (bestEval), а не обязательно от текущего verdict.
-        // Это важно когда guards запустились на финальной итерации, а best — из более ранней.
-        const directiveVerdict = (bestEval && bestEval.weighted > (verdict.weighted||0)) ? bestEval : verdict;
-        // Стагнация: если ось не растёт 2 итерации подряд — добавить радикальную инструкцию
-        let stagnantNote = '';
-        if(scoreHistory.length >= 2){
-          const stuck = RUBRIC_AXES.map(a=>a.key).filter(k=>{
-            const vals = scoreHistory.map(s=>s[k]||0);
-            return vals.length >= 2 && vals[vals.length-1] <= vals[vals.length-2] + 0.5;
-          });
-          if(stuck.length){
-            stagnantNote = '\n\nОСИ БЕЗ ПРОГРЕССА — измени подход РАДИКАЛЬНО, не шлифуй то же самое: ' + stuck.map(k=>AXIS_LABELS[k]||k).join(', ');
-            onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена`, state:'warn'}});
-          }
-        }
-        // Бан точной фразы не спасает от клише — модель просто перефразирует ту же идею
-        // ("сердце в горле" → "кожа на затылке стянулась"). Категорию называет сам
-        // Оценщик (clicheCategory) — надёжнее самодельного словаря стемов/ключевых слов.
-        const categoryNote = directiveVerdict.clicheCategory
-          ? '\n\nИЗБЕГАЙ ЦЕЛОЙ КАТЕГОРИИ (не просто других слов той же идеи): ' + directiveVerdict.clicheCategory + ' — передай тревогу через другой канал: звук, свет, память, деталь обстановки.'
-          : '';
-        // Запоминаем категорию на уровне книги (не только этой сцены) — если она
-        // всплывёт снова в другой сцене, автор увидит подсказку «уже случалось» в
-        // Памяти вместо того, чтобы Оценщик каждый раз находил её заново с нуля.
-        if(directiveVerdict.clicheCategory) recordObservedPattern(state, scene.id, directiveVerdict.clicheCategory);
-        directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote + categoryNote;
       }
+      const allBanned = [...bannedCliches];
+      const hasCliches = !!(verdict && (verdict.cliches||[]).length > 0);
+      // Без Оценщика (выключен) «принято» тривиально верно — завершение решают
+      // тогда только Стражи, через критический/warning-флаг.
+      const evalAccepted = !agentEnabled('evaluator') || (verdict.ok && verdict.pass && !(hasCliches && iter < maxIter));
+
+      // ── Стражи: проверяют ТЕКУЩИЙ черновик (pRes.text), не исторический best.
+      // Раньше проверяли best — если следующий черновик по сути исправлял находку
+      // Стража, но чуть проседал по литературному баллу Оценщика, best не
+      // обновлялся, и Стражи продолжали смотреть на старый, ещё бракованный текст.
+      // Раньше блок Стражей был вложен в «Оценщик включён и автоматический» — при
+      // ручном или выключенном Оценщике Стражи не запускались вовсе (и flags
+      // оставался пустым в возвращаемом результате).
+      flags = {};
+      let criticals = [];
+      const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
+      if(hasGuards){
+        const guardJobs = [];
+        // Фактические стражи — запускаем на каждой итерации
+        if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, pRes.text, ag(state,'logic').strictness), flags));
+        if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, pRes.text, ag(state,'events').strictness), flags));
+        // Литературные стражи — только когда текст принят или итерации кончились
+        if(evalAccepted || iter >= maxIter){
+          if(agentEnabled('voiceguard')){
+            if(voiceExamples.length > 0)
+              guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags));
+            else
+              onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
+          }
+          if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
+            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, state.style.rules, ag(state,'styleguard').strictness), flags));
+          if(agentEnabled('reader'))
+            guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags));
+          if(agentEnabled('imagery'))
+            guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(pRes.text, ag(state,'imagery').strictness), flags));
+          if(agentEnabled('pov'))
+            guardJobs.push(guardJob(state,'pov', llmBase, povGuardMessages(pRes.text, ag(state,'pov').strictness), flags));
+          if(agentEnabled('dialogue'))
+            guardJobs.push(guardJob(state,'dialogue', llmBase, dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags));
+          (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
+            guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags));
+          });
+        }
+        if(guardJobs.length){
+          onProgress && onProgress({stage:'guards', text:iter>1?`Стражи перепроверяют (итерация ${iter})…`:'Стражи проверяют сцену…'});
+          await Promise.all(guardJobs);
+
+          // Замечания, которые Прозаик уже мотивированно отклонил (художественный
+          // приём) — не подсвечиваем повторно и не гоняем по кругу в директиве.
+          if(scene.rejectedNotes && scene.rejectedNotes.length){
+            let droppedCount = 0;
+            Object.keys(flags).forEach(role=>{
+              const before = (flags[role]||[]).length;
+              flags[role] = (flags[role]||[]).filter(f=>f.severity==='ok' || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes));
+              droppedCount += before - flags[role].length;
+            });
+            if(droppedCount) onProgress && onProgress({log:{icon:'🖋', text:`Скрыто ${droppedCount} замеч. — уже отклонено автором ранее как приём`}});
+          }
+
+          const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
+          // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):
+          // они одни из немногих, что бегут каждую итерацию, и их предупреждения иначе тонут
+          // молча (Прозаик их никогда не видит), пока не эскалируются в critical — обычно уже
+          // на последней итерации, когда чинить поздно.
+          criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+            .filter(f=>f.severity==='critical' || (f.severity==='warning' && FACTUAL_GUARD_ROLES.has(role)))
+            .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+          onProgress && onProgress({log:{icon:'🛡',
+            text: flagList.length
+              ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
+              : 'Стражи: замечаний нет',
+            flags:flagList, state: flagList.length?'warn':'ok'}});
+
+          // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
+          // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
+          const guardCandidates = ['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue',
+            ...(state.agents||[]).filter(a=>a.custom).map(a=>a.id)];
+          const manualGuard = guardCandidates.find(r=>{ const a=ag(state,r); return a.enabled!==false && a.manual===true; });
+          if(manualGuard && (evalAccepted || iter >= maxIter)){
+            const gt = await gate(state, manualGuard, 'Стражи · флаги сцены', flagsText(flags), opts);
+            if(gt.approve) criticals = [];
+          }
+        }
+      }
+
+      // ── best/bestEval: черновик БЕЗ критических замечаний Стражей побеждает
+      // черновик с ними, даже если у второго выше литературный балл Оценщика —
+      // иначе в финал уйдёт более «гладкий», но логически бракованный текст.
+      // Среди двух одинаково (не)чистых — выше балл.
+      const thisClean = criticals.length === 0;
+      if(!bestEval || (thisClean && !bestClean) ||
+         (thisClean === bestClean && (!agentEnabled('evaluator') || (verdict.ok && verdict.weighted > (bestEval.weighted||0))))){
+        best = pRes.text; bestEval = verdict; bestClean = thisClean;
+      }
+
+      if(!agentEnabled('evaluator')){
+        // Без Оценщика решение о завершении — только по Стражам.
+        if(criticals.length === 0) break;
+        directive = (criticals.length ? 'КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticals.join('\n') : directive);
+        continue;
+      }
+
+      if(manual(state,'evaluator')){
+        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, '', opts, {draft:pRes.text, editable:true, verdict});
+        if(gt.approve){ best=(gt.text?.trim())||pRes.text; bestEval=verdict; break; }
+        if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
+        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals) || directive;
+        continue;
+      }
+
+      // Консенсус: оценщик принял И стражи не нашли критических проблем → готово.
+      if(evalAccepted && criticals.length === 0){ break; }
+
+      // Директива строится от лучшего оценщика (bestEval), а не обязательно от текущего verdict.
+      // Это важно когда guards запустились на финальной итерации, а best — из более ранней.
+      const directiveVerdict = (bestEval && bestEval.weighted > (verdict.weighted||0)) ? bestEval : verdict;
+      // Стагнация: если ось не растёт 2 итерации подряд — добавить радикальную инструкцию
+      let stagnantNote = '';
+      if(scoreHistory.length >= 2){
+        const stuck = RUBRIC_AXES.map(a=>a.key).filter(k=>{
+          const vals = scoreHistory.map(s=>s[k]||0);
+          return vals.length >= 2 && vals[vals.length-1] <= vals[vals.length-2] + 0.5;
+        });
+        if(stuck.length){
+          stagnantNote = '\n\nОСИ БЕЗ ПРОГРЕССА — измени подход РАДИКАЛЬНО, не шлифуй то же самое: ' + stuck.map(k=>AXIS_LABELS[k]||k).join(', ');
+          onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена`, state:'warn'}});
+        }
+      }
+      // Бан точной фразы не спасает от клише — модель просто перефразирует ту же идею
+      // ("сердце в горле" → "кожа на затылке стянулась"). Категорию называет сам
+      // Оценщик (clicheCategory) — надёжнее самодельного словаря стемов/ключевых слов.
+      const categoryNote = directiveVerdict.clicheCategory
+        ? '\n\nИЗБЕГАЙ ЦЕЛОЙ КАТЕГОРИИ (не просто других слов той же идеи): ' + directiveVerdict.clicheCategory + ' — передай тревогу через другой канал: звук, свет, память, деталь обстановки.'
+        : '';
+      // Запоминаем категорию на уровне книги (не только этой сцены) — если она
+      // всплывёт снова в другой сцене, автор увидит подсказку «уже случалось» в
+      // Памяти вместо того, чтобы Оценщик каждый раз находил её заново с нуля.
+      if(directiveVerdict.clicheCategory) recordObservedPattern(state, scene.id, directiveVerdict.clicheCategory);
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote + categoryNote;
     }
     if(!best) best = prevDraft || '';
 
