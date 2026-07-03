@@ -206,8 +206,9 @@ function applyBudget(layers, BUDGET){
   }
   if(total() <= BUDGET) return;
 
-  // (б) Дальше выбиваем целые слои «памяти» по приоритету (не fixed)
-  const dropOrder = ['scenes','chapters','series','characters','bible'];
+  // (б) Дальше выбиваем целые слои «памяти» по приоритету (не fixed).
+  // 'observed' — самый необязательный (совет, не обязательство) — уходит первым.
+  const dropOrder = ['observed','scenes','chapters','series','characters','bible'];
   for(const nm of dropOrder){
     while(total() > BUDGET){
       const idx = layers.findIndex(l=>l.name===nm && !l.fixed);
