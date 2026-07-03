@@ -6,7 +6,7 @@ import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.11.1';
+export const APP_VERSION = '1.12.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -205,6 +205,39 @@ export function recordObservedPattern(state, sceneId, category){
 export function dismissObserved(state, idx){
   const o = (state.style?.observed||[])[idx]; if(!o) return false;
   o.dismissed = true; return true;
+}
+
+// Открытые сюжетные линии («чеховские ружья» без развязки) — state.memory.openThreads[].
+// Копится в closeChapter() (author-control.js) на каждой границе главы через
+// runChekhovCheck (bookreview.js): что этот прогон считает нерешённым — остаётся
+// и стареет (chaptersOpen++), что теперь решено — уходит из списка. Дедуп по
+// смыслу (sameNote), не по тексту — формулировка от прогона к прогону чуть плывёт.
+export function updateOpenThreads(state, setups){
+  state.memory = state.memory || {};
+  state.memory.openThreads = state.memory.openThreads || [];
+  const threads = state.memory.openThreads;
+  (setups||[]).forEach(s=>{
+    const what = (s.what||'').trim(); if(!what) return;
+    if(s.resolved){
+      const idx = threads.findIndex(t=>!t.dismissed && sameNote(t.what, what));
+      if(idx>=0) threads.splice(idx,1);
+      return;
+    }
+    const existing = threads.find(t=>!t.dismissed && sameNote(t.what, what));
+    if(existing){ existing.chaptersOpen++; existing.lastSeen = Date.now(); }
+    else threads.push({ what, introducedIn: s.introducedIn||'', chaptersOpen: 1, lastSeen: Date.now() });
+  });
+  if(threads.length > 20){
+    threads.sort((a,b)=>b.chaptersOpen-a.chaptersOpen);
+    threads.length = 20;
+  }
+}
+
+// Скрыть линию — автор решил, что она осознанно оставлена открытой (или уже
+// разобрался сам). Та же логика, что dismissObserved: помечаем, не удаляем.
+export function dismissOpenThread(state, idx){
+  const t = (state.memory?.openThreads||[])[idx]; if(!t) return false;
+  t.dismissed = true; return true;
 }
 
 let _agc = 0;

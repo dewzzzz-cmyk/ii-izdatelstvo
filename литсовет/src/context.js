@@ -38,6 +38,15 @@ export function bookContextBlock(state, scene){
   return parts.join('\n');
 }
 
+// Текущая или предпоследняя глава книги — усиливаем формулировку совета по
+// открытым линиям (закрыть/осознанно оставить), пока ещё не поздно решить.
+function isNearBookEnd(state, scene){
+  const chapters = (state.structure||[]).filter(n=>n.type==='chapter');
+  const idx = chapters.findIndex(c=>c.id===scene.chapterId);
+  if(idx < 0) return false;
+  return (chapters.length - idx) <= 2;
+}
+
 // Собрать сообщения для Прозаика на одну сцену.
 // Возвращает {messages, layers} — layers для диагностики (что попало в промпт).
 export function buildSceneContext(state, scene, opts={}){
@@ -60,6 +69,20 @@ export function buildSceneContext(state, scene, opts={}){
   // снова всплывёт и придётся дорабатывать сцену по кругу.
   const observed = (style.observed||[]).filter(o=>!o.dismissed && o.count>=2).sort((a,b)=>b.count-a.count).slice(0,5);
   if(observed.length) layers.push({ name:'observed', text:'=== УЖЕ ЗАМЕЧАЛОСЬ В ЭТОЙ КНИГЕ (постарайся не повторять) ===\n'+observed.map(o=>'— '+o.category).join('\n') });
+
+  // 1d. Открытые сюжетные линии (чеховские ружья без развязки) — копится в
+  // closeChapter() (author-control.js) на каждой границе главы. Мягкий совет,
+  // не fixed — цель предупредить, что линия стареет, не заставить закрыть её
+  // именно в этой сцене (это иногда осознанный приём, см. промпт runChekhovCheck).
+  const openThreads = (state.memory?.openThreads||[]).filter(t=>!t.dismissed && t.chaptersOpen>=2)
+    .sort((a,b)=>b.chaptersOpen-a.chaptersOpen).slice(0,4);
+  if(openThreads.length){
+    const header = isNearBookEnd(state, scene)
+      ? '=== ОТКРЫТЫЕ СЮЖЕТНЫЕ ЛИНИИ (книга близится к концу — реши: закрыть или это осознанный приём) ==='
+      : '=== ОТКРЫТЫЕ СЮЖЕТНЫЕ ЛИНИИ (рассмотри развитие или закрытие) ===';
+    layers.push({ name:'openThreads', text: header+'\n'+openThreads.map(t=>
+      `— ${t.what} (введено: ${t.introducedIn || 'ранее'}; открыто ${t.chaptersOpen} ${t.chaptersOpen===1?'главу':'главы'})`).join('\n') });
+  }
 
   // 2. Параметры проекта (жанр/тон) — короткий фикс
   const proj = state.project;
@@ -207,8 +230,8 @@ function applyBudget(layers, BUDGET){
   if(total() <= BUDGET) return;
 
   // (б) Дальше выбиваем целые слои «памяти» по приоритету (не fixed).
-  // 'observed' — самый необязательный (совет, не обязательство) — уходит первым.
-  const dropOrder = ['observed','scenes','chapters','series','characters','bible'];
+  // 'observed'/'openThreads' — самые необязательные (совет, не обязательство) — уходят первыми.
+  const dropOrder = ['observed','openThreads','scenes','chapters','series','characters','bible'];
   for(const nm of dropOrder){
     while(total() > BUDGET){
       const idx = layers.findIndex(l=>l.name===nm && !l.fixed);

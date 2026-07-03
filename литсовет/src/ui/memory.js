@@ -1,7 +1,7 @@
 // Правая панель, вкладка «Память»: сводки (с откатом версий), состояния
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
-import { getState, save, mergeCharacters, charNamesMatch, dismissObserved } from '../state.js';
+import { getState, save, mergeCharacters, charNamesMatch, dismissObserved, dismissOpenThread } from '../state.js';
 import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
@@ -69,6 +69,8 @@ export function renderMemory(){
       ${driftBlock(scenes)}
 
       ${observedBlock(s)}
+
+      ${openThreadsBlock(s)}
 
       ${sectionHeader('bible', `Канон / Bible (${(s.bible||[]).length})`, `<button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button>`)}
       ${collapsed.bible ? '' : ((s.bible||[]).map((b,i)=>`
@@ -183,6 +185,23 @@ function observedBlock(s){
     </div>`).join('')}`;
 }
 
+// Открытые сюжетные линии («чеховские ружья» без развязки, ≥2 главы) —
+// state.memory.openThreads[], копится в closeChapter() (author-control.js) на
+// каждой границе главы. Автор видит возраст линии и может скрыть ✕, если это
+// осознанный приём, а не забытая нить.
+function openThreadsBlock(s){
+  const items = (s.memory?.openThreads||[]).map((t,i)=>({...t,i})).filter(t=>!t.dismissed && t.chaptersOpen>=2).sort((a,b)=>b.chaptersOpen-a.chaptersOpen);
+  if(!items.length) return '';
+  return `<div class="mem-h" title="Заготовки сюжета (предмет, тайна, обещание), которые Литсовет проверяет на границе каждой главы — получили ли они развязку. Уже подмешиваются в контекст следующих сцен как совет.">📌 Открытые линии</div>
+    ${items.map(t=>`<div class="mem-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+        <div style="font-size:12px;flex:1">${esc(t.what)}</div>
+        <button class="bc-act thread-dismiss" data-ti="${t.i}" title="Скрыть — осознанно оставлено открытым (не блокирует, только убирает из списка)">✕</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px">${t.introducedIn?`введено: ${esc(t.introducedIn)} · `:''}открыто ${t.chaptersOpen} ${t.chaptersOpen===1?'главу':'главы'}</div>
+    </div>`).join('')}`;
+}
+
 function bindMemory(){
   document.querySelectorAll('.mem-h-toggle').forEach(h=>h.onclick=(e)=>{
     if(e.target.closest('button')) return; // не сворачивать при клике на «+ факт» в заголовке
@@ -210,6 +229,10 @@ function bindMemory(){
   });
   document.querySelectorAll('.obs-dismiss').forEach(b=>b.onclick=()=>{
     const s=getState(); if(dismissObserved(s, +b.dataset.oi)) save();
+  });
+  // Открытые линии: скрыть
+  document.querySelectorAll('.thread-dismiss').forEach(b=>b.onclick=()=>{
+    const s=getState(); if(dismissOpenThread(s, +b.dataset.ti)) save();
   });
   // Персонажи: редактировать состояние
   function editCharState(i){

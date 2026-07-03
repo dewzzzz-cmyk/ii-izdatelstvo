@@ -1,8 +1,9 @@
 // Авторский контроль (спека 8): редакторский стоп, узел «рука автора»,
 // суммаризация главы на стопе.
 
-import { getState, save } from '../state.js';
+import { getState, save, updateOpenThreads } from '../state.js';
 import { summarizeChapter } from '../memory.js';
+import { runChekhovCheck } from '../bookreview.js';
 
 // Глава текущей сцены и её сцены.
 export function chapterOf(state, scene){
@@ -39,6 +40,19 @@ export async function closeChapter(state, chapterId){
   if(!ch) return;
   ch.closed = true;
   try{ await summarizeChapter(state, ch); }catch(e){ console.warn('chapter summary failed', e); }
+  // Открытые сюжетные линии (чеховские ружья без развязки) — проверяем на КАЖДОЙ
+  // границе главы, а не постфактум после всей книги: там, где ещё есть время
+  // вплести линию в следующие главы, а не только развести руками в конце. С 3-й
+  // главы (idx>=2) — раньше книге почти нечему быть «незакрытым». Не блокирует
+  // закрытие главы при сбое — тот же принцип, что и суммаризация выше.
+  try{
+    const chapters = (state.structure||[]).filter(n=>n.type==='chapter');
+    const idx = chapters.findIndex(c=>c.id===chapterId);
+    if(idx >= 2){
+      const setups = await runChekhovCheck(state);
+      updateOpenThreads(state, setups);
+    }
+  }catch(e){ console.warn('open threads check failed', e); }
   save();
 }
 
