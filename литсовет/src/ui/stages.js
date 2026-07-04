@@ -19,7 +19,8 @@ import { rebuildBibleVecs } from '../bible.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
-import { runBetaRead, runChekhovCheck } from '../bookreview.js';
+import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles } from '../bookreview.js';
+import { GENRES } from '../genres.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -29,26 +30,6 @@ let _activeFlagFix = null;
 document.addEventListener('litsovet:flag-fix', e => {
   if(_activeFlagFix) _activeFlagFix(e.detail.directive, e.detail.rewrite||false);
 });
-
-// Жанры с типичным объёмом и сценой-по-умолчанию
-const GENRES = [
-  { v:'',                     label:'— выберите жанр —',        words: null  },
-  { v:'роман',                label:'Роман',                     words: 80000 },
-  { v:'повесть',              label:'Повесть',                   words: 40000 },
-  { v:'рассказ',              label:'Рассказ',                   words: 8000  },
-  { v:'детектив',             label:'Детектив',                  words: 70000 },
-  { v:'триллер',              label:'Триллер',                   words: 80000 },
-  { v:'фэнтези',              label:'Фэнтези',                   words:100000 },
-  { v:'фантастика',           label:'Фантастика (НФ)',           words: 90000 },
-  { v:'исторический роман',   label:'Исторический роман',        words:110000 },
-  { v:'любовный роман',       label:'Любовный роман',            words: 60000 },
-  { v:'мистика',              label:'Мистика / мистический детектив', words: 70000 },
-  { v:'ужасы',                label:'Ужасы',                     words: 70000 },
-  { v:'молодёжная фантастика',label:'Молодёжная фантастика (YA)',words: 70000 },
-  { v:'приключения',          label:'Приключения',               words: 75000 },
-  { v:'биографическая проза', label:'Биографическая проза',      words: 90000 },
-  { v:'другой',               label:'Другой…',                   words: null  },
-];
 
 function sceneCountHint(tw){
   const w = parseInt(tw)||80000;
@@ -138,6 +119,7 @@ export function renderConcept(els){
   const _knownGenre = GENRES.find(g=>g.v && g.v!=='другой' && g.v===p.genre);
   const _genreSelectVal = _knownGenre ? p.genre : (p.genre ? 'другой' : '');
   const _showCustom = !_knownGenre && !!p.genre;
+  const _canTitles = canSuggestTitles(s);
   els.left.innerHTML = `<div class="ph">Проект</div><div class="pad">
     <div class="muted">Прогрессивный онбординг: один вопрос, остальное по желанию.</div></div>`;
   els.right.innerHTML = '';
@@ -148,7 +130,13 @@ export function renderConcept(els){
       <textarea class="big-input" id="idea" rows="3" placeholder="например: Женщина приезжает в северный город после смерти тётки и узнаёт, что та вела двойную жизнь…">${esc(p.idea)}</textarea>
 
       <div class="field" style="margin-top:14px"><label>Название</label>
-        <input type="text" id="title" value="${esc(p.title)}" placeholder="Рабочее название"></div>
+        <div class="row" style="gap:8px">
+          <input type="text" id="title" value="${esc(p.title)}" placeholder="Рабочее название" style="flex:1">
+          <button class="btn" id="titleSuggestBtn" type="button" ${_canTitles?'':'disabled'}
+            data-tip="${_canTitles?'5-8 вариантов названия по содержанию уже написанных глав':'Допишите хотя бы 2 главы — тогда предложения будут по содержанию, а не по одной фразе синопсиса'}">✨ Предложить</button>
+        </div>
+        <div id="titleSuggestions" style="display:flex;flex-direction:column;gap:4px;margin-top:8px"></div>
+      </div>
 
       <div class="field"><label>Автор <span class="hint">имя на обложке и в метаданных экспорта (EPUB, Word)</span></label>
         <input type="text" id="pAuthor" value="${esc(p.author||'')}" placeholder="Имя Фамилия или псевдоним"></div>
@@ -204,6 +192,15 @@ export function renderConcept(els){
             style="width:16px;height:16px;flex-shrink:0">
           <span><b>Голос автора</b> — включить вкладку «Голос» <span class="hint">загрузить образец своей прозы, чтобы модель писала в вашем стиле</span></span>
         </label>
+
+        <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
+          <input type="checkbox" id="visualVoiceOn" ${s.style?.visualVoiceOn?'checked':''}
+            style="width:16px;height:16px;flex-shrink:0">
+          <span><b>Визуальный голос</b> <span class="hint">единый арт-стиль для всех иллюстраций книги — описание ниже добавляется в промпт каждой картинки</span></span>
+        </label>
+        <div id="visualVoiceField" style="${s.style?.visualVoiceOn?'':'display:none'}">
+          <textarea id="visualVoice" rows="2" placeholder="например: акварель, тёплые приглушённые тона, мягкий рассеянный свет, в духе книжной иллюстрации начала XX века">${esc(s.style?.visualVoice||'')}</textarea>
+        </div>
         <div class="field"><label>Обложка <span class="hint">необязательно — попадёт в EPUB (JPEG/PNG, до 3 МБ)</span></label>
           <div class="row" style="gap:10px;align-items:center">
             <input type="file" id="pCover" accept="image/jpeg,image/png" style="display:none">
@@ -221,6 +218,24 @@ export function renderConcept(els){
   const bind = (id, fn)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input',fn); };
   bind('idea', e=>{ p.idea=e.target.value; });
   bind('title', e=>{ p.title=e.target.value; });
+  const tsb = document.getElementById('titleSuggestBtn');
+  if(tsb) tsb.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    tsb.disabled = true; const orig = tsb.textContent; tsb.innerHTML = '<span class="spinner"></span>';
+    const box = document.getElementById('titleSuggestions');
+    try{
+      const titles = await suggestTitles(s);
+      box.innerHTML = titles.map(t=>`<button type="button" class="btn title-opt" data-title="${esc(t.title)}"
+        style="text-align:left;white-space:normal" title="${esc(t.reason)}">${esc(t.title)}<span class="muted" style="display:block;font-size:11px;margin-top:2px">${esc(t.reason)}</span></button>`).join('');
+      box.querySelectorAll('.title-opt').forEach(b=>b.onclick=()=>{
+        p.title = b.dataset.title;
+        const inp = document.getElementById('title'); if(inp) inp.value = p.title;
+        box.innerHTML = '';
+        save();
+      });
+    }catch(e){ alert('Названия: '+e.message); }
+    finally{ tsb.disabled = false; tsb.textContent = orig; }
+  };
   bind('pAuthor', e=>{ p.author=e.target.value; });
   bind('synopsis', e=>{ p.synopsis=e.target.value; });
   // Обложка: файл → dataURL в состоянии проекта (уходит в EPUB при экспорте)
@@ -288,6 +303,13 @@ export function renderConcept(els){
     if(btn) btn.textContent = 'Дальше — '+(p.useVoice?'Голос':'Структура')+' →';
     save();
   };
+  s.style = s.style || {};
+  document.getElementById('visualVoiceOn').onchange = (ev)=>{
+    s.style.visualVoiceOn = ev.target.checked;
+    const f = document.getElementById('visualVoiceField'); if(f) f.style.display = s.style.visualVoiceOn?'':'none';
+    save();
+  };
+  bind('visualVoice', e=>{ s.style.visualVoice = e.target.value; });
   document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = p.useVoice?'voice':'structure'; save(); };
 }
 
@@ -1367,6 +1389,7 @@ export function renderEdit(els){
       <span style="flex:1"></span>
       <button class="btn" id="betaRead" data-tip="Читает книгу целиком (не по сценам) и честно отвечает вопросами анкеты бета-ридера: цепляет ли начало, ясны ли мотивации героя, где проседает интерес, satisfying ли финал.">📖 Бета-ридер</button>
       <button class="btn" id="chekhovCheck" data-tip="Отслеживает заявленные сюжетные заготовки (предмет, тайна, обещание) на масштабе всей книги — получили ли они развязку.">🔫 Ружья Чехова</button>
+      <button class="btn" id="criticReview" data-tip="Несокращённая рецензия литературного критика — не анкета с баллами, а честное развёрнутое мнение о рукописи, с конкретными претензиями к конкретным сценам.">🎭 Критик</button>
       <button class="btn" id="exMd">📕 .md</button>
       <button class="btn" id="exDocx">📄 .doc</button>
       <button class="btn" id="exEpub">📗 .epub</button>
@@ -1396,6 +1419,14 @@ export function renderEdit(els){
     try{ const setups=await runChekhovCheck(s); openChekhovModal(setups); }
     catch(e){ alert('Ружья Чехова: '+e.message); }
     finally{ cc.disabled=false; cc.textContent=orig; }
+  };
+  const crb=document.getElementById('criticReview');
+  if(crb) crb.onclick=async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    crb.disabled=true; const orig=crb.textContent; crb.innerHTML='<span class="spinner"></span> Читаю и пишу рецензию…';
+    try{ const report=await runCriticReview(s); openCriticModal(s, report); }
+    catch(e){ alert('Критик: '+e.message); }
+    finally{ crb.disabled=false; crb.textContent=orig; }
   };
 }
 
@@ -1427,6 +1458,51 @@ function openBetaReadModal(r){
   const close=()=>root.innerHTML='';
   document.getElementById('brBg').onclick=close;
   document.getElementById('brClose').onclick=close;
+}
+
+function openCriticModal(s, r){
+  const root=document.getElementById('modalRoot');
+  const scenes = (s.structure||[]).filter(n=>n.type==='scene');
+  const findScene = title => scenes.find(sc=>sc.title.trim().toLowerCase()===String(title||'').trim().toLowerCase());
+  root.innerHTML=`<div class="modal-bg" id="crBg"><div class="modal" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>🎭 Критик</h2>
+    <div class="muted" style="margin-bottom:10px;font-size:12px">Несокращённая рецензия — не анкета со баллами. Мнение может быть резким; это осознанно.</div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow:auto">
+      <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:var(--accent-bg)">
+        <b>Вердикт</b><div style="font-size:13px;white-space:pre-wrap">${esc(r.verdict||'—')}</div>
+      </div>
+      ${r.strengths.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
+        <b>Сильные стороны</b>
+        ${r.strengths.map(x=>`<div style="font-size:12px;color:var(--text-2)">• ${esc(x)}</div>`).join('')}
+      </div>`:''}
+      ${r.problems.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <b>Проблемы</b>
+        ${r.problems.map(p=>{
+          const sc = findScene(p.sceneTitle);
+          const noteText = (p.issue||'')+(p.note?': '+p.note:'');
+          return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-top:1px solid var(--border)">
+            <div style="font-size:13px">${esc(p.issue)}</div>
+            ${p.note?`<div style="font-size:12px;color:var(--text-2)">${esc(p.note)}</div>`:''}
+            ${sc?`<button class="btn crit-goto" data-sc="${sc.id}" data-note="${esc(noteText)}" style="align-self:flex-start;font-size:11px;padding:3px 8px">→ «${esc(sc.title)}» (открыть и скопировать замечание)</button>`
+                :(p.sceneTitle?`<div class="muted" style="font-size:11px">сцена «${esc(p.sceneTitle)}» не найдена в структуре</div>`:'')}
+          </div>`;
+        }).join('')}
+      </div>`:''}
+      ${r.recommendation?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px">
+        <b>Итог</b><div style="font-size:13px">${esc(r.recommendation)}</div>
+      </div>`:''}
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="crClose">Закрыть</button></div>
+  </div></div>`;
+  const close=()=>root.innerHTML='';
+  document.getElementById('crBg').onclick=close;
+  document.getElementById('crClose').onclick=close;
+  document.querySelectorAll('.crit-goto').forEach(b=>b.onclick=()=>{
+    const text=b.dataset.note;
+    navigator.clipboard?.writeText(text).catch(()=>{});
+    s.ui.activeScene=b.dataset.sc; s.ui.stage='write'; save();
+    close();
+  });
 }
 
 function openChekhovModal(setups){
@@ -1531,7 +1607,7 @@ function openRegenSettings(s, scene){
 }
 
 // Модалка ручного режима: показывает результат агента, ждёт «Принять» или «Переписать».
-function approvalGate({role, label, output, draft, editable, verdict}){
+function approvalGate({role, label, output, draft, editable, verdict, guardFlags, criticalCount}){
   return new Promise(resolve=>{
     const root=document.getElementById('modalRoot');
     const isEval = role==='evaluator';
@@ -1545,8 +1621,17 @@ function approvalGate({role, label, output, draft, editable, verdict}){
       const cl=(verdict.cliches||[]).map(c=>`<div class="apv-row"><span>«${esc(c)}»</span><button class="apv-rule" data-rule="${esc('избегай штампа «'+c+'» и подобных шаблонных оборотов')}" title="Сделать правилом">⊕ В правило</button></div>`).join('');
       const nt=(verdict.notes||[]).map(n=>`<div class="apv-row"><span>${esc(n)}</span><button class="apv-rule" data-rule="${esc(n)}" title="Сделать правилом">⊕ В правило</button></div>`).join('');
       const qs=(verdict.questions||[]).map(q=>`<div class="apv-row" style="background:var(--warn-bg,#fffbf0)"><span style="color:var(--warn,#8a6000)">? ${esc(q)}</span></div>`).join('');
+      // Замечания Стражей — раньше в этом гейте показывался ТОЛЬКО вердикт Оценщика,
+      // хотя Стражи (логика/события/голос/...) к этому моменту уже отработали:
+      // «Принять» можно было нажать не зная, что сцена содержит критическую
+      // логическую ошибку. Теперь их находки — прямо здесь, до кнопки.
+      const gf=(guardFlags||[]).map(f=>{
+        const crit = f.severity==='critical';
+        return `<div class="apv-row" style="background:${crit?'var(--err-bg, #fff0f0)':'var(--warn-bg,#fffbf0)'}"><span style="color:${crit?'var(--err,#a02020)':'var(--warn,#8a6000)'}">${crit?'⛔':'⚠'} [${esc(f.role)}] ${esc(f.title)}${f.detail?': '+esc(f.detail):''}</span></div>`;
+      }).join('');
       infoBlock=`<div class="apv-verdict">
         <div class="muted" style="margin-bottom:4px">Оценка <b>${verdict.weighted}/10</b> (мин. ось ${verdict.minAxis}) · ${verdict.pass?'проходит порог':'на доработку'}</div>
+        ${gf?`<div class="ph2">Замечания Стражей${criticalCount?` (${criticalCount} критич.)`:''}</div>${gf}`:''}
         ${an?`<div class="ph2">Якоря — не трогать</div>${an}`:''}
         ${cl?`<div class="ph2">Клише</div>${cl}`:''}
         ${nt?`<div class="ph2">Замечания</div>${nt}`:''}

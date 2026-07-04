@@ -55,12 +55,17 @@ export function architectToText(plan, scene){
 
 // ── Оценщик (temp 0.2) — рубрика из 5 осей (спека 6.1). Отдельный агент. ──
 // НЕ видит рассуждений Прозаика, только готовый черновик + бриф + критерии.
+// weight: «Соответствие брифу» весит вдвое больше остальных осей — уход от
+// задачи сцены это структурный провал (сцена не делает того, для чего нужна),
+// а не вопрос полировки, как остальные четыре оси. Раньше weighted был простым
+// средним — сцена, наполовину мимо брифа, но гладко написанная, легко проходила
+// порог за счёт высоких оценок по остальным осям.
 export const RUBRIC_AXES = [
-  { key:'freshness', label:'Свежесть образа', anti:'клише, штампы' },
-  { key:'rhythm',    label:'Ритм',            anti:'монотонность' },
-  { key:'concrete',  label:'Конкретность',    anti:'абстракции, ярлыки' },
-  { key:'voice',     label:'Голос',           anti:'регрессия к нейтральному' },
-  { key:'brief',     label:'Соответствие брифу', anti:'уход от задачи' },
+  { key:'freshness', label:'Свежесть образа', anti:'клише, штампы', weight:1 },
+  { key:'rhythm',    label:'Ритм',            anti:'монотонность', weight:1 },
+  { key:'concrete',  label:'Конкретность',    anti:'абстракции, ярлыки', weight:1 },
+  { key:'voice',     label:'Голос',           anti:'регрессия к нейтральному', weight:1 },
+  { key:'brief',     label:'Соответствие брифу', anti:'уход от задачи', weight:2 },
 ];
 
 export function evaluatorMessages(scene, draft, voiceExamples, bookContext, rules){
@@ -106,8 +111,15 @@ export function parseEvaluator(text, threshold){
   if(!j || !j.scores) return { ok:false, raw:text };
   const scores = j.scores;
   const axes = RUBRIC_AXES.map(a=>a.key);
-  const vals = axes.map(k=>clamp(Number(scores[k])||0));
-  const weighted = vals.reduce((a,b)=>a+b,0)/vals.length; // среднее по осям, считаем сами
+  const weights = RUBRIC_AXES.map(a=>a.weight||1);
+  // Округляем до целого — промпт просит целые баллы 1-10, но модель иногда
+  // возвращает дробные; без округления погранично-дробный балл мог давать
+  // minAxis вроде 4.6, который проходит порог ">=5" при показе как «5», хотя
+  // фактически ниже — несоответствие между тем, что видит автор, и тем, что
+  // реально сравнивается с порогом.
+  const vals = axes.map(k=>clamp(Math.round(Number(scores[k])||0)));
+  const weightSum = weights.reduce((a,b)=>a+b,0);
+  const weighted = vals.reduce((sum,v,i)=>sum+v*weights[i],0)/weightSum; // взвешенное среднее по осям
   const minAxis = Math.min(...vals);
   const pass = weighted >= threshold && minAxis >= 5;
   return {

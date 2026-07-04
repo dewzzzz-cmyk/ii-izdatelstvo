@@ -59,6 +59,13 @@ export function defaultState(){
     series: [],
     agents: defaultAgents(),
     diagnostics: { runs: [] },  // трейсы прогонов по run_id
+    illustrations: {
+      provider: 'gemini',      // gemini | openai — какой платный провайдер картинок
+      apiKey: '',              // отдельный ключ, НЕ текстовый — тоже только в памяти
+      model: '',                // пусто → дефолт провайдера (gpt-image-1 / gemini-2.5-flash-image)
+      quality: 'standard',     // standard | hd
+      items: [],                // {id, type, sceneId, sceneTitle, prompt, dataUrl, createdAt}
+    },
     global: {
       baseURL: 'https://api.deepseek.com',
       model: 'deepseek-chat',
@@ -84,9 +91,9 @@ export function defaultAgents(){
       desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },
     { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'voiceguard',
       desc:'Сверяет стиль и ритм с образцом вашего голоса, цитируя образец. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
-    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'logic',
+    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:700, strictness:2, enabled:true, role:'logic',
       desc:'Проверяет физику, время и причинность: возможно ли это в мире сцены. Видит только факты, не стиль. Параллельно.' },
-    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'events',
+    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:700, strictness:2, enabled:true, role:'events',
       desc:'Проверяет, что персонаж знает/чувствует то, что должен по прошлым событиям. Видит только факты. Параллельно.' },
     { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:700, strictness:2, enabled:false, role:'styleguard',
       desc:'Ловит нарушения ваших «Правил автора» (do/don\'t) и показывает цитату. Только флагует. Параллельно с другими стражами.' },
@@ -270,6 +277,8 @@ export function save(){
   // API-ключ хранится отдельно в localStorage браузера (не уходит на сервер)
   const k = _state.global?.apiKey;
   if(typeof k === 'string') lsSet('litsovet_apikey', k);
+  const ik = _state.illustrations?.apiKey;
+  if(typeof ik === 'string') lsSet('litsovet_ic_apikey', ik);
   emit();
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(()=>{
@@ -299,15 +308,16 @@ export async function init(){
   const hadNew = await syncFromServer().catch(()=>false);
 
   const savedKey = lsGet('litsovet_apikey') || '';
+  const savedIcKey = lsGet('litsovet_ic_apikey') || '';
   const lastId = lsGet('litsovet_last');
   if(lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; loaded.illustrations = loaded.illustrations||{}; loaded.illustrations.apiKey = savedIcKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   // Если lastId не нашёлся локально — мог прийти с сервера
   if(hadNew && lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; loaded.illustrations = loaded.illustrations||{}; loaded.illustrations.apiKey = savedIcKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   _state = defaultState();
   lsSet('litsovet_last', _state.id);
@@ -318,8 +328,10 @@ export async function init(){
 
 export function newProject(){
   const prevKey = _state?.global?.apiKey || '';
+  const prevIcKey = _state?.illustrations?.apiKey || '';
   _state = defaultState();
   _state.global.apiKey = prevKey;
+  _state.illustrations.apiKey = prevIcKey;
   lsSet('litsovet_last', _state.id);
   save();
   return _state;
@@ -334,6 +346,7 @@ export async function switchProject(id){
   }
   if(!proj) return false;
   proj.global = proj.global||{}; proj.global.apiKey = _state?.global?.apiKey||'';
+  proj.illustrations = proj.illustrations||{}; proj.illustrations.apiKey = _state?.illustrations?.apiKey||'';
   _state = migrate(proj);
   lsSet('litsovet_last', id);
   emit();
@@ -353,6 +366,8 @@ function migrate(s){
   s.voice   = Object.assign({}, d.voice, s.voice);
   s.global  = Object.assign({}, d.global, s.global);
   s.memory  = Object.assign({}, d.memory, s.memory);
+  s.illustrations = Object.assign({}, d.illustrations, s.illustrations);
+  s.illustrations.items = s.illustrations.items || [];
   s.diagnostics = s.diagnostics || { runs: [] };
   // Мердж агентов по id: сохраняем пользовательские enabled/temp и ПОРЯДОК, до-добавляем новых из дефолтов.
   if(!s.agents || !s.agents.length){ s.agents = d.agents; }

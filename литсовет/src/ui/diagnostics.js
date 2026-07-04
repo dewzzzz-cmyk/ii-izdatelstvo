@@ -52,6 +52,10 @@ function renderAgentParams(a, global){
     ${a.desc?`<div class="ap-desc">${esc(a.desc)}</div>`:''}
     ${a.custom?`<div class="ap-row"><span class="ap-label">Что проверять (промпт)</span>
       <textarea class="ap-prompt" data-aid="${a.id}" rows="2" placeholder="напр.: проверь, что даты и возраст персонажей не противоречат друг другу">${esc(a.prompt||'')}</textarea></div>`:''}
+    ${a.custom?`<div class="ap-row"><label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" class="ap-factual" data-aid="${a.id}" ${a.factual?'checked':''}>
+      <span class="ap-label" style="margin:0">Фактический страж</span>
+    </label><div class="ap-hint">проверяет каждую итерацию петли (как логика/события), а не только принятый текст — включайте для проверок фактов/канона, не для стиля</div></div>`:''}
     ${specs.map(sp=>{
       const cur = sp.target==='agent' ? (a[sp.key]??sp.def) : (global[sp.key]??sp.def);
       return `<div class="ap-row">
@@ -393,7 +397,7 @@ export function renderAgentPipeline(){
     const isPar = PARALLEL_ROLES.has(a.role) && a.enabled!==false;
     const sep = (isPar && !sepShown) ? '<div class="par-sep" data-tip="Эти агенты-стражи работают одновременно (параллельно) — быстрее и независимо друг от друга.">∥ параллельный шаг</div>' : '';
     if(isPar) sepShown = true;
-    const isFactual = FACTUAL_GUARD_ROLES.has(a.role);
+    const isFactual = FACTUAL_GUARD_ROLES.has(a.role) || (a.custom && !!a.factual);
     const parTip = isFactual
       ? 'Фактический страж: работает параллельно на каждой итерации петли — ловит противоречия сразу, пока текст ещё меняется.'
       : (PARALLEL_ROLES.has(a.role) && !a.custom)
@@ -479,6 +483,8 @@ function bindAgents(){
   });
   // промпт кастомного агента
   document.querySelectorAll('.ap-prompt').forEach(t=>t.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.aid); if(a){ a.prompt=t.value; save(); } }));
+  // «фактический страж» — бежит каждую итерацию, а не только на принятом тексте
+  document.querySelectorAll('.ap-factual').forEach(cb=>cb.onchange=()=>{ const s=getState(); const a=s.agents.find(x=>x.id===cb.dataset.aid); if(a){ a.factual=cb.checked; save(); rerenderDiag(); } });
   // удалить кастомного агента
   document.querySelectorAll('.ag-remove').forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); const s=getState(); if(removeAgent(s, b.dataset.aid)){ _openAgents.delete(b.dataset.aid); save(); } });
   // ручной запуск агента на текущей сцене → разбор с замечаниями

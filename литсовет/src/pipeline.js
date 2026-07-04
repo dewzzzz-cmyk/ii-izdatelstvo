@@ -20,11 +20,27 @@ export function isRunning(){ return _running; }
 // Фактические стражи — бегут каждую итерацию, пока текст ещё меняется (в отличие от
 // литературных, которые видят текст только один раз, в конце).
 const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
+// Кастомный страж может опционально отметить себя «фактическим» (a.factual===true,
+// чекбокс в настройках стража) — тогда он тоже бежит каждую итерацию, а не только
+// когда текст уже принят. Раньше это было жёстко захардкожено только на logic/events.
+function isFactualGuard(state, role){
+  if(FACTUAL_GUARD_ROLES.has(role)) return true;
+  const a = ag(state, role);
+  return !!(a.custom && a.factual);
+}
+
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', repeat:'Проверка повторов'};
+function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
 // см. bible.js) — используется, чтобы не подсвечивать замечание, которое
 // Прозаик уже мотивированно отклонил как художественный приём.
-const REJECT_SIM_THRESHOLD = 0.4;
+// Поднято с 0.4 до 0.75: на коротких замечаниях с малым словарём (мало
+// уникальных не-стоп-слов) косинус легко даёт 0.85-0.9 даже для РАЗНЫХ находок —
+// например, head-hopping про одного персонажа и head-hopping про другого
+// («переключение POV» — общие слова, разное имя) склеивались в одно отклонение,
+// и вторая, реальная находка переставала подсвечиваться (найдено консилиумом).
+const REJECT_SIM_THRESHOLD = 0.75;
 function noteSimilarity(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))); }
 function isRejectedNote(text, rejectedNotes){
   if(!rejectedNotes || !rejectedNotes.length || !text) return false;
@@ -53,14 +69,25 @@ async function gate(state, role, label, output, opts, extra={}){
   return await opts.onApproval({ role, label, output, ...extra });
 }
 // Объединённая директива: Прозаик получает всё сразу — оценщик + стражи + запреты.
-function buildUnifiedDirective(verdict, allBanned, criticalFlags){
+function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions){
   const parts = [];
   if((verdict.anchors||[]).length) parts.push('СОХРАНИ ДОСЛОВНО (якоря): ' + verdict.anchors.join('; '));
   parts.push(...(verdict.notes||[]));
   if(criticalFlags.length) parts.push('КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticalFlags.join('\n'));
+  // Отдельно от критических: вопросы фактических стражей (логика/события) с severity
+  // "warning" — их собственный промпт называет их пробелом, на который не нужно
+  // выдумывать ответ, а не командой исправить. Раньше они попадали в criticalFlags
+  // наравне с настоящими critical — Прозаик был вынужден изобретать факт, которого
+  // в сцене нет, лишь бы «исправить» то, что на деле было вопросом автору.
+  if(factualQuestions && factualQuestions.length) parts.push('ВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (это пробел, не ошибка — не выдумывай факт: либо сделай формулировку нейтральной, либо оставь как есть для решения автора):\n' + factualQuestions.join('\n'));
   if(allBanned.length) parts.push('убери клише (все предыдущие итерации): ' + allBanned.join(', '));
   return parts.join('\n\n');
 }
+// Директивы прямо просят сократить/сжать текст — тогда безопасность-от-усечения
+// (откат к prevDraft, если ответ короче 60% исходного) не должна срабатывать:
+// иначе легитимное «сократи вдвое» автоматически отменялось тем же условием,
+// что защищает от случайно оборванного ответа модели.
+const SHORTEN_HINT_RE = /сократ|покороче|короче|уменьш|сожми|срежь|вырежи/i;
 function flagsText(flags){
   const all=[]; Object.entries(flags).forEach(([role,arr])=>(arr||[]).forEach(f=>all.push(`[${f.severity}] ${f.title}: ${f.detail||''}`)));
   return all.length? all.join('\n') : 'Флагов нет.';
@@ -101,7 +128,6 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Стражи — часть той же петли, не отдельный цикл.
     // Прозаик получает объединённую директиву (оценщик + стражи вместе) и разбирает всё в [РАЗБОР].
     // Консенсус = Оценщик принял И Стражи молчат.
-    const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', repeat:'Проверка повторов'};
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
@@ -112,6 +138,9 @@ export async function runScene(state, scene, opts={}, onProgress){
     let best = null, bestEval = null, bestClean = false, bestFlags = {};
     let directive = opts.directive || '';
     let prevDraft = opts.initialDraft || '';
+    let lastGenerated = ''; // последний РЕАЛЬНО сгенерированный текст — переживает
+    // reset prevDraft='' в ручном гейте Прозаика ниже, так что финальный fallback
+    // (после выхода из цикла) никогда не сохраняет пустую сцену.
     let iter = 0, safety = 0;
     let flags = {};
     const bannedCliches = new Set();
@@ -139,7 +168,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: ответ обрезан токенами (нет секции [ТЕКСТ]) — используем предыдущий черновик', state:'warn'}});
           pRes.text = prevDraft;
         } else if(parsed.prose) pRes.text = parsed.prose;
-        if(pRes.text && pRes.text.length < prevDraft.length*0.6) pRes.text = prevDraft;
+        if(pRes.text && pRes.text.length < prevDraft.length*0.6 && !SHORTEN_HINT_RE.test(directive)) pRes.text = prevDraft;
         logInput = '(разбор замечаний + точечная правка) ' + (directive||'');
       } else {
         onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
@@ -151,6 +180,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
       prevDraft = pRes.text;
+      if(pRes.text) lastGenerated = pRes.text;
       logStep({ agent:'prose', iter, input:logInput, output:pRes.text,
         layers:logLayers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
       const _budget = (state.global && state.global.budgetTokens) || 32000;
@@ -180,8 +210,13 @@ export async function runScene(state, scene, opts={}, onProgress){
         }
         const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??900 });
         verdict = parseEvaluator(eRes.text, threshold);
-        if(iter === 1 && verdict.ok) anchorVerdict = verdict;
-        if(verdict.ok) scoreHistory.push({...verdict.scores});
+        // Якорь ставим на ПЕРВЫЙ успешно распарсенный вердикт, не строго на итерации
+        // 1 — раньше, если итерация 1 не распарсилась (verdict.ok===false), anchorVerdict
+        // навсегда оставался null на всю сцену: условие `iter===1 && verdict.ok`
+        // больше никогда не выполнялось, и стабилизация оценок между итерациями
+        // молча отключалась.
+        if(!anchorVerdict && verdict.ok) anchorVerdict = verdict;
+        if(verdict.ok) scoreHistory.push({...verdict.scores, iter});
         logStep({ agent:'evaluator', iter, input:'(черновик)', output:eRes.text, verdict,
           tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
         const evalLogExtra = (verdict.anchors?.length?` · ✦ ${verdict.anchors[0]}`:'')
@@ -211,6 +246,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       // оставался пустым в возвращаемом результате).
       flags = {};
       let criticals = [];
+      let factualQuestions = [];
       const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
 
       // Проверка механических повторов (не LLM, см. guards.js) — не завязана на
@@ -227,28 +263,33 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(hasGuards){
         const guardJobs = [];
         // Фактические стражи — запускаем на каждой итерации
-        if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, pRes.text, ag(state,'logic').strictness), flags));
-        if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, pRes.text, ag(state,'events').strictness), flags));
+        if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, pRes.text, ag(state,'logic').strictness), flags, onProgress));
+        if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, pRes.text, ag(state,'events').strictness), flags, onProgress));
+        // Кастомные стражи, отмеченные автором как «фактические» (a.factual) — тоже
+        // каждую итерацию, не только когда текст уже принят.
+        (state.agents||[]).filter(a=>a.custom && a.enabled!==false && a.factual).forEach(a=>{
+          guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
+        });
         // Литературные стражи — только когда текст принят или итерации кончились
         if(evalAccepted || iter >= maxIter){
           if(agentEnabled('voiceguard')){
             if(voiceExamples.length > 0)
-              guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags));
+              guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags, onProgress));
             else
               onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
           }
           if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
-            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, state.style.rules, ag(state,'styleguard').strictness), flags));
+            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, state.style.rules, ag(state,'styleguard').strictness), flags, onProgress));
           if(agentEnabled('reader'))
-            guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags));
+            guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress));
           if(agentEnabled('imagery'))
-            guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(pRes.text, ag(state,'imagery').strictness), flags));
+            guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, state.project?.genre), flags, onProgress));
           if(agentEnabled('pov'))
-            guardJobs.push(guardJob(state,'pov', llmBase, povGuardMessages(pRes.text, ag(state,'pov').strictness), flags));
+            guardJobs.push(guardJob(state,'pov', llmBase, povGuardMessages(pRes.text, ag(state,'pov').strictness), flags, onProgress));
           if(agentEnabled('dialogue'))
-            guardJobs.push(guardJob(state,'dialogue', llmBase, dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags));
-          (state.agents||[]).filter(a=>a.custom && a.enabled!==false).forEach(a=>{
-            guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags));
+            guardJobs.push(guardJob(state,'dialogue', llmBase, dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags, onProgress));
+          (state.agents||[]).filter(a=>a.custom && a.enabled!==false && !a.factual).forEach(a=>{
+            guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
           });
         }
         if(guardJobs.length){
@@ -274,17 +315,25 @@ export async function runScene(state, scene, opts={}, onProgress){
         }
 
         const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
-        // Критично — от любого стража. Плюс warning от ФАКТИЧЕСКИХ стражей (логика, события):
-        // они одни из немногих, что бегут каждую итерацию, и их предупреждения иначе тонут
-        // молча (Прозаик их никогда не видит), пока не эскалируются в critical — обычно уже
-        // на последней итерации, когда чинить поздно.
+        // Критично — от любого стража. severity:'critical' — это ошибка, Прозаик обязан
+        // её исправить.
         criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
-          .filter(f=>f.severity==='critical' || (f.severity==='warning' && FACTUAL_GUARD_ROLES.has(role)))
+          .filter(f=>f.severity==='critical')
+          .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+        // warning от ФАКТИЧЕСКИХ стражей (логика/события/кастомный factual) — это,
+        // по их собственному промпту, ПРОБЕЛ-ВОПРОС автору («не выдумывай ответ»),
+        // а не ошибка. Раньше приравнивался к critical: Прозаик был вынужден
+        // изобретать факт, которого в сцене нет, лишь бы «исправить» вопрос — и это
+        // же заставляло его блокировать консенсус наравне с настоящими ошибками.
+        // Теперь идёт отдельным списком — виден в директиве, но не блокирует
+        // завершение сцены и не требует придумывать ответ.
+        factualQuestions = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+          .filter(f=>f.severity==='warning' && isFactualGuard(state, role))
           .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
         if(flagList.length || dupFound.length){
           onProgress && onProgress({log:{icon:'🛡',
             text: flagList.length
-              ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}`
+              ? `Стражи: ${flagList.length} замечаний${criticals.length?` (${criticals.length} крит.)`:''}${factualQuestions.length?` (${factualQuestions.length} вопр.)`:''}`
               : 'Стражи: замечаний нет',
             flags:flagList, state: flagList.length?'warn':'ok'}});
         }
@@ -321,12 +370,22 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(!agentEnabled('evaluator')){
         // Без Оценщика решение о завершении — только по Стражам.
         if(criticals.length === 0) break;
-        directive = (criticals.length ? 'КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticals.join('\n') : directive);
+        directive = 'КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticals.join('\n')
+          + (factualQuestions.length ? '\n\nВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (не выдумывай ответ):\n' + factualQuestions.join('\n') : '');
         continue;
       }
 
       if(manual(state,'evaluator')){
-        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, '', opts, {draft:pRes.text, editable:true, verdict});
+        // Раньше гейт показывал только вердикт Оценщика — Стражи к этому моменту
+        // уже отработали (см. блок выше), но их находки автору не показывались:
+        // клик «Принять» мог зафиксировать сцену с критической ошибкой логики,
+        // которую автор ни разу не видел. Передаём guardFlags/criticalCount, чтобы
+        // approvalGate (ui/stages.js) отрисовал их в той же модалке.
+        const guardFlagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+          .filter(f=>f.severity!=='ok')
+          .map(f=>({role:guardLabel(state,role), severity:f.severity, title:f.title, detail:f.detail||''})));
+        const gt = await gate(state,'evaluator',`Оценщик · ${verdict.ok?verdict.weighted+'/10':'?'}`, '', opts,
+          {draft:pRes.text, editable:true, verdict, guardFlags:guardFlagList, criticalCount:criticals.length});
         if(gt.approve){
           const edited = gt.text?.trim();
           best = edited || pRes.text; bestEval = verdict;
@@ -337,7 +396,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           break;
         }
         if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
-        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals) || directive;
+        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions) || directive;
         continue;
       }
 
@@ -347,13 +406,18 @@ export async function runScene(state, scene, opts={}, onProgress){
       // Директива строится от лучшего оценщика (bestEval), а не обязательно от текущего verdict.
       // Это важно когда guards запустились на финальной итерации, а best — из более ранней.
       const directiveVerdict = (bestEval && bestEval.weighted > (verdict.weighted||0)) ? bestEval : verdict;
-      // Стагнация: если ось не растёт 2 итерации подряд — добавить радикальную инструкцию
+      // Стагнация: если ось не растёт 2 итерации подряд — добавить радикальную инструкцию.
+      // Сравниваем ТОЛЬКО реально соседние по номеру итерации записи (last.iter ===
+      // prev.iter+1) — раньше scoreHistory хранил только успешно распарсенные
+      // вердикты подряд, без номера итерации: если между двумя ok-вердиктами была
+      // итерация с непропарсенным ответом Оценщика, детектор всё равно сравнивал их
+      // как «подряд» и мог заявить «стагнация 2 итерации», хотя в промежутке был
+      // пропуск, а не реальное отсутствие прогресса.
       let stagnantNote = '';
       if(scoreHistory.length >= 2){
-        const stuck = RUBRIC_AXES.map(a=>a.key).filter(k=>{
-          const vals = scoreHistory.map(s=>s[k]||0);
-          return vals.length >= 2 && vals[vals.length-1] <= vals[vals.length-2] + 0.5;
-        });
+        const last = scoreHistory[scoreHistory.length-1], prev = scoreHistory[scoreHistory.length-2];
+        const adjacent = last && prev && last.iter === prev.iter + 1;
+        const stuck = adjacent ? RUBRIC_AXES.map(a=>a.key).filter(k=>(last[k]||0) <= (prev[k]||0) + 0.5) : [];
         if(stuck.length){
           stagnantNote = '\n\nОСИ БЕЗ ПРОГРЕССА — измени подход РАДИКАЛЬНО, не шлифуй то же самое: ' + stuck.map(k=>AXIS_LABELS[k]||k).join(', ');
           onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена`, state:'warn'}});
@@ -369,9 +433,18 @@ export async function runScene(state, scene, opts={}, onProgress){
       // всплывёт снова в другой сцене, автор увидит подсказку «уже случалось» в
       // Памяти вместо того, чтобы Оценщик каждый раз находил её заново с нуля.
       if(directiveVerdict.clicheCategory) recordObservedPattern(state, scene.id, directiveVerdict.clicheCategory);
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals) || directive) + stagnantNote + categoryNote;
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions) || directive) + stagnantNote + categoryNote;
     }
-    if(!best) best = prevDraft || '';
+    if(!best){
+      // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
+      // отклонил черновик в ручном гейте — safety исчерпан раньше maxIter, а
+      // prevDraft к этому моменту уже сброшен в '' веткой gate ниже). Раньше
+      // здесь падали на prevDraft, который в этом сценарии тоже пуст — сцена
+      // сохранялась пустой строкой без единого предупреждения. lastGenerated
+      // всегда хранит последний реально написанный текст, даже отклонённый.
+      best = lastGenerated || prevDraft || '';
+      if(best) onProgress && onProgress({log:{icon:'⚠️', text:'Сцена сохранена без подтверждённого консенсуса (лимит попыток исчерпан) — проверьте текст вручную', state:'warn'}});
+    }
 
     // ── 4. Линейный редактор (опц.) — единственный, кто правит текст ──
     if(agentEnabled('lineedit')){
@@ -410,7 +483,7 @@ export async function runScene(state, scene, opts={}, onProgress){
 }
 
 // Запуск одного Стража с устойчивостью к падению (спека 11: не валим весь прогон).
-async function guardJob(state, role, llmBase, messages, flagsOut){
+async function guardJob(state, role, llmBase, messages, flagsOut, onProgress){
   const a = ag(state, role);
   try{
     const res = await callLLM({ ...llmBase, temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??700 });
@@ -420,6 +493,10 @@ async function guardJob(state, role, llmBase, messages, flagsOut){
   }catch(e){
     flagsOut[role] = [];
     logStep({ agent:role, output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message });
+    // Раньше падение Стража было видно ТОЛЬКО в диагностическом трейсе — в основном
+    // логе прогона (то, что реально смотрит автор) 0 флагов от упавшего Стража были
+    // неотличимы от «страж проверил и не нашёл проблем». Теперь явный warn-лог.
+    onProgress && onProgress({log:{icon:'⚠️', text:`Страж «${guardLabel(state,role)}» не ответил (${e.message}) — проверка пропущена на этой итерации`, state:'warn'}});
   }
 }
 

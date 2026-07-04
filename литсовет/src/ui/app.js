@@ -4,10 +4,29 @@
 import { init, getState, subscribe, save, newProject, switchProject, APP_VERSION } from '../state.js';
 import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } from './stages.js';
 import { renderDiagnostics } from './diagnostics.js';
+import { renderIllustrations } from './illustrations.js';
 import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
 import { initTooltips } from './tooltips.js';
+import { callLLM } from '../llm.js';
 
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Известные OpenAI-совместимые текстовые провайдеры — пресет URL+модель,
+// но поля ниже остаются свободным текстом: если пресет неточен (эндпоинты
+// меняются), автор просто поправит вручную, ничего не заблокировано.
+const TEXT_PROVIDERS = [
+  { v:'deepseek', label:'DeepSeek',       baseURL:'https://api.deepseek.com', model:'deepseek-chat' },
+  { v:'openai',   label:'OpenAI',         baseURL:'https://api.openai.com/v1', model:'gpt-5' },
+  { v:'gemini',   label:'Google Gemini',  baseURL:'https://generativelanguage.googleapis.com/v1beta/openai/', model:'gemini-2.5-flash' },
+  { v:'qwen',     label:'Qwen (Alibaba)', baseURL:'https://dashscope.aliyuncs.com/compatible-mode/v1', model:'qwen-plus' },
+  { v:'custom',   label:'Другой…',        baseURL:'', model:'' },
+];
+function matchTextProvider(baseURL){
+  const found = TEXT_PROVIDERS.find(p=>p.v!=='custom' && p.baseURL===baseURL);
+  return found ? found.v : 'custom';
+}
+
+const IC_MODEL_DEFAULT = { gemini:'gemini-2.5-flash-image', openai:'gpt-image-1', qwen:'wanx2.1-t2i-turbo' };
 
 const STAGES = [
   { id:'concept',   label:'Концепция' },
@@ -15,6 +34,7 @@ const STAGES = [
   { id:'structure', label:'Структура' },
   { id:'write',     label:'Написание' },
   { id:'edit',      label:'Редактура' },
+  { id:'illustrations', label:'Иллюстрации' },
 ];
 
 const els = {
@@ -63,6 +83,7 @@ function renderStage(){
   else if(stage==='structure'){ renderStructure(els); }
   else if(stage==='write'){ renderWrite(els); }
   else if(stage==='edit'){ renderEdit(els); }
+  else if(stage==='illustrations'){ renderIllustrations(els); }
   else { els.left.innerHTML=''; els.center.innerHTML=''; els.right.innerHTML=''; }
 }
 
@@ -172,8 +193,8 @@ async function openSettings(){
     return d.toLocaleDateString('ru', {day:'numeric', month:'short'}) + ' ' + d.toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
   };
   const projListHtml = projects.length<2 ? '' : `
-    <div class="field" style="margin-top:12px">
-      <label>Мои книги <span class="hint">(нажмите чтобы открыть)</span></label>
+    <div class="field">
+      <span class="hint">нажмите чтобы открыть</span>
       <div id="projList" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;margin-top:4px">
         ${projects.map(p=>`
           <button class="proj-item${p.id===curId?' proj-item-active':''}" data-pid="${escAttr(p.id)}">
@@ -184,23 +205,57 @@ async function openSettings(){
       </div>
     </div>`;
 
+  const keyRow = (id, value, placeholder, extraBtn)=>`
+    <div class="row" style="gap:6px;align-items:stretch">
+      <input type="password" id="${id}" value="${escAttr(value)}" placeholder="${placeholder||''}" style="flex:1">
+      <button type="button" class="btn set-eye" data-for="${id}" title="Показать/скрыть ключ" style="padding:0 10px">👁</button>
+      ${extraBtn||''}
+    </div>`;
+
   els.modalRoot.innerHTML = `
     <div class="modal-bg" id="mbg">
-      <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal" style="max-height:88vh;overflow-y:auto" onclick="event.stopPropagation()">
         <h2>Настройки <span class="muted" style="font-size:12px;font-weight:400">· v${APP_VERSION}</span></h2>
-        <div class="field"><label>API-ключ <span class="hint">(только в памяти, не сохраняется на диск)</span></label>
-          <input type="text" id="setKey" value="${escAttr(g.apiKey)}" placeholder="sk-..."></div>
-        <div class="field"><label>Базовый URL</label>
-          <input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
-        <div class="field"><label>Модель</label>
-          <input type="text" id="setModel" value="${escAttr(g.model)}"></div>
-        <div class="field"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей</span></label>
+
+        <div class="settings-section">Текст (проза)</div>
+        <div class="field"><label>Провайдер <span class="hint">пресет URL+модели — поля ниже остаются свободными, можно поправить вручную</span></label>
+          <select id="setProvider">
+            ${TEXT_PROVIDERS.map(p=>`<option value="${p.v}"${matchTextProvider(g.baseURL)===p.v?' selected':''}>${escAttr(p.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>API-ключ <span class="hint">только в памяти, не сохраняется на диск</span></label>
+          ${keyRow('setKey', g.apiKey, 'sk-...', '<button type="button" class="btn" id="setKeyTest" style="white-space:nowrap">Проверить</button>')}
+        </div>
+        <div class="row" style="gap:8px">
+          <div class="field" style="flex:1;margin-bottom:0"><label>Базовый URL</label><input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
+          <div class="field" style="flex:1;margin-bottom:0"><label>Модель</label><input type="text" id="setModel" value="${escAttr(g.model)}"></div>
+        </div>
+        <div class="field" style="margin-top:14px"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей</span></label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="range" id="setBudgetRange" min="8000" max="60000" step="4000" value="${escAttr(g.budgetTokens??32000)}" style="flex:1" oninput="document.getElementById('setBudgetNum').value=this.value">
             <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??32000)}" min="8000" max="60000" step="4000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
           </div></div>
-        ${projListHtml}
-        <div class="row" style="justify-content:space-between;margin-top:12px">
+
+        <div class="settings-section">Иллюстрации</div>
+        <div class="field"><span class="hint">свой ключ, отдельно от текстовой модели — тратит деньги за картинку</span></div>
+        <div class="row" style="gap:8px">
+          <select id="setIcProvider" style="flex:1">
+            <option value="gemini"${(s.illustrations?.provider||'gemini')==='gemini'?' selected':''}>Google Gemini (Nano Banana)</option>
+            <option value="openai"${s.illustrations?.provider==='openai'?' selected':''}>OpenAI (gpt-image-1)</option>
+            <option value="qwen"${s.illustrations?.provider==='qwen'?' selected':''} title="Менее проверенная интеграция — асинхронный API DashScope">Qwen / DashScope (Wanxiang, менее проверено)</option>
+          </select>
+          <select id="setIcQuality" style="flex:1">
+            <option value="standard"${(s.illustrations?.quality||'standard')==='standard'?' selected':''}>Стандарт</option>
+            <option value="hd"${s.illustrations?.quality==='hd'?' selected':''}>HD (дороже)</option>
+          </select>
+        </div>
+        <input type="text" id="setIcModel" value="${escAttr(s.illustrations?.model||'')}"
+          placeholder="Модель (пусто = ${IC_MODEL_DEFAULT[s.illustrations?.provider||'gemini']})" style="margin-top:6px">
+        <div style="margin-top:6px">${keyRow('setIcKey', s.illustrations?.apiKey||'', 'Ключ провайдера картинок')}</div>
+
+        <div class="settings-section">Мои книги</div>
+        ${projListHtml || '<div class="hint">Пока только этот проект.</div>'}
+        <div class="row" style="justify-content:space-between;margin-top:16px">
           <button class="btn" id="setNew">+ Новый проект</button>
           <div class="row">
             <button class="btn" id="setExport">Экспорт .json</button>
@@ -216,7 +271,46 @@ async function openSettings(){
     g.baseURL = document.getElementById('setUrl').value.trim();
     g.model = document.getElementById('setModel').value.trim();
     const bv = parseInt(document.getElementById('setBudgetNum').value); if(bv>=8000) g.budgetTokens = bv;
+    s.illustrations = s.illustrations || {};
+    s.illustrations.provider = document.getElementById('setIcProvider').value;
+    s.illustrations.quality = document.getElementById('setIcQuality').value;
+    s.illustrations.model = document.getElementById('setIcModel').value.trim();
+    s.illustrations.apiKey = document.getElementById('setIcKey').value.trim();
     save(); close();
+  };
+  document.getElementById('setIcProvider').onchange = (ev)=>{
+    const modelInp = document.getElementById('setIcModel');
+    if(modelInp) modelInp.placeholder = 'Модель (пусто = '+IC_MODEL_DEFAULT[ev.target.value]+')';
+  };
+  document.getElementById('setProvider').onchange = (ev)=>{
+    const p = TEXT_PROVIDERS.find(x=>x.v===ev.target.value);
+    if(!p || p.v==='custom') return; // «Другой…» — не трогаем то, что уже введено
+    document.getElementById('setUrl').value = p.baseURL;
+    document.getElementById('setModel').value = p.model;
+  };
+  document.querySelectorAll('.set-eye').forEach(btn=>btn.onclick=()=>{
+    const inp = document.getElementById(btn.dataset.for); if(!inp) return;
+    const show = inp.type==='password';
+    inp.type = show?'text':'password';
+    btn.textContent = show?'🙈':'👁';
+  });
+  document.getElementById('setKeyTest').onclick = async ()=>{
+    const btn = document.getElementById('setKeyTest');
+    const key = document.getElementById('setKey').value.trim();
+    const baseURL = document.getElementById('setUrl').value.trim();
+    const model = document.getElementById('setModel').value.trim();
+    if(!key){ alert('Сначала введите ключ.'); return; }
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '…'; btn.style.color = '';
+    try{
+      await callLLM({ baseURL, apiKey:key, model, temperature:0, messages:[{role:'user',content:'ответь одним словом: привет'}], maxTokens:5, retries:0 });
+      btn.textContent = '✓ работает'; btn.style.color = 'var(--ok)';
+    }catch(e){
+      btn.textContent = '✗ ошибка'; btn.style.color = 'var(--err)'; btn.title = e.message;
+    }finally{
+      btn.disabled = false;
+      setTimeout(()=>{ if(document.body.contains(btn)){ btn.textContent = orig; btn.style.color=''; btn.title=''; } }, 4000);
+    }
   };
   document.getElementById('setNew').onclick = ()=>{
     if(confirm('Создать новый проект? Текущий сохранён.')){ newProject(); close(); }

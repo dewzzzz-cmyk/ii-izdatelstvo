@@ -7,6 +7,7 @@ import { bibleForPrompt } from './bible.js';
 import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
 import { charNamesMatch } from './state.js';
+import { genreToneNote, genreJudgeNote } from './genres.js';
 
 const SEP = '\n\n';
 
@@ -15,9 +16,14 @@ const SEP = '\n\n';
 // равно находила карточку «Олег К.», если форма имени успела разъехаться.
 export function serializeCharacterStates(characters, presentNames){
   if(!characters || !characters.length) return '';
-  const present = presentNames && presentNames.length
-    ? characters.filter(c=>presentNames.some(nm=>charNamesMatch(nm, c.name)))
-    : characters;
+  // presentNames==null — фильтр не задан (Архитектор ещё не запускался и т.п.) →
+  // показать всех. presentNames===[] — автор явно снял все чекбоксы («в сцене
+  // никого») → показать никого. Раньше [] и null обрабатывались одинаково
+  // (пустой массив.length===0 — falsy), поэтому явное «никого» тихо превращалось
+  // во «всех» — состояния персонажей, которых в сцене нет, утекали в контекст.
+  const present = presentNames == null
+    ? characters
+    : characters.filter(c=>presentNames.some(nm=>charNamesMatch(nm, c.name)));
   return present.filter(c=>c.stateNote).map(c=>`${c.name} — ${c.stateNote}`).join('\n');
 }
 
@@ -29,6 +35,8 @@ export function bookContextBlock(state, scene){
   const parts = [];
   const head = [proj.genre && `Жанр: ${proj.genre}.`, proj.era && `Эпоха: ${proj.era}.`].filter(Boolean).join(' ');
   if(head) parts.push(head);
+  const judgeNote = genreJudgeNote(proj.genre);
+  if(judgeNote) parts.push(judgeNote);
   const synopsis = runningSynopsis(state) || proj.synopsis || proj.idea;
   if(synopsis) parts.push('Сюжет: ' + synopsis);
   const chars = serializeCharacterStates(state.characters, scene.presentChars);
@@ -204,6 +212,10 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode){
   // работает без примеров слов; это устойчивые тики генеративного текста (в т.ч. в русском).
   lines.push('Избегай слов-маркеров ИИ-текста: «является» как связка вместо глагола действия, «играет важную роль», «занимает особое место», «нельзя не отметить», «свидетельствует о», обороты «не только... но и». Не собирай тройки однородных эпитетов/фраз подряд для искусственной полноты. Не начинай абзац или реплику риторическим вопросом-связкой («Но что теперь?», «И что дальше?»).');
   lines.push('Пример разницы: плохо — «Она испугалась и почувствовала, как её сердце наполнилось ужасом»; хорошо — «Она попятилась, наткнулась на стул и замерла, вцепившись в его спинку». Пиши во втором ключе.');
+  // Жанровый тон (не только структура у Архитектора) — что уместно/неуместно
+  // на уровне конкретной сцены для жанров со своими конвенциями письма.
+  const toneNote = genreToneNote(proj.genre);
+  if(toneNote) lines.push(toneNote);
   lines.push(opts.prevSceneText
     ? 'Финал сцены: посмотри, каким приёмом заканчивается «ПРЕДЫДУЩАЯ СЦЕНА» в контексте — если она уже завершается коротким зеркальным предложением и уходом в тишину/темноту, в этот раз закончи иначе (репликой, действием, конкретной деталью, вопросом без ответа).'
     : 'Финал сцены: не завершай сцену дежурным приёмом «короткое зеркальное предложение + тишина/темнота» — выбери другой способ поставить точку.');
@@ -222,16 +234,27 @@ function applyBudget(layers, BUDGET){
   const total = ()=>layers.reduce((s,l)=>s+estimateTokens(l.text), 0);
   if(total() <= BUDGET) return;
 
-  // (а) Слой сцен: выбрасываем СТАРЕЙШИЕ записи по одной (entries[0] = старейшая)
+  // (а) Самые необязательные слои-советы (не обязательство, а мягкая подсказка)
+  // уходят ПЕРВЫМИ и целиком, ДО того как трогаем что-либо ещё — раньше шаг «б»
+  // (частичная обрезка scenes) выполнялся безусловно перед этим циклом, поэтому
+  // scenes мог быть наполовину вырезан, пока observed/openThreads оставались
+  // нетронутыми — заявленный приоритет на деле не соблюдался (найдено консилиумом
+  // живым тестом на реальных числах бюджета).
+  for(const nm of ['observed','openThreads']){
+    const idx = layers.findIndex(l=>l.name===nm && !l.fixed);
+    if(idx>=0) layers.splice(idx,1);
+    if(total() <= BUDGET) return;
+  }
+
+  // (б) Слой сцен: выбрасываем СТАРЕЙШИЕ записи по одной (entries[0] = старейшая)
   const scenesLayer = layers.find(l=>l.name==='scenes' && l.entries);
   while(scenesLayer && scenesLayer.entries.length>1 && total() > BUDGET){
     scenesLayer.entries.shift();
   }
   if(total() <= BUDGET) return;
 
-  // (б) Дальше выбиваем целые слои «памяти» по приоритету (не fixed).
-  // 'observed'/'openThreads' — самые необязательные (совет, не обязательство) — уходят первыми.
-  const dropOrder = ['observed','openThreads','scenes','chapters','series','characters','bible'];
+  // (в) Дальше выбиваем целые слои «памяти» по приоритету (не fixed).
+  const dropOrder = ['scenes','chapters','series','characters','bible'];
   for(const nm of dropOrder){
     while(total() > BUDGET){
       const idx = layers.findIndex(l=>l.name===nm && !l.fixed);
@@ -240,7 +263,7 @@ function applyBudget(layers, BUDGET){
     }
     if(total() <= BUDGET) return;
   }
-  // (в) последний рубеж: ужать живой контекст (но не голос/синопсис — они fixed)
+  // (г) последний рубеж: ужать живой контекст (но не голос/синопсис — они fixed)
   const live = layers.find(l=>l.live);
   if(live && total() > BUDGET){
     const over = total() - BUDGET;

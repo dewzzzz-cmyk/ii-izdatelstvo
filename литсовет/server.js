@@ -8,9 +8,10 @@
  * env: PORT (8788), PROXY_TOKEN (опц.)
  *
  * Хранилище состояния — на клиенте (IndexedDB). Сервер только:
- *   POST /api/generate     — прокси к LLM (стрим)
- *   POST /api/checkpoint   — сохранить экспорт-чекпоинт проекта на диск
- *   GET  /api/checkpoints  — список чекпоинтов
+ *   POST /api/generate       — прокси к LLM (стрим)
+ *   POST /api/generate-image — прокси к провайдеру картинок (Gemini/OpenAI), разово, без стрима
+ *   POST /api/checkpoint     — сохранить экспорт-чекпоинт проекта на диск
+ *   GET  /api/checkpoints    — список чекпоинтов
  *   GET  /api/checkpoint?file=…  — прочитать чекпоинт
  */
 const http = require('node:http');
@@ -125,6 +126,87 @@ async function handleWiki(req, res){
   });
 }
 
+// ── Генерация иллюстраций (Gemini/Nano Banana или OpenAI) ──
+// Ключ/провайдер приходят в теле запроса от клиента (как и в handleGenerate) —
+// сервер ничего не хранит, только проксирует к нужному upstream и возвращает
+// картинку как data URL (не стримит, ответ маленький и разовый).
+async function handleGenerateImage(req, res){
+  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>5e5) req.destroy(); });
+  req.on('end', async ()=>{
+    let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
+    if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
+    const apiKey = (b.apiKey||'').trim();
+    const prompt = (b.prompt||'').trim();
+    const provider = ['openai','gemini','qwen'].includes(b.provider) ? b.provider : 'gemini';
+    if(!apiKey) return send(res, 400, 'NO_KEY: не задан API-ключ для генерации изображений.');
+    if(!prompt) return send(res, 400, 'NO_PROMPT: пуст промпт для картинки.');
+    try{
+      if(provider==='openai'){
+        const model = b.model || 'gpt-image-1';
+        const up = await fetch('https://api.openai.com/v1/images/generations', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
+          body: JSON.stringify({ model, prompt, size: b.size||'1024x1024', quality: b.quality||'medium', n:1 }),
+        });
+        if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
+        const d = await up.json();
+        const b64 = d?.data?.[0]?.b64_json;
+        if(!b64) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
+        return send(res, 200, JSON.stringify({dataUrl:'data:image/png;base64,'+b64}), 'application/json; charset=utf-8');
+      } else if(provider==='gemini'){
+        const model = b.model || 'gemini-2.5-flash-image';
+        const up = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ contents:[{ parts:[{ text: prompt }] }] }),
+        });
+        if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
+        const d = await up.json();
+        const parts = d?.candidates?.[0]?.content?.parts || [];
+        const imgPart = parts.find(p=>p.inlineData && p.inlineData.data);
+        if(!imgPart) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
+        const mime = imgPart.inlineData.mimeType || 'image/png';
+        return send(res, 200, JSON.stringify({dataUrl:`data:${mime};base64,`+imgPart.inlineData.data}), 'application/json; charset=utf-8');
+      } else {
+        // Qwen/DashScope (Wanxiang) — асинхронный API: сабмит задачи → поллинг статуса →
+        // ссылка на картинку (не base64) → сервер сам скачивает и конвертирует в data URL,
+        // чтобы контракт ответа был одинаков для всех трёх провайдеров.
+        // НИЖЕ УВЕРЕННОСТЬ, ЧЕМ У OPENAI/GEMINI: асинхронный контракт DashScope не проверен
+        // живым вызовом (в этой среде нет ключа Qwen) — если эндпоинты/поля успели измениться,
+        // здесь первое место для правки.
+        const model = b.model || 'wanx2.1-t2i-turbo';
+        const submit = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`, 'X-DashScope-Async':'enable' },
+          body: JSON.stringify({ model, input:{ prompt }, parameters:{ size: (b.size||'1024x1024').replace('x','*'), n:1 } }),
+        });
+        if(!submit.ok){ const t=await submit.text().catch(()=>''); return send(res, submit.status||502, 'API_ERROR '+submit.status+': '+t.slice(0,500)); }
+        const sd = await submit.json();
+        const taskId = sd?.output?.task_id;
+        if(!taskId) return send(res, 502, 'UPSTREAM_EMPTY: DashScope не вернул task_id.');
+        let resultUrl = null, lastStatus = '';
+        for(let i=0; i<40; i++){
+          await new Promise(r=>setTimeout(r, 1500));
+          const poll = await fetch(`https://dashscope.aliyuncs.com/api/v1/tasks/${taskId}`, {
+            headers:{ 'Authorization':`Bearer ${apiKey}` },
+          });
+          if(!poll.ok) continue;
+          const pd = await poll.json();
+          lastStatus = pd?.output?.task_status || '';
+          if(lastStatus==='SUCCEEDED'){ resultUrl = pd?.output?.results?.[0]?.url; break; }
+          if(lastStatus==='FAILED' || lastStatus==='UNKNOWN') return send(res, 502, 'UPSTREAM_FAIL: DashScope task '+lastStatus);
+        }
+        if(!resultUrl) return send(res, 504, 'TIMEOUT: DashScope не завершил генерацию за отведённое время (статус: '+(lastStatus||'нет ответа')+').');
+        const imgRes = await fetch(resultUrl);
+        if(!imgRes.ok) return send(res, 502, 'DOWNLOAD_FAIL: не удалось скачать готовую картинку.');
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const mime = imgRes.headers.get('content-type') || 'image/png';
+        return send(res, 200, JSON.stringify({dataUrl:`data:${mime};base64,`+buf.toString('base64')}), 'application/json; charset=utf-8');
+      }
+    }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
+  });
+}
+
 function safeFile(name){ return (name||'').replace(/[/\\]/g,'').replace(/[^a-zA-Zа-яА-Я0-9_.-]/g,'_'); }
 
 // ── Синхронизация проектов между устройствами ──
@@ -212,6 +294,7 @@ http.createServer(async (req,res)=>{
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
   if(req.method==='OPTIONS') return send(res,204,'');
   if(req.method==='POST' && req.url==='/api/generate')    return handleGenerate(req,res);
+  if(req.method==='POST' && req.url==='/api/generate-image') return handleGenerateImage(req,res);
   if(req.method==='POST' && req.url==='/api/wiki')         return handleWiki(req,res);
   if(req.method==='POST' && req.url==='/api/checkpoint')  return handleCheckpointSave(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/checkpoints')) return handleCheckpointList(req,res);
