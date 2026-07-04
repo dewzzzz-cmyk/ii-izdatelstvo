@@ -76,7 +76,7 @@ function renderGallery(items){
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
       ${items.slice().reverse().map(it=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px">
         <img src="${it.dataUrl}" style="width:100%;border-radius:var(--radius);display:block" alt="${esc(it.sceneTitle||it.type)}">
-        <div style="font-size:11px" class="muted">${it.type==='cover'?'Обложка':esc(it.sceneTitle||'')}</div>
+        <div style="font-size:11px" class="muted">${it.type==='cover'?'Обложка':it.type==='map'?'🗺 Карта мира':esc(it.sceneTitle||'')}</div>
         <button class="btn ill-del" data-id="${it.id}" style="font-size:11px;padding:3px 8px;align-self:flex-start">🗑 Удалить</button>
       </div>`).join('')}
     </div>`;
