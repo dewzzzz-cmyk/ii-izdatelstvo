@@ -178,11 +178,26 @@ export function exportEpub(state){
     }
   }
 
-  const items=[], spine=[], nav=[];
+  const items=[], spine=[], nav=[], imageItems=[];
   book.chapters.forEach((ch,i)=>{
     const id='ch'+(i+1), file='chapters/'+id+'.xhtml';
     const title = xesc(ch.title || ('Глава '+(i+1)));
-    const body = (ch.title?`<h2>${title}</h2>`:'') + ch.scenes.map(sc=>paraXhtml(sc.text)).join('\n<hr/>\n');
+    const sceneBodies = ch.scenes.map((sc,si)=>{
+      const illust = illustrationForScene(state, sc.id);
+      let imgTag = '';
+      if(illust){
+        const decoded = decodeDataUrlImage(illust);
+        if(decoded){
+          const imgId = `${id}-img${si+1}`;
+          const imgFile = `images/${imgId}.${decoded.ext}`;
+          zip.add('OEBPS/'+imgFile, decoded.bytes);
+          imageItems.push(`<item id="${imgId}" href="${imgFile}" media-type="${decoded.mime}"/>`);
+          imgTag = `<p style="text-align:center"><img src="../${imgFile}" alt="Иллюстрация"/></p>`;
+        }
+      }
+      return imgTag + paraXhtml(sc.text);
+    });
+    const body = (ch.title?`<h2>${title}</h2>`:'') + sceneBodies.join('\n<hr/>\n');
     zip.add('OEBPS/'+file, `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title><link rel="stylesheet" href="../style.css"/></head><body>${body}</body></html>`);
     items.push(`<item id="${id}" href="${file}" media-type="application/xhtml+xml"/>`);
@@ -205,7 +220,7 @@ ${p.synopsis?`<dc:description>${xesc(p.synopsis)}</dc:description>`:''}
 <meta property="dcterms:modified">${now.toISOString().slice(0,19)}Z</meta>
 ${coverMeta}</metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-<item id="css" href="style.css" media-type="text/css"/>${coverItems}${mapItems}${items.join('')}</manifest>
+<item id="css" href="style.css" media-type="text/css"/>${coverItems}${mapItems}${imageItems.join('')}${items.join('')}</manifest>
 <spine>${coverSpine}${mapSpine}${spine.join('')}</spine></package>`);
 
   download(zip.blob(), book.title+'.epub');
