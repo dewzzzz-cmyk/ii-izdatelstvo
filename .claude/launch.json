@@ -21,6 +21,13 @@
       "runtimeArgs": ["C:\\Users\\user\\Documents\\webar-main\\издательство\\.worktrees\\litsovet-world\\литсовет\\server.js"],
       "port": 8790,
       "autoPort": false
+    },
+    {
+      "name": "litsovet-genres-era-styles-worktree",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\user\\Documents\\webar-main\\издательство\\.worktrees\\litsovet-genres-era-styles\\литсовет\\server.js"],
+      "port": 8791,
+      "autoPort": false
     }
   ]
 }
