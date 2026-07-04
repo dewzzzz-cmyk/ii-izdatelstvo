@@ -189,6 +189,16 @@ export function renderConcept(els){
           <input type="text" id="tw" value="${esc(p.targetWords||80000)}">
           <div class="hint" id="twHint">${sceneCountHint(p.targetWords||80000)}</div>
         </div>
+        <div class="field"><label>Объём сцены (слов) <span class="hint">пусто/0 = авто (≈{targetWords}/60 слов, зажато 700–2000)</span></label>
+          <input type="text" id="sceneWords" value="${p.sceneWords||''}" placeholder="авто"></div>
+        <div class="field"><label>Число глав <span class="hint">пусто/0 = «авто» (пресказывается стадии Структура, там можно переопределить точечно)</span></label>
+          <input type="text" id="chapterCount" value="${p.chapterCount||''}" placeholder="авто"></div>
+        <div class="field"><label>Темп/ритм <span class="hint">доля сцена/секвель у Архитектора при построении структуры</span></label>
+          <select id="pacing">
+            <option value="action"${p.pacing==='action'?' selected':''}>Динамичный</option>
+            <option value="balanced"${(!p.pacing||p.pacing==='balanced')?' selected':''}>Сбалансированный</option>
+            <option value="reflective"${p.pacing==='reflective'?' selected':''}>Медитативный</option>
+          </select></div>
         <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
           <input type="checkbox" id="useVoice" ${p.useVoice?'checked':''}
             style="width:16px;height:16px;flex-shrink:0">
@@ -266,6 +276,10 @@ export function renderConcept(els){
     p.targetWords=parseInt(e.target.value)||80000;
     const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(p.targetWords);
   });
+  bind('sceneWords', e=>{ p.sceneWords=parseInt(e.target.value)||0; });
+  bind('chapterCount', e=>{ p.chapterCount=parseInt(e.target.value)||0; });
+  const pacingSel = document.getElementById('pacing');
+  if(pacingSel) pacingSel.onchange = ()=>{ p.pacing = pacingSel.value; };
   // Жанр: выпадающий список + поле «свой»
   const genreSel = document.getElementById('genre');
   const genreCustom = document.getElementById('genreCustom');
