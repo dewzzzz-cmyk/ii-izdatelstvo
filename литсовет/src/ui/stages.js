@@ -20,7 +20,7 @@ import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
 import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles } from '../bookreview.js';
-import { GENRES } from '../genres.js';
+import { GENRES, ERAS } from '../genres.js';
 import { genreWantsWorld, suggestMissingWorldFacts } from '../world.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -121,6 +121,9 @@ export function renderConcept(els){
   const _knownGenre = GENRES.find(g=>g.v && g.v!=='другой' && g.v===p.genre);
   const _genreSelectVal = _knownGenre ? p.genre : (p.genre ? 'другой' : '');
   const _showCustom = !_knownGenre && !!p.genre;
+  const _knownEra = ERAS.find(e=>e.v && e.v!=='другой' && e.v===p.era);
+  const _eraSelectVal = _knownEra ? p.era : (p.era ? 'другой' : '');
+  const _showCustomEra = !_knownEra && !!p.era;
   const _canTitles = canSuggestTitles(s);
   const _worldAutoLabel = (p.useWorld && genreWantsWorld(p.genre));
   els.left.innerHTML = `<div class="ph">Проект</div><div class="pad">
@@ -185,7 +188,12 @@ export function renderConcept(els){
               <textarea id="seriesSummary" rows="4" placeholder="Книга 1: Алина приезжает в Мурманск, узнаёт что тётка была двойным агентом…">${esc(p.seriesSummary||'')}</textarea></div>
           </div>
         </div>
-        <div class="field"><label>Эпоха / сеттинг</label><input type="text" id="era" value="${esc(p.era)}" placeholder="наши дни, XX век…"></div>
+        <div class="field"><label>Эпоха / сеттинг</label>
+          <select id="era">
+            ${ERAS.map(e=>`<option value="${esc(e.v)}"${_eraSelectVal===e.v?' selected':''}>${esc(e.label)}</option>`).join('')}
+          </select>
+          <input type="text" id="eraCustom" value="${_showCustomEra?esc(p.era):''}" placeholder="Своя эпоха/сеттинг…" style="${_showCustomEra?'':'display:none'}">
+        </div>
         <div class="field"><label>Целевой объём (слов)</label>
           <input type="text" id="tw" value="${esc(p.targetWords||80000)}">
           <div class="hint" id="twHint">${sceneCountHint(p.targetWords||80000)}</div>
@@ -271,7 +279,16 @@ export function renderConcept(els){
   };
   const coverDel = document.getElementById('pCoverDel');
   if(coverDel) coverDel.onclick = ()=>{ p.coverDataUrl=''; save(); };
-  bind('era', e=>{ p.era=e.target.value; });
+  const eraSel = document.getElementById('era');
+  const eraCustom = document.getElementById('eraCustom');
+  if(eraSel){
+    eraSel.onchange = ()=>{
+      const v = eraSel.value;
+      if(v==='другой'){ eraCustom.style.display=''; eraCustom.focus(); p.era = eraCustom.value||''; }
+      else { eraCustom.style.display='none'; p.era = v; save(); }
+    };
+  }
+  if(eraCustom) eraCustom.addEventListener('input', e=>{ p.era=e.target.value; });
   bind('seriesSummary', e=>{ p.seriesSummary=e.target.value; });
   bind('tw', e=>{
     p.targetWords=parseInt(e.target.value)||80000;
