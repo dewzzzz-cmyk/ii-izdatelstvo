@@ -63,6 +63,7 @@ export function bookArchitectMessages(state, opts={}){
     seriesArcNote,
     p.seriesSummary ? `Содержание предыдущих книг:\n${p.seriesSummary}` : '',
     `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
+    `Раздели на ${targetChapters} глав (~${scenesPerCh} сцен на главу).`,
     genreBeatsNote(p.genre),
     (() => {
       // k=15 (не 5/6, как в per-сцена выборках) — разовый обзор всей книги на этапе скелета, нужна широта, не глубина.
@@ -82,7 +83,7 @@ export function bookArchitectMessages(state, opts={}){
     '',
     opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
     '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
-    `Итого ~${targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
+    `Итого ${targetChapters} глав, ~${targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
