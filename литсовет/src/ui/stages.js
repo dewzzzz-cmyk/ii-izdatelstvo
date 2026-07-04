@@ -21,7 +21,7 @@ import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
 import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles } from '../bookreview.js';
 import { GENRES } from '../genres.js';
-import { genreWantsWorld } from '../world.js';
+import { genreWantsWorld, suggestMissingWorldFacts } from '../world.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -605,6 +605,49 @@ function renderFactCards(facts, s){
   });
 }
 
+// Факты, которых, по мнению Архитектора, не хватает канону после построения
+// скелета (спека §7 — канал открыт, не одноразовый гейт). Тот же визуальный
+// паттерн, что у renderFactCards («Историческая разведка»), но пишет
+// source:'world' + category, не смешивается с исторической разведкой.
+let _missingFacts = []; // кэш последних найденных недостающих фактов для рендера карточек
+
+// Сбрасывает карточки недостающих фактов (без запроса к LLM) — вызывается перед
+// save() везде, где на экране мог остаться скелет, к которому карточки уже не
+// относятся (перегенерация, откат). Иначе save() перерисует стадию и старые
+// карточки мелькнут как будто относящиеся к новому/восстановленному скелету.
+function clearMissingFacts(){ _missingFacts = []; }
+// Пересчитывает карточки недостающих фактов для свежепостроенного skeleton и,
+// если что-то нашлось, сразу рендерит их в #missingFactsBlock.
+async function refreshMissingFacts(s, skeleton){
+  _missingFacts = await suggestMissingWorldFacts(s, skeleton);
+  if(_missingFacts.length) renderMissingFactCards(_missingFacts, s);
+}
+
+function renderMissingFactCards(facts, s){
+  const el = document.getElementById('missingFactsBlock');
+  if(!el) return;
+  el.innerHTML = `<div style="margin-top:16px">
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Архитектор опирался на факты, которых нет в каноне:</div>
+    ${facts.map((f,i)=>`
+      <div class="card" style="margin-bottom:8px;padding:10px 12px">
+        <div style="font-size:11px;color:var(--accent);font-weight:500;margin-bottom:4px">${esc(f.category)} · ${esc(f.keys)}</div>
+        <div style="font-size:12px;line-height:1.5;margin-bottom:7px">${esc(f.text)}</div>
+        <button class="btn missing-fact-add" data-i="${i}" style="font-size:11px;padding:3px 9px">${s.bible.some(b=>b.text===f.text)?'✓ В каноне':'+ В канон'}</button>
+      </div>`).join('')}
+  </div>`;
+  el.querySelectorAll('.missing-fact-add').forEach(btn=>{
+    btn.onclick=()=>{
+      const f = facts[+btn.dataset.i]; if(!f) return;
+      if(!s.bible.some(b=>b.text===f.text)){
+        s.bible.push({ keys:f.keys, text:f.text, source:'world', category:f.category });
+        rebuildBibleVecs(s.bible);
+        save();
+      }
+      btn.textContent='✓ В каноне'; btn.disabled=true;
+    };
+  });
+}
+
 function bindHistorianPanel(s){
   const btn = document.getElementById('btnResearch');
   if(!btn) return;
@@ -691,7 +734,7 @@ export function renderStructure(els){
         </div>
         <div class="row" style="margin-top:10px">
           <label class="muted">Глав:</label>
-          <input type="text" id="chCount" value="" placeholder="авто" style="width:70px">
+          <input type="text" id="chCount" value="${s.project.chapterCount||''}" placeholder="авто" style="width:70px">
           <button class="btn btn-primary" id="genSkeleton">${hasSkeleton?'Перегенерировать':'Сгенерировать скелет'}</button>
           ${(s.skeletonVersions&&s.skeletonVersions.length)?`<button class="btn" id="revertSkeleton" title="Вернуть прошлый скелет">↶ скелет (${s.skeletonVersions.length})</button>`:''}
           <span class="muted" id="genStatus"></span>
@@ -707,9 +750,19 @@ export function renderStructure(els){
       `}
 
       ${s.structureEval ? renderStructureEval(s.structureEval) : ''}
+      ${s.structureStale ? `<div style="margin-top:14px;border:1px solid var(--err);border-radius:8px;padding:12px 14px;background:var(--surface-2)">
+        <div style="font-size:12px;color:var(--err)">⚠ Добавлены факты мира после построения структуры — возможно, стоит перестроить.</div>
+        <button class="btn" id="dismissStale" style="font-size:11px;margin-top:8px;padding:2px 9px">Скрыть</button>
+      </div>` : ''}
+      <div id="missingFactsBlock"></div>
 
       ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
     </div>`;
+  // save() после "+ В канон" перерисовывает всю стадию — без этого пропадали
+  // остальные ещё не добавленные карточки недостающих фактов. #missingFactsBlock
+  // существует только после els.center.innerHTML выше, поэтому вызываем здесь,
+  // а не рядом с renderFactCards (там #researchResults уже в els.right).
+  if(_missingFacts.length) renderMissingFactCards(_missingFacts, s);
 
   document.getElementById('genSkeleton').onclick = async (ev)=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
@@ -731,6 +784,8 @@ export function renderStructure(els){
       const skeleton = await runBookArchitect(s, chCount?{chapters:chCount}:{});
       applySkeleton(s, skeleton, uid);
       s.structureEval = null; // сбрасываем старую оценку
+      s.structureStale = false;
+      clearMissingFacts(); // старые карточки относились к прежнему скелету — не давать им мелькнуть до пересчёта
       save();
       // После save() DOM пересобирается — берём свежие ссылки на элементы
       const st2 = document.getElementById('genStatus');
@@ -740,6 +795,7 @@ export function renderStructure(els){
       const evalResult = await runStructureEval(s, skeleton);
       s.structureEval = evalResult;
       save();
+      await refreshMissingFacts(s, skeleton);
     }catch(e){
       const stE = document.getElementById('genStatus');
       const btnE = document.getElementById('genSkeleton');
@@ -752,8 +808,13 @@ export function renderStructure(els){
   if(rs) rs.onclick = ()=>{
     // Оценка Оценщика относилась к отменяемой структуре — после отката она
     // описывала бы уже не то, что показано на экране (устаревшие оси/замечания).
-    if(revertSkeleton(s)){ s.structureEval=null; save(); }
+    // Карточки недостающих фактов — по той же причине: не перезапускаем LLM,
+    // просто убираем то, что относилось к скелету-до-отката.
+    if(revertSkeleton(s)){ s.structureEval=null; clearMissingFacts(); save(); }
   };
+
+  const dismissStale = document.getElementById('dismissStale');
+  if(dismissStale) dismissStale.onclick = ()=>{ s.structureStale=false; save(); };
 
   // Кнопки оценщика структуры
   const evalDismiss = document.getElementById('evalDismiss');
@@ -788,6 +849,7 @@ export function renderStructure(els){
       const skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
       applySkeleton(s, skeleton, uid);
       s.structureEval = null;
+      clearMissingFacts(); // новый скелет — старые карточки недостающих фактов больше не относятся к делу
       save();
       // DOM пересобран — берём свежие ссылки
       const st2 = document.getElementById('genStatus');
@@ -799,6 +861,7 @@ export function renderStructure(els){
       if(evalResult) evalResult.prevScore = prevScore;
       s.structureEval = evalResult;
       save();
+      await refreshMissingFacts(s, skeleton);
     }catch(e){
       const stE = document.getElementById('genStatus');
       if(stE) stE.textContent='Ошибка: '+e.message;
@@ -864,11 +927,11 @@ function bindSkeleton(s){
   document.querySelectorAll('.sk-scene-head[data-toggle]').forEach(h=>{
     h.onclick=()=>{ const id=h.dataset.toggle; s.ui.editScene = s.ui.editScene===id?null:id; save(); };
   });
-  document.querySelectorAll('.sk-brief').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.brief=t.value;save();} }));
-  document.querySelectorAll('.sk-emo').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.emotion=t.value;save();} }));
+  document.querySelectorAll('.sk-brief').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.brief=t.value; clearMissingFacts(); save();} }));
+  document.querySelectorAll('.sk-emo').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.emotion=t.value; clearMissingFacts(); save();} }));
   document.querySelectorAll('.sk-type-btn').forEach(b=>b.onclick=(e)=>{
     e.stopPropagation();
-    const n=node(s,b.dataset.typeid); if(n){ n.sceneType=b.dataset.type; save(); }
+    const n=node(s,b.dataset.typeid); if(n){ n.sceneType=b.dataset.type; clearMissingFacts(); save(); }
   });
 
   document.querySelectorAll('.sk-ic[data-regen]').forEach(b=>b.onclick=async ()=>{
@@ -881,12 +944,13 @@ function bindSkeleton(s){
       const fresh=await regenerateScene(s, n, hint);
       pushSceneVersion(n);                 // сохранить текущую версию перед заменой
       Object.assign(n, fresh);
+      clearMissingFacts(); // бриф сцены перезаписан — старые карточки недостающих фактов больше не про то, что на экране
       save();
     }catch(e){ if(st) st.textContent='Ошибка: '+e.message; b.disabled=false; }
   });
   document.querySelectorAll('.sk-ic[data-revert]').forEach(b=>b.onclick=()=>{
     const n=node(s, b.dataset.revert); if(!n) return;
-    if(revertScene(n)) save();
+    if(revertScene(n)){ clearMissingFacts(); save(); }
   });
   document.querySelectorAll('.sk-ch-regen[data-chregen]').forEach(b=>b.onclick=()=>{
     const ch=node(s, b.dataset.chregen); if(!ch) return;
@@ -898,7 +962,7 @@ function bindSkeleton(s){
       okLabel:'Перегенерировать',
       onOk: async (hint)=>{
         b.disabled=true; const orig=b.textContent; b.innerHTML='<span class="spinner"></span>';
-        try{ await regenerateChapter(s, ch, hint); save(); }
+        try{ await regenerateChapter(s, ch, hint); clearMissingFacts(); save(); }
         catch(e){ b.textContent='ошибка'; b.title=e.message; b.disabled=false; setTimeout(()=>{b.textContent=orig;},1500); }
       },
     });
@@ -922,6 +986,7 @@ function bindSkeleton(s){
     b.disabled=true; if(st) st.innerHTML='<span class="spinner"></span> Переписываю хвост книги…';
     try{
       const applied=await regenerateDownstream(s, n, hint);
+      clearMissingFacts(); // хвост книги переписан — старые карточки недостающих фактов больше не про то, что на экране
       save();
       if(st) st.textContent=`Переписано сцен: ${applied.length}.`;
     }catch(e){ if(st) st.textContent='Ошибка: '+e.message; b.disabled=false; }
