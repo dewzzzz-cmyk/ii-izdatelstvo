@@ -116,10 +116,17 @@ export function exportMd(state){
 export function exportDocx(state){
   const book = buildBook(state);
   let body = `<h1>${xesc(book.title)}</h1>`;
+  if(state.project.coverDataUrl) body += `<p style="text-align:center"><img src="${state.project.coverDataUrl}" style="max-width:100%"/></p>`;
   if(state.project.author) body += `<p style="text-align:center;font-style:italic">${xesc(state.project.author)}</p>`;
+  const mapItem = worldMapItem(state);
+  if(mapItem) body += `<h2>Карта мира</h2><p style="text-align:center"><img src="${mapItem.dataUrl}" style="max-width:100%"/></p>`;
   for(const ch of book.chapters){
     if(ch.title) body += `<h2>${xesc(ch.title)}</h2>`;
-    body += ch.scenes.map(sc=>paraXhtml(sc.text)).join('<p style="text-align:center">*&#160;*&#160;*</p>');
+    body += ch.scenes.map(sc=>{
+      const illust = illustrationForScene(state, sc.id);
+      const img = illust ? `<p style="text-align:center"><img src="${illust}" style="max-width:100%"/></p>` : '';
+      return img + paraXhtml(sc.text);
+    }).join('<p style="text-align:center">*&#160;*&#160;*</p>');
   }
   const html = `<html xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body>${body}</body></html>`;
   download(new Blob([html],{type:'application/msword'}), book.title+'.doc');
