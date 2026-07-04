@@ -56,10 +56,35 @@ function buildBook(state){
     if(n.type==='chapter'){ cur={ title:n.title, scenes:[] }; chapters.push(cur); }
     else if(n.type==='scene' && n.text){
       if(!cur){ cur={ title:'', scenes:[] }; chapters.push(cur); }
-      cur.scenes.push({ title:n.title, text:n.text });
+      cur.scenes.push({ id:n.id, title:n.title, text:n.text });
     }
   }
   return { title: state.project.title||'Без названия', chapters: chapters.filter(c=>c.scenes.length) };
+}
+
+// Иллюстрация сцены (если сгенерирована и совпадает по sceneId) — dataUrl или null.
+function illustrationForScene(state, sceneId){
+  const items = state.illustrations?.items || [];
+  const it = items.find(i=>i.type==='scene' && i.sceneId===sceneId);
+  return it ? it.dataUrl : null;
+}
+// Карта мира (стадия «Мир», максимум одна на проект — см. saveMapItem в illustrations.js).
+function worldMapItem(state){
+  const items = state.illustrations?.items || [];
+  return items.find(i=>i.type==='map') || null;
+}
+// Декодировать data:image/(jpeg|png);base64,... → {bytes, ext, mime} или null (не бросает).
+function decodeDataUrlImage(dataUrl){
+  const m = /^data:image\/(jpeg|png);base64,(.+)$/.exec(dataUrl||'');
+  if(!m) return null;
+  try{
+    const bin = atob(m[2]);
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    const ext = m[1]==='png' ? 'png' : 'jpg';
+    const mime = m[1]==='png' ? 'image/png' : 'image/jpeg';
+    return { bytes, ext, mime };
+  }catch(e){ console.warn('image decode failed', e); return null; }
 }
 
 function download(blob, filename){
