@@ -21,6 +21,7 @@ import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
 import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles } from '../bookreview.js';
 import { GENRES } from '../genres.js';
+import { genreWantsWorld } from '../world.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -120,6 +121,7 @@ export function renderConcept(els){
   const _genreSelectVal = _knownGenre ? p.genre : (p.genre ? 'другой' : '');
   const _showCustom = !_knownGenre && !!p.genre;
   const _canTitles = canSuggestTitles(s);
+  const _worldAutoLabel = (p.useWorld && genreWantsWorld(p.genre));
   els.left.innerHTML = `<div class="ph">Проект</div><div class="pad">
     <div class="muted">Прогрессивный онбординг: один вопрос, остальное по желанию.</div></div>`;
   els.right.innerHTML = '';
@@ -192,6 +194,12 @@ export function renderConcept(els){
             style="width:16px;height:16px;flex-shrink:0">
           <span><b>Голос автора</b> — включить вкладку «Голос» <span class="hint">загрузить образец своей прозы, чтобы модель писала в вашем стиле</span></span>
         </label>
+        <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
+          <input type="checkbox" id="useWorld" ${p.useWorld?'checked':''}
+            style="width:16px;height:16px;flex-shrink:0">
+          <span><b>Мир</b> — включить стадию «Мир» <span class="hint">зафиксировать факты сеттинга до Структуры: география, история, магия/технология, фракции, культура</span></span>
+        </label>
+        <div id="useWorldAutoLabel" class="hint" style="margin:-6px 0 10px 24px;${_worldAutoLabel?'':'display:none'}">Включено автоматически для жанра «${esc(GENRES.find(g=>g.v===p.genre)?.label||p.genre)}» — можно выключить</div>
 
         <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
           <input type="checkbox" id="visualVoiceOn" ${s.style?.visualVoiceOn?'checked':''}
@@ -211,7 +219,7 @@ export function renderConcept(els){
       </div>
 
       <div class="row" style="margin-top:16px;justify-content:flex-end">
-        <button class="btn btn-primary" id="toNext">Дальше — ${p.useVoice?'Голос':'Структура'} →</button>
+        <button class="btn btn-primary" id="toNext">Дальше — ${p.useWorld?'Мир':p.useVoice?'Голос':'Структура'} →</button>
       </div>
     </div>`;
 
@@ -272,6 +280,11 @@ export function renderConcept(els){
         genreCustom.style.display='none';
         p.genre = v;
         if(gd && gd.words){ p.targetWords=gd.words; const tw=document.getElementById('tw'); if(tw) tw.value=gd.words; const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(gd.words); }
+        p.useWorld = genreWantsWorld(v);
+        const uw = document.getElementById('useWorld'); if(uw) uw.checked = p.useWorld;
+        const lbl = document.getElementById('useWorldAutoLabel');
+        if(lbl){ lbl.style.display = p.useWorld?'':'none'; lbl.textContent = `Включено автоматически для жанра «${gd?gd.label:v}» — можно выключить`; }
+        const btn = document.getElementById('toNext'); if(btn) btn.textContent = 'Дальше — '+(p.useWorld?'Мир':p.useVoice?'Голос':'Структура')+' →';
       }
     };
   }
@@ -303,6 +316,12 @@ export function renderConcept(els){
     if(btn) btn.textContent = 'Дальше — '+(p.useVoice?'Голос':'Структура')+' →';
     save();
   };
+  document.getElementById('useWorld').onchange = (ev)=>{
+    p.useWorld = ev.target.checked;
+    const btn = document.getElementById('toNext'); if(btn) btn.textContent = 'Дальше — '+(p.useWorld?'Мир':p.useVoice?'Голос':'Структура')+' →';
+    const lbl = document.getElementById('useWorldAutoLabel'); if(lbl) lbl.style.display = 'none'; // ручное решение — авто-подсказка больше не актуальна
+    save();
+  };
   s.style = s.style || {};
   document.getElementById('visualVoiceOn').onchange = (ev)=>{
     s.style.visualVoiceOn = ev.target.checked;
@@ -310,7 +329,7 @@ export function renderConcept(els){
     save();
   };
   bind('visualVoice', e=>{ s.style.visualVoice = e.target.value; });
-  document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = p.useVoice?'voice':'structure'; save(); };
+  document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = p.useWorld?'world':(p.useVoice?'voice':'structure'); save(); };
 }
 
 // ─────────────────────────────── ГОЛОС ───────────────────────────────
