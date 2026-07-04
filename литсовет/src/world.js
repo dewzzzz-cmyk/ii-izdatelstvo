@@ -99,3 +99,31 @@ export function missingPOD(state){
   if(!g.includes('альтернативн')) return false;
   return !(state.bible||[]).some(b=>b.source==='world' && b.category==='история');
 }
+
+// ── Карта мира — НЕ через suggestIllustrations()/illustrationSuggestMessages()
+// (те требуют doneScenesOrdered(state), а на стадии «Мир» сцен ещё нет, спека §9).
+// Переиспользуется только низкоуровневый generateImage() из imagegen.js.
+export function mapPromptFor(state){
+  const geoFacts = (state.bible||[]).filter(b=>b.source==='world' && b.category==='география');
+  if(!geoFacts.length) throw new Error('Нужно хотя бы несколько фактов категории «География» в каноне.');
+  const p = state.project;
+  const facts = geoFacts.map(f=>f.text).join(' ');
+  const style = `${p.genre||'роман'}${p.era?', '+p.era:''}`;
+  return `Fantasy-style map, top-down bird's-eye view, labeled key locations, cartography illustration style, aged paper texture, no text artifacts. Setting: ${style}. Geography: ${facts}`.slice(0, 900);
+}
+
+export async function generateWorldMap(state){
+  const ic = state.illustrations || {};
+  if(!ic.apiKey) throw new Error('Не задан API-ключ для генерации картинок (⚙).');
+  const prompt = mapPromptFor(state);
+  const { dataUrl } = await generateImage({
+    provider: ic.provider||'gemini',
+    apiKey: ic.apiKey,
+    model: ic.model,
+    prompt,
+    size: ic.size,
+    quality: ic.quality,
+    proxyToken: state.global?.proxyToken,
+  });
+  return dataUrl;
+}
