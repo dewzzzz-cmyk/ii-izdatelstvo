@@ -88,6 +88,15 @@ function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestio
 // иначе легитимное «сократи вдвое» автоматически отменялось тем же условием,
 // что защищает от случайно оборванного ответа модели.
 const SHORTEN_HINT_RE = /сократ|покороче|короче|уменьш|сожми|срежь|вырежи/i;
+// Эвристика обрыва по лимиту токенов для СЫРОЙ прозы (не JSON, без секции
+// [ТЕКСТ] — для тех есть свои проверки). Настоящая проза почти всегда кончается
+// на пунктуацию конца предложения/реплики; резкий обрыв на букве/запятой —
+// сильный сигнал упора в maxTokens, а не то, что автор/модель закончили мысль.
+function looksTokenTruncated(text){
+  const t = (text||'').trim();
+  if(!t) return false;
+  return !/[.!?…»"”\)]\s*$/.test(t);
+}
 function flagsText(flags){
   const all=[]; Object.entries(flags).forEach(([role,arr])=>(arr||[]).forEach(f=>all.push(`[${f.severity}] ${f.title}: ${f.detail||''}`)));
   return all.length? all.join('\n') : 'Флагов нет.';
@@ -177,6 +186,16 @@ export async function runScene(state, scene, opts={}, onProgress){
         const dynMin = Math.max(2000, Math.round(sceneWords * 2.5));
         const proseMaxTk = proseAg.maxTokens != null ? Math.max(proseAg.maxTokens, dynMin) : dynMin;
         pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb);
+        // Первый черновик не проходит через parseDebateRevision (нет секции [ТЕКСТ] —
+        // это просто сырая проза), поэтому обрыв по лимиту токенов раньше не ловился
+        // вообще: текст молча уходил дальше по пайплайну оборванным на полуслове.
+        // Настоящая проза почти всегда кончается на пунктуацию конца предложения —
+        // резкий обрыв без неё сильный сигнал упора в maxTokens, не завершения мысли.
+        if(looksTokenTruncated(pRes.text)){
+          const retryMaxTk = Math.min(8000, proseMaxTk * 2);
+          onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
+          pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb);
+        }
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
       prevDraft = pRes.text;
