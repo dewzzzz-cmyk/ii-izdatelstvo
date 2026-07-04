@@ -96,11 +96,18 @@ function download(blob, filename){
 export function exportMd(state){
   const book = buildBook(state);
   let md = `# ${book.title}\n\n`;
+  if(state.project.coverDataUrl) md += `![Обложка](${state.project.coverDataUrl})\n\n`;
   if(state.project.author) md += `*${state.project.author}*\n\n`;
+  const mapItem = worldMapItem(state);
+  if(mapItem) md += `## Карта мира\n\n![Карта мира](${mapItem.dataUrl})\n\n`;
   for(const ch of book.chapters){
     if(ch.title) md += `## ${ch.title}\n\n`;
     // сцены внутри главы разделяются *** (как «* * *» в EPUB)
-    md += ch.scenes.map(sc=>typo(sc.text).trim()).join('\n\n***\n\n') + '\n\n';
+    md += ch.scenes.map(sc=>{
+      const illust = illustrationForScene(state, sc.id);
+      const img = illust ? `![Иллюстрация](${illust})\n\n` : '';
+      return img + typo(sc.text).trim();
+    }).join('\n\n***\n\n') + '\n\n';
   }
   download(new Blob([md],{type:'text/markdown'}), book.title+'.md');
 }
