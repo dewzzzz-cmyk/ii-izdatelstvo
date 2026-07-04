@@ -12,7 +12,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          povGuardMessages, dialogueGuardMessages, findDuplicatePhrases } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
-import { recordObservedPattern } from './state.js';
+import { recordObservedPattern, ag } from './state.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 export function isRunning(){ return _running; }
@@ -59,7 +59,6 @@ function rememberRejected(scene, rejected){
 }
 
 // Конфиг агента по роли ИЛИ id (для кастомных). Настраивается ползунками.
-function ag(state, role){ return (state.agents||[]).find(a=>a.role===role || a.id===role) || {}; }
 function manual(state, role){ return ag(state, role).manual === true; }
 
 // Пауза на подтверждение в ручном режиме. Возвращает {approve, note, text}.

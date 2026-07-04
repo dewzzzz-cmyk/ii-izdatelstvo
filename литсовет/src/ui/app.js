@@ -5,6 +5,7 @@ import { init, getState, subscribe, save, newProject, switchProject, APP_VERSION
 import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } from './stages.js';
 import { renderDiagnostics } from './diagnostics.js';
 import { renderIllustrations } from './illustrations.js';
+import { renderWorld } from './world.js';
 import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
@@ -31,6 +32,7 @@ const IC_MODEL_DEFAULT = { gemini:'gemini-2.5-flash-image', openai:'gpt-image-1'
 
 const STAGES = [
   { id:'concept',   label:'Концепция' },
+  { id:'world',     label:'Мир' },
   { id:'voice',     label:'Голос' },
   { id:'structure', label:'Структура' },
   { id:'write',     label:'Написание' },
@@ -51,6 +53,7 @@ const els = {
 function stageDone(state, stageId){
   switch(stageId){
     case 'concept': return !!state.project.idea || !!state.project.title;
+    case 'world':   return (state.bible||[]).some(b=>b.source==='world');
     case 'voice':   return (state.voice.examples||[]).length>0;
     case 'structure': return (state.structure||[]).some(n=>n.type==='scene');
     default: return false;
@@ -60,7 +63,11 @@ function stageDone(state, stageId){
 function renderRail(){
   const s = getState();
   els.stages.innerHTML = '';
-  const visibleStages = s.project?.useVoice ? STAGES : STAGES.filter(st=>st.id!=='voice');
+  const visibleStages = STAGES.filter(st=>{
+    if(st.id==='voice') return !!s.project?.useVoice;
+    if(st.id==='world') return !!s.project?.useWorld;
+    return true;
+  });
   visibleStages.forEach(st=>{
     const b = document.createElement('button');
     b.className = 'chip' + (s.ui.stage===st.id?' active':'') + (stageDone(s,st.id) && s.ui.stage!==st.id?' done':'');
@@ -80,6 +87,7 @@ function renderStage(){
   els.right.className='panel panel-right';
   els.center.className='panel panel-center';
   if(stage==='concept'){ renderConcept(els); }
+  else if(stage==='world'){ renderWorld(els); }
   else if(stage==='voice'){ renderVoice(els); }
   else if(stage==='structure'){ renderStructure(els); }
   else if(stage==='write'){ renderWrite(els); }

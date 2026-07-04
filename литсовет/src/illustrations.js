@@ -76,3 +76,16 @@ export async function generateIllustrationFor(state, candidate){
   });
   return dataUrl;
 }
+
+// Сохранить сгенерированную карту мира в общую галерею (единый источник
+// правды — state.illustrations.items, спека §9). Вызывается из world.js
+// напрямую, минуя suggestIllustrations()/doneScenesOrdered (на стадии «Мир»
+// сцен ещё нет). Одна карта на проект — повторная генерация заменяет старую,
+// не копит версии (в отличие от сцен/обложки).
+export function saveMapItem(state, dataUrl){
+  state.illustrations = state.illustrations || {};
+  state.illustrations.items = (state.illustrations.items||[]).filter(it=>it.type!=='map');
+  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt:'', dataUrl, createdAt:Date.now() };
+  state.illustrations.items.push(item);
+  return item;
+}

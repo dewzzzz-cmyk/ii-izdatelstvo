@@ -38,6 +38,10 @@ export function defaultState(){
       seriesBook: 1,
       mode: 'director',         // director (режиссёр) | factory (фабрика)
       useVoice: false,          // показывать вкладку «Голос» и учитывать образец
+      useWorld: false,          // показывать вкладку «Мир» (проактивный worldbuilding)
+      sceneWords: 0,            // 0 = авто (totalWords/60, зажато 700-2000); явное значение — диапазон 300-4000
+      chapterCount: 0,          // 0 = «авто» — предзаполняет #chCount на Структуре
+      pacing: 'balanced',       // action | balanced | reflective — доля сцена/секвель у Архитектора
       seriesSummary: '',        // краткое содержание предыдущих книг серии (для книги 2+)
     },
     style: {
@@ -53,6 +57,7 @@ export function defaultState(){
       metrics: null,           // числовые метрики (только индикатор UI)
     },
     structure: [],             // плоский массив узлов {type:'chapter'|'scene', ...}
+    structureStale: false,     // true — в канон добавлены world-факты после того как скелет уже построен
     bible: [],                 // {keys, text, _vec?}
     characters: [],            // {name, desc, stateNote, book}
     memory: { scenes:{}, chapters:{}, books:{} },
@@ -107,6 +112,8 @@ export function defaultAgents(){
       desc:'Ловит head-hopping: незаметные скачки к мыслям/ощущениям другого персонажа внутри сцены без разметки. Только флагует. Параллельно с другими стражами.' },
     { id:'dialogue',  name:'Страж диалога',     icon:'💬', temp:0.3, maxTokens:700, strictness:2, enabled:false, role:'dialogue',
       desc:'Ловит реплики «в лоб» (без подтекста), избыточные теги вместо экшн-бит, неразличимые голоса персонажей. Только флагует. Параллельно с другими стражами.' },
+    { id:'bookArchitect', name:'Книжный архитектор', icon:'🏛️', temp:0.6, enabled:true, role:'bookArchitect',
+      desc:'Строит скелет книги (главы→сцены) на стадии Структуры. Один запуск на книгу, не часть цикла сцены — maxTokens считается автоматически по объёму книги, не настраивается.' },
   ];
 }
 
@@ -261,6 +268,12 @@ export function removeAgent(state, id){
   return false; // встроенных не удаляем — их можно только выключить тумблером
 }
 
+// Найти агента по роли (или id как fallback) — используется пайплайном сцены
+// и Книжным архитектором для чтения temp/maxTokens конкретной роли.
+export function ag(state, role){
+  return (state.agents||[]).find(a=>a.role===role || a.id===role) || {};
+}
+
 // ---- Глобальное состояние сессии ----
 let _state = null;
 const _subs = new Set();
@@ -369,6 +382,7 @@ function migrate(s){
   s.illustrations = Object.assign({}, d.illustrations, s.illustrations);
   s.illustrations.items = s.illustrations.items || [];
   s.diagnostics = s.diagnostics || { runs: [] };
+  s.structureStale = s.structureStale || false;
   // Мердж агентов по id: сохраняем пользовательские enabled/temp и ПОРЯДОК, до-добавляем новых из дефолтов.
   if(!s.agents || !s.agents.length){ s.agents = d.agents; }
   else {
