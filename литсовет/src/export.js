@@ -152,21 +152,30 @@ export function exportEpub(state){
 
   // Обложка (опц.): dataURL jpeg/png из настроек проекта → файл + первая страница
   let coverItems='', coverSpine='', coverMeta='';
-  const coverM = /^data:image\/(jpeg|png);base64,(.+)$/.exec(p.coverDataUrl||'');
-  if(coverM){
-    const ext = coverM[1]==='png' ? 'png' : 'jpg';
-    const mime = coverM[1]==='png' ? 'image/png' : 'image/jpeg';
-    try{
-      const bin = atob(coverM[2]);
-      const bytes = new Uint8Array(bin.length);
-      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-      zip.add('OEBPS/cover.'+ext, bytes);
-      zip.add('OEBPS/cover.xhtml', `<?xml version="1.0" encoding="utf-8"?>
+  const coverDecoded = decodeDataUrlImage(p.coverDataUrl);
+  if(coverDecoded){
+    const { bytes, ext, mime } = coverDecoded;
+    zip.add('OEBPS/cover.'+ext, bytes);
+    zip.add('OEBPS/cover.xhtml', `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Обложка</title><style>body{margin:0;text-align:center}img{max-width:100%;max-height:100vh}</style></head><body><img src="cover.${ext}" alt="Обложка"/></body></html>`);
-      coverItems = `<item id="cover-img" href="cover.${ext}" media-type="${mime}" properties="cover-image"/><item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
-      coverSpine = `<itemref idref="cover"/>`;
-      coverMeta = `<meta name="cover" content="cover-img"/>`;
-    }catch(e){ console.warn('cover decode failed', e); }
+    coverItems = `<item id="cover-img" href="cover.${ext}" media-type="${mime}" properties="cover-image"/><item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
+    coverSpine = `<itemref idref="cover"/>`;
+    coverMeta = `<meta name="cover" content="cover-img"/>`;
+  }
+
+  // Карта мира (опц.): отдельная страница сразу после обложки, до первой главы.
+  let mapItems='', mapSpine='', mapNav='';
+  const mapItem = worldMapItem(state);
+  if(mapItem){
+    const decoded = decodeDataUrlImage(mapItem.dataUrl);
+    if(decoded){
+      zip.add('OEBPS/images/map.'+decoded.ext, decoded.bytes);
+      zip.add('OEBPS/map.xhtml', `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Карта мира</title><style>body{margin:0;text-align:center}img{max-width:100%;max-height:100vh}</style></head><body><h2>Карта мира</h2><img src="images/map.${decoded.ext}" alt="Карта мира"/></body></html>`);
+      mapItems = `<item id="map-img" href="images/map.${decoded.ext}" media-type="${decoded.mime}"/><item id="map" href="map.xhtml" media-type="application/xhtml+xml"/>`;
+      mapSpine = `<itemref idref="map"/>`;
+      mapNav = `<li><a href="map.xhtml">Карта мира</a></li>`;
+    }
   }
 
   const items=[], spine=[], nav=[];
@@ -183,7 +192,7 @@ export function exportEpub(state){
 
   zip.add('OEBPS/style.css','body{font-family:serif;line-height:1.6;margin:1em}p{margin:0 0 .2em;text-indent:1.2em}h2{text-align:center;margin:2em 0 1em}hr{border:none;text-align:center;margin:1em 0}hr:after{content:"* * *"}');
   zip.add('OEBPS/nav.xhtml',`<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Оглавление</title></head><body><nav epub:type="toc"><h1>Оглавление</h1><ol>${nav.map(n=>n.replace('<li>','<li>')).join('')}</ol></nav></body></html>`);
+<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Оглавление</title></head><body><nav epub:type="toc"><h1>Оглавление</h1><ol>${mapNav}${nav.map(n=>n.replace('<li>','<li>')).join('')}</ol></nav></body></html>`);
   const now = new Date();
   zip.add('OEBPS/content.opf',`<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid">
@@ -196,8 +205,8 @@ ${p.synopsis?`<dc:description>${xesc(p.synopsis)}</dc:description>`:''}
 <meta property="dcterms:modified">${now.toISOString().slice(0,19)}Z</meta>
 ${coverMeta}</metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-<item id="css" href="style.css" media-type="text/css"/>${coverItems}${items.join('')}</manifest>
-<spine>${coverSpine}${spine.join('')}</spine></package>`);
+<item id="css" href="style.css" media-type="text/css"/>${coverItems}${mapItems}${items.join('')}</manifest>
+<spine>${coverSpine}${mapSpine}${spine.join('')}</spine></package>`);
 
   download(zip.blob(), book.title+'.epub');
 }
