@@ -8,6 +8,7 @@ import { renderIllustrations } from './illustrations.js';
 import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
+import { MODEL_OPTIONS } from '../imagegen.js';
 
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -26,7 +27,7 @@ function matchTextProvider(baseURL){
   return found ? found.v : 'custom';
 }
 
-const IC_MODEL_DEFAULT = { gemini:'gemini-2.5-flash-image', openai:'gpt-image-1', qwen:'wanx2.1-t2i-turbo' };
+const IC_MODEL_DEFAULT = { gemini:'gemini-2.5-flash-image', openai:'gpt-image-1', qwen:'wanx2.1-t2i-turbo', recraft:'recraftv4_1' };
 
 const STAGES = [
   { id:'concept',   label:'Концепция' },
@@ -243,14 +244,16 @@ async function openSettings(){
             <option value="gemini"${(s.illustrations?.provider||'gemini')==='gemini'?' selected':''}>Google Gemini (Nano Banana)</option>
             <option value="openai"${s.illustrations?.provider==='openai'?' selected':''}>OpenAI (gpt-image-1)</option>
             <option value="qwen"${s.illustrations?.provider==='qwen'?' selected':''} title="Менее проверенная интеграция — асинхронный API DashScope">Qwen / DashScope (Wanxiang, менее проверено)</option>
+            <option value="recraft"${s.illustrations?.provider==='recraft'?' selected':''} title="Менее проверенная интеграция — точный формат имени модели неподтверждён">Recraft V4.1 (менее проверено)</option>
           </select>
           <select id="setIcQuality" style="flex:1">
             <option value="standard"${(s.illustrations?.quality||'standard')==='standard'?' selected':''}>Стандарт</option>
             <option value="hd"${s.illustrations?.quality==='hd'?' selected':''}>HD (дороже)</option>
           </select>
         </div>
-        <input type="text" id="setIcModel" value="${escAttr(s.illustrations?.model||'')}"
+        <input type="text" id="setIcModel" list="setIcModelList" value="${escAttr(s.illustrations?.model||'')}"
           placeholder="Модель (пусто = ${IC_MODEL_DEFAULT[s.illustrations?.provider||'gemini']})" style="margin-top:6px">
+        <datalist id="setIcModelList">${(MODEL_OPTIONS[s.illustrations?.provider||'gemini']||[]).map(m=>`<option value="${escAttr(m)}">`).join('')}</datalist>
         <div style="margin-top:6px">${keyRow('setIcKey', s.illustrations?.apiKey||'', 'Ключ провайдера картинок')}</div>
 
         <div class="settings-section">Мои книги</div>
@@ -281,6 +284,8 @@ async function openSettings(){
   document.getElementById('setIcProvider').onchange = (ev)=>{
     const modelInp = document.getElementById('setIcModel');
     if(modelInp) modelInp.placeholder = 'Модель (пусто = '+IC_MODEL_DEFAULT[ev.target.value]+')';
+    const list = document.getElementById('setIcModelList');
+    if(list) list.innerHTML = (MODEL_OPTIONS[ev.target.value]||[]).map(m=>`<option value="${escAttr(m)}">`).join('');
   };
   document.getElementById('setProvider').onchange = (ev)=>{
     const p = TEXT_PROVIDERS.find(x=>x.v===ev.target.value);

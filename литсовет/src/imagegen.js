@@ -4,12 +4,29 @@
 
 // Очень грубая оценка стоимости на картинку (USD) — ориентир для автора ДО
 // траты денег, не точный биллинг (у провайдеров своя точная тарификация).
-// Qwen/DashScope — самая неуверенная оценка из трёх: цены Wanxiang в CNY и
-// пересчёт очень приблизительный.
+// Qwen/DashScope — самая неуверенная оценка из четырёх: цены Wanxiang в CNY и
+// пересчёт очень приблизительный. Recraft — по официальной цене $0.04/раster
+// и $0.08/vector (весна 2026), standard≈raster, hd≈vector/pro.
 export const IMAGE_PRICE_ESTIMATE = {
-  gemini: { standard: 0.02, hd: 0.04 },
-  openai: { standard: 0.04, hd: 0.08 },
-  qwen:   { standard: 0.02, hd: 0.03 },
+  gemini:  { standard: 0.02, hd: 0.04 },
+  openai:  { standard: 0.04, hd: 0.08 },
+  qwen:    { standard: 0.02, hd: 0.03 },
+  recraft: { standard: 0.04, hd: 0.08 },
+};
+
+// Известные модели на выбор в настройках (даталист — поле остаётся свободным
+// текстом, автор может вписать любую другую строку, если пресет устареет).
+// Recraft: точный формат имени модели неподтверждён живым вызовом (в этой
+// среде нет ключа Recraft) — расходится между источниками (`recraftv4_1` в
+// официальном reference эндпоинтов vs. `recraft-v4.1` в примере getting-started
+// с OpenAI-совместимым клиентом). Взят вариант с подчёркиванием как более
+// авторитетный (полный enum моделей), но если генерация не пойдёт — это
+// первое место для правки.
+export const MODEL_OPTIONS = {
+  gemini: ['gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3.1-flash-lite-image'],
+  openai: ['gpt-image-1', 'gpt-image-1-mini', 'gpt-image-2'],
+  qwen:   ['wanx2.1-t2i-turbo'],
+  recraft:['recraftv4_1', 'recraftv4_1_vector', 'recraftv4_1_pro', 'recraftv4_1_pro_vector'],
 };
 
 export function estimateImageCost(provider, quality, count){
@@ -23,7 +40,7 @@ export async function generateImage(opts){
     method:'POST',
     headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({
-      provider: ['openai','qwen'].includes(opts.provider) ? opts.provider : 'gemini',
+      provider: ['openai','qwen','recraft'].includes(opts.provider) ? opts.provider : 'gemini',
       apiKey: opts.apiKey,
       model: opts.model,
       prompt: opts.prompt,

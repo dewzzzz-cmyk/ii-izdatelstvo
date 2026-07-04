@@ -137,7 +137,7 @@ async function handleGenerateImage(req, res){
     if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
     const apiKey = (b.apiKey||'').trim();
     const prompt = (b.prompt||'').trim();
-    const provider = ['openai','gemini','qwen'].includes(b.provider) ? b.provider : 'gemini';
+    const provider = ['openai','gemini','qwen','recraft'].includes(b.provider) ? b.provider : 'gemini';
     if(!apiKey) return send(res, 400, 'NO_KEY: не задан API-ключ для генерации изображений.');
     if(!prompt) return send(res, 400, 'NO_PROMPT: пуст промпт для картинки.');
     try{
@@ -167,6 +167,25 @@ async function handleGenerateImage(req, res){
         if(!imgPart) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
         const mime = imgPart.inlineData.mimeType || 'image/png';
         return send(res, 200, JSON.stringify({dataUrl:`data:${mime};base64,`+imgPart.inlineData.data}), 'application/json; charset=utf-8');
+      } else if(provider==='recraft'){
+        // Recraft V4.1 — синхронный REST API, OpenAI-совместимый формат ответа
+        // (data[].b64_json), но отдельный домен/эндпоинт и свой набор имён
+        // моделей. НИЖЕ УВЕРЕННОСТЬ, ЧЕМ У OPENAI/GEMINI: точный формат имени
+        // модели неподтверждён живым вызовом (в этой среде нет ключа Recraft) —
+        // источники расходятся между `recraftv4_1` (подчёркивание) и
+        // `recraft-v4.1` (дефис+точка); если генерация упадёт с ошибкой модели,
+        // это первое место для правки.
+        const model = b.model || 'recraftv4_1';
+        const up = await fetch('https://external.api.recraft.ai/v1/images/generations', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
+          body: JSON.stringify({ model, prompt, n:1, response_format:'b64_json' }),
+        });
+        if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
+        const d = await up.json();
+        const b64 = d?.data?.[0]?.b64_json;
+        if(!b64) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
+        return send(res, 200, JSON.stringify({dataUrl:'data:image/png;base64,'+b64}), 'application/json; charset=utf-8');
       } else {
         // Qwen/DashScope (Wanxiang) — асинхронный API: сабмит задачи → поллинг статуса →
         // ссылка на картинку (не base64) → сервер сам скачивает и конвертирует в data URL,
