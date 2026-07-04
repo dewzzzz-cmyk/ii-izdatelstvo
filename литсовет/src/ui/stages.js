@@ -3,6 +3,7 @@
 
 import { getState, save, uid, addRule, charNamesMatch } from '../state.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
+import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
 import { runScene, isRunning } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
@@ -404,6 +405,7 @@ export function renderVoice(els){
           </div>`).join('')}
         `:''}
       `}
+      ${renderStylePresets(s)}
       ${renderRefsEditor(s)}
       ${renderRulesEditor(s)}
 
@@ -415,6 +417,16 @@ export function renderVoice(els){
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
   bindRefsEditor();
   bindRulesEditor();
+  document.querySelectorAll('.style-add').forEach(btn=>{
+    btn.onclick = ()=>{
+      const st = AUTHOR_STYLES.find(x=>x.id===btn.dataset.id); if(!st) return;
+      const cur = getState();
+      cur.style.refs = cur.style.refs || [];
+      if(!cur.style.refs.includes(st.name)) cur.style.refs.push(st.name);
+      st.rules.forEach(r=>addRule(cur, r));
+      save();
+    };
+  });
   // save() после "+ Добавить" перерисовывает всю стадию — без этого пропадали
   // остальные ещё не добавленные карточки разбора манеры.
   if(_mannerRules.length) renderMannerCards(_mannerRules, s);
@@ -488,6 +500,31 @@ function renderMannerCards(rules, s){
       document.getElementById('rulesList')?.scrollIntoView({behavior:'smooth', block:'center'});
     };
   });
+}
+
+// Готовые стили — библиотека 15 авторов (styles.js). Клик пишет имя автора в
+// Ориентиры стиля и правила стиля в Правила автора через уже существующий
+// addRule() (дедуп встроен, см. state.js). Подсветка «подходит жанру» —
+// сортировка/бейдж, не фильтрация: все 15 всегда видны и кликабельны.
+function renderStylePresets(s){
+  const genre = s.project.genre;
+  const applied = new Set(s.style.refs||[]);
+  const sorted = [...AUTHOR_STYLES].sort((a,b)=>
+    (styleMatchesGenre(b,genre)?1:0) - (styleMatchesGenre(a,genre)?1:0));
+  return `<div class="field" style="margin-top:22px;border-top:1px solid var(--border);padding-top:16px">
+    <label>Готовые стили <span class="hint">(классика и жанровые авторы — добавляют имя в «Ориентиры» и набор правил в «Правила автора»)</span></label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-top:8px">
+      ${sorted.map(st=>{
+        const isApplied = applied.has(st.name);
+        const fits = styleMatchesGenre(st, genre);
+        return `<div class="card" style="padding:8px 10px">
+          <div style="font-weight:600;font-size:13px">${esc(st.name)}${fits?' <span class="muted" style="font-weight:400;font-size:11px">· подходит жанру</span>':''}</div>
+          <div class="muted" style="font-size:12px;margin:4px 0 8px">${esc(st.blurb)}</div>
+          <button class="btn style-add" data-id="${st.id}" ${isApplied?'disabled':''} style="font-size:11px;padding:3px 9px">${isApplied?'✓ Добавлено':'+ Добавить'}</button>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
 }
 
 // Ориентиры стиля (авторы/тексты для тона, не образец для копирования) — идут в
