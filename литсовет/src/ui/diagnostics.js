@@ -23,8 +23,13 @@ const _openAgents = new Set();
 function paramSpecs(a){
   const specs = [
     { key:'temp', label:'Температура', hint:'выше — креативнее, ниже — стабильнее', min:0, max:1, step:0.05, target:'agent', def:0.5, fmt:v=>v.toFixed(2) },
-    { key:'maxTokens', label:'Макс. токенов', hint:'потолок длины ответа — Прозаику нужно ≥2400 для 700-слов. сцены', min:200, max:4000, step:100, target:'agent', def:700, fmt:v=>Math.round(v) },
   ];
+  // Книжный архитектор: потолок токенов считается динамически по объёму книги
+  // (4000-16000, architect-book.js) — ручной слайдер сломал бы генерацию
+  // длинных книг, поэтому не показываем его для этой роли.
+  if(a.role!=='bookArchitect'){
+    specs.push({ key:'maxTokens', label:'Макс. токенов', hint:'потолок длины ответа — Прозаику нужно ≥2400 для 700-слов. сцены', min:200, max:4000, step:100, target:'agent', def:700, fmt:v=>Math.round(v) });
+  }
   if(a.role==='evaluator'){
     specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля', min:5, max:9, step:0.5, target:'global', def:7, fmt:v=>v.toFixed(1) });
     specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать', min:1, max:5, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
@@ -413,7 +418,7 @@ export function renderAgentPipeline(){
         <span class="ag-grip" title="перетащить">⋮⋮</span>
         <span style="font-size:15px">${a.icon}</span>
         <span class="at-name">${esc(a.name)} ${badges}<span class="at-temp">${_openAgents.has(a.id)?'▾':'⚙'}</span></span>
-        ${a.role!=='prose'?`<button class="ag-run" data-runid="${a.id}" data-tip="Запустить «${esc(a.name)}» вручную на текущей сцене и получить разбор: замечания и предложения правок. Текст не меняется (кроме применения правки Линейного редактора).">▶</button>`:''}
+        ${(a.role!=='prose' && a.role!=='bookArchitect')?`<button class="ag-run" data-runid="${a.id}" data-tip="Запустить «${esc(a.name)}» вручную на текущей сцене и получить разбор: замечания и предложения правок. Текст не меняется (кроме применения правки Линейного редактора).">▶</button>`:''}
         <div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}" data-id="${a.id}"></div>
       </div>
       ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`;
