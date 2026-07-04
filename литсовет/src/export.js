@@ -175,7 +175,7 @@ export function exportEpub(state){
     const title = xesc(ch.title || ('Глава '+(i+1)));
     const body = (ch.title?`<h2>${title}</h2>`:'') + ch.scenes.map(sc=>paraXhtml(sc.text)).join('\n<hr/>\n');
     zip.add('OEBPS/'+file, `<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title><link rel="stylesheet" href="style.css"/></head><body>${body}</body></html>`);
+<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title><link rel="stylesheet" href="../style.css"/></head><body>${body}</body></html>`);
     items.push(`<item id="${id}" href="${file}" media-type="application/xhtml+xml"/>`);
     spine.push(`<itemref idref="${id}"/>`);
     nav.push(`<li><a href="${file}">${title}</a></li>`);
