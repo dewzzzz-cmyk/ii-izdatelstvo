@@ -299,6 +299,7 @@ export function renderConcept(els){
         const lbl = document.getElementById('useWorldAutoLabel');
         if(lbl){ lbl.style.display = p.useWorld?'':'none'; lbl.textContent = `Включено автоматически для жанра «${gd?gd.label:v}» — можно выключить`; }
         const btn = document.getElementById('toNext'); if(btn) btn.textContent = 'Дальше — '+(p.useWorld?'Мир':p.useVoice?'Голос':'Структура')+' →';
+        save();
       }
     };
   }

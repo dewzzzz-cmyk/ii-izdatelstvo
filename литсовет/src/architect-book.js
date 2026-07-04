@@ -148,7 +148,9 @@ export async function runBookArchitect(state, opts={}){
       // Нормализация targetWords: база = totalWords / фактич. число сцен.
       // ЛЛМ может варьировать ±20% по событию — принимаем; за диапазон → клэмп.
       const allScenes = v.skeleton.chapters.flatMap(ch=>ch.scenes||[]);
-      const norm = Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/Math.max(1,allScenes.length))));
+      const norm = p.sceneWords>0
+        ? Math.max(300, Math.min(4000, p.sceneWords))
+        : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/Math.max(1,allScenes.length))));
       const minW = Math.round(norm * 0.80);
       const maxW = Math.round(norm * 1.20);
       allScenes.forEach(sc=>{
