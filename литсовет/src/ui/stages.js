@@ -189,9 +189,9 @@ export function renderConcept(els){
           <input type="text" id="tw" value="${esc(p.targetWords||80000)}">
           <div class="hint" id="twHint">${sceneCountHint(p.targetWords||80000)}</div>
         </div>
-        <div class="field"><label>Объём сцены (слов) <span class="hint">пусто/0 = авто (≈{targetWords}/60 слов, зажато 700–2000)</span></label>
+        <div class="field"><label>Объём сцены (слов) <span class="hint">пусто/0 = авто (≈${Math.round((p.targetWords||80000)/60)}/60 слов, зажато 700–2000)</span></label>
           <input type="text" id="sceneWords" value="${p.sceneWords||''}" placeholder="авто"></div>
-        <div class="field"><label>Число глав <span class="hint">пусто/0 = «авто» (пресказывается стадии Структура, там можно переопределить точечно)</span></label>
+        <div class="field"><label>Число глав <span class="hint">пусто/0 = «авто» (предзаполнит поле числа глав на стадии Структура, там можно переопределить точечно)</span></label>
           <input type="text" id="chapterCount" value="${p.chapterCount||''}" placeholder="авто"></div>
         <div class="field"><label>Темп/ритм <span class="hint">доля сцена/секвель у Архитектора при построении структуры</span></label>
           <select id="pacing">
