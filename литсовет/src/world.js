@@ -159,9 +159,10 @@ export async function suggestMissingWorldFacts(state, skeleton){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:800, retries:g.retries });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.facts) ? j.facts : [];
+    const cats = categoriesFor(state.project.genre);
     return arr.slice(0,5).map((f,i)=>({
       id: 'wf_missing_'+Date.now().toString(36)+'_'+i,
-      category: String(f.category||'история'),
+      category: cats.includes(f.category) ? f.category : cats[0],
       keys: String(f.keys||'').slice(0,120),
       text: String(f.text||'').trim().slice(0,500),
     })).filter(f=>f.text);
