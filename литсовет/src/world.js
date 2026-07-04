@@ -127,3 +127,43 @@ export async function generateWorldMap(state){
   });
   return dataUrl;
 }
+
+// ── Архитектор сверяет скелет с каноном (спека §7 — канал остаётся открытым,
+// не одноразовый гейт). Не критично для успеха генерации скелета — при сбое
+// возвращает [], а не бросает ошибку.
+export function missingFactsMessages(state, skeleton){
+  const p = state.project;
+  const worldFacts = (state.bible||[]).filter(b=>b.source==='world');
+  const canonText = worldFacts.length ? worldFacts.map(f=>`— ${f.text}`).join('\n') : '(канон пуст)';
+  const skeletonText = skeleton.chapters.map((ch,ci)=>
+    (ch.scenes||[]).map((sc,si)=>`${ci+1}.${si+1}. ${sc.brief||sc.title}`).join('\n')
+  ).join('\n');
+  const sys = 'Ты — книжный архитектор. Ты только что спроектировал скелет книги. Сверь его с уже зафиксированным каноном мира и найди факты, на которые скелет ОПИРАЕТСЯ (упоминает как данность), но которых в каноне ещё нет. НЕ придумывай новые сюжетные повороты — только формализуй то, что уже подразумевает скелет.';
+  const user = [
+    `Жанр: ${p.genre||'роман'}.`,
+    `КАНОН МИРА:\n${canonText}`,
+    '',
+    `СКЕЛЕТ КНИГИ:\n${skeletonText}`,
+    '',
+    'До 5 фактов, которых не хватает канону (если скелету ничего не нужно — верни пустой массив facts). Верни JSON: { "facts": [ { "category": "география|история|фракции|культура|магия/технология|система", "keys": "ключевые слова", "text": "факт" } ] }',
+    'Только JSON.',
+  ].join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export async function suggestMissingWorldFacts(state, skeleton){
+  const g = state.global;
+  if(!g.apiKey) return [];
+  try{
+    const msgs = missingFactsMessages(state, skeleton);
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:800, retries:g.retries });
+    const j = extractJSON(res.text);
+    const arr = j && Array.isArray(j.facts) ? j.facts : [];
+    return arr.slice(0,5).map((f,i)=>({
+      id: 'wf_missing_'+Date.now().toString(36)+'_'+i,
+      category: String(f.category||'история'),
+      keys: String(f.keys||'').slice(0,120),
+      text: String(f.text||'').trim().slice(0,500),
+    })).filter(f=>f.text);
+  }catch{ return []; }
+}
