@@ -261,6 +261,12 @@ export function removeAgent(state, id){
   return false; // встроенных не удаляем — их можно только выключить тумблером
 }
 
+// Найти агента по роли (или id как fallback) — используется пайплайном сцены
+// и Книжным архитектором для чтения temp/maxTokens конкретной роли.
+export function ag(state, role){
+  return (state.agents||[]).find(a=>a.role===role || a.id===role) || {};
+}
+
 // ---- Глобальное состояние сессии ----
 let _state = null;
 const _subs = new Set();
