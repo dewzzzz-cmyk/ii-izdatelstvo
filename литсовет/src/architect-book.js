@@ -5,15 +5,27 @@
 
 import { callLLM, extractJSON } from './llm.js';
 import { genreBeatsNote } from './genres.js';
+import { bibleForPrompt } from './bible.js';
+import { ag } from './state.js';
 
 const ARCS = ['завязка','развитие','кульминация','развязка'];
+
+const PACING_NOTES = {
+  action: 'После сильной сцены-потрясения ЧАСТО (не обязательно) нужен короткий sequel — обычно 10-20% сцен книги — sequel, акцент на действии, реже передышки.',
+  balanced: 'После сильной сцены-потрясения почти всегда нужен короткий sequel — но НЕ жёстко через одну: используй по ощущению ритма, обычно 20-35% сцен книги — sequel.',
+  reflective: 'После сильной сцены-потрясения нужен sequel почти всегда — обычно 35-50% сцен книги — sequel, акцент на внутренней рефлексии, больше пауз между потрясениями.',
+};
 
 export function bookArchitectMessages(state, opts={}){
   const p = state.project;
   const totalWords = p.targetWords || 80000;
-  // Целевой объём сцены: 1200 слов для романа — реалистичная сцена.
-  // Более крупная сцена → меньше вызовов LLM, лучше связность.
-  const wPerScene = Math.max(700, Math.min(2000, Math.round(totalWords / 60)));
+  // Целевой объём сцены: авто (totalWords/60, зажато 700-2000) ИЛИ явный
+  // авторский оверрайд (project.sceneWords) — тогда диапазон шире (300-4000):
+  // осознанный выбор автора не зажимаем той же вилкой, что защищает только
+  // автоформулу от вырожденных случаев общего объёма (спека §12.1).
+  const wPerScene = p.sceneWords>0
+    ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round(totalWords / 60)));
   const targetScenes = Math.max(6, Math.round(totalWords / wPerScene));
   const targetChapters = opts.chapters || Math.max(3, Math.min(25, Math.round(targetScenes / 3.5)));
   const scenesPerCh = Math.max(2, Math.round(targetScenes / targetChapters));
@@ -28,7 +40,7 @@ export function bookArchitectMessages(state, opts={}){
     'Классифицируй КАЖДУЮ сцену по sceneType (техника Дуайта Свейна — «сцена/секвель», основа ритма профессиональной прозы):',
     '  "scene" — сцена действия: цель героя → конфликт/препятствие → поражение или осложнение (кончается ХУЖЕ, чем начиналась, не разрешением). Растущее напряжение.',
     '  "sequel" — секвель: эмоциональная реакция героя на произошедшее → дилемма (взвешивание вариантов) → решение, которое ставит новую цель. Передышка для читателя, меньше внешнего действия.',
-    'После сильной сцены-потрясения почти всегда нужен короткий sequel — но НЕ жёстко через одну: используй по ощущению ритма, обычно 20-35% сцен книги — sequel.',
+    PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
   ].join('\n');
   // Нарративная инструкция по позиции в серии
   let seriesArcNote = '';
@@ -52,6 +64,11 @@ export function bookArchitectMessages(state, opts={}){
     p.seriesSummary ? `Содержание предыдущих книг:\n${p.seriesSummary}` : '',
     `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
     genreBeatsNote(p.genre),
+    (() => {
+      // k=15 (не 5/6, как в per-сцена выборках) — разовый обзор всей книги на этапе скелета, нужна широта, не глубина.
+      const worldBlock = bibleForPrompt((state.bible||[]).filter(b=>b.source==='world'), p.synopsis||p.idea||'', 15);
+      return worldBlock ? `\nМИР КНИГИ (уже зафиксированные факты — не противоречь им):\n${worldBlock}` : '';
+    })(),
     // Если это улучшение — показываем предыдущий скелет и проблемы
     opts.previousSkeleton ? (() => {
       const prev = opts.previousSkeleton;
@@ -110,15 +127,22 @@ export function validateSkeleton(raw){
 export async function runBookArchitect(state, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  const architectAgent = ag(state, 'bookArchitect');
   const msgs = bookArchitectMessages(state, opts);
   // ~140 токенов на сцену (русский бриф 1-2 предложения + поля) + накладные
   const p = state.project;
-  const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / Math.max(700, Math.round((p.targetWords||80000)/60))));
+  // Та же формула wPerScene, что и в bookArchitectMessages — иначе при явном
+  // project.sceneWords здесь получим СТАРОЕ (меньшее) число сцен, а промпт
+  // попросит модель сгенерировать БОЛЬШЕЕ — и archMaxTokens окажется занижен,
+  // провоцируя обрезание JSON именно тогда, когда включён sceneWords.
+  const wPerScene = p.sceneWords>0
+    ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
+  const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / wPerScene));
   const archMaxTokens = Math.max(4000, Math.min(16000, targetScenes * 140 + 1500));
-  const wPerScene = Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:archMaxTokens });
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens });
     const v = validateSkeleton(res.text);
     if(v.ok){
       // Нормализация targetWords: база = totalWords / фактич. число сцен.
