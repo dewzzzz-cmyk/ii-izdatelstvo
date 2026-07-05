@@ -79,7 +79,7 @@ Expected: без вывода.
 
 Через `mcp__Claude_Preview__preview_eval` на запущенном сервере:
 ```js
-const { getState } = await import('/src/state.js');
+const { getState } = await import('/src/state.js?v=' + Date.now());
 const s = getState();
 ({ colorMode: s.style.colorMode, artStyleId: s.style.artStyleId, suggestCount: s.illustrations.suggestCount })
 ```
@@ -639,7 +639,7 @@ Expected: все пять `OK`.
 
 - [ ] **Шаг 3: Проверить обратную совместимость**
 
-На проекте, у которого `state.illustrations`/`state.style` — это старые сохранённые данные БЕЗ новых полей (можно смоделировать: удалить `colorMode`/`artStyleId`/`suggestCount` из состояния через `preview_eval` и вызвать `save()`, затем перезагрузить страницу, чтобы прогнать через `migrate()` при следующей загрузке — либо явно вызвать саму функцию `migrate`, если она экспортирована, либо просто убедиться что `getState()` после `location.reload()` снова содержит дефолты). Подтвердить: `state.style.colorMode==='color'`, `state.style.artStyleId===''`, `state.illustrations.suggestCount===7` — восстановлены дефолтом, ничего не падает.
+На проекте, у которого `state.illustrations`/`state.style` — это старые сохранённые данные БЕЗ новых полей (можно смоделировать: удалить `colorMode`/`artStyleId`/`suggestCount` из состояния через `preview_eval` и вызвать `save()`, затем перезагрузить страницу, чтобы прогнать через `migrate()` при следующей загрузке). **Важно:** `save()` персистит в IndexedDB через debounce ~400мс, а не сразу — `migrate()` запускается только внутри `init()`/`switchProject()` при загрузке, не внутри `save()`. Поэтому между вызовом `save()` и `location.reload()` нужно явно подождать (например `await new Promise(r=>setTimeout(r, 600))`) — иначе `reload()` может случиться раньше, чем изменённое состояние реально долетит до IndexedDB, и проверка тихо проверит не то (старое, уже смигрированное состояние), а не намеренно «сломанное». Подтвердить после перезагрузки: `state.style.colorMode==='color'`, `state.style.artStyleId===''`, `state.illustrations.suggestCount===7` — восстановлены дефолтом, ничего не падает.
 
 - [ ] **Шаг 4: Отчёт**
 
