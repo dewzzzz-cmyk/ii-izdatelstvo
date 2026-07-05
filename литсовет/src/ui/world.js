@@ -131,29 +131,54 @@ export function renderWorld(els){
 }
 
 function bindHandlers(els, s){
-  const sb = document.getElementById('wSuggest');
-  if(sb) sb.onclick = async ()=>{
-    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
-    if(_busy) return;
-    const hints = {
-      ideaSeed: document.getElementById('wSeed')?.value.trim(),
-      limitation: document.getElementById('wLimit')?.value.trim(),
-      antagonistFaction: document.getElementById('wAntag')?.value.trim(),
-    };
-    _busy = true; _busyText = 'Продумываю мир…'; renderWorld(els);
-    try{
-      _candidates = await suggestWorldFacts(s, hints);
-      _selected = new Set(_candidates.map(c=>c.id));
-    }catch(e){ alert('Мир: '+e.message); }
-    finally{ _busy = false; _busyText=''; renderWorld(els); }
-  };
-
-  document.querySelectorAll('.mem-h-toggle[data-cat]').forEach(h=>h.onclick=()=>{
-    const cat = h.dataset.cat;
-    if(_collapsed.has(cat)) _collapsed.delete(cat); else _collapsed.add(cat);
-    renderWorld(els);
+  // Подсказки — держим в модульных переменных (Task 5, шаг 2), не в DOM/state:
+  // иначе ре-рендер при генерации ОДНОЙ категории стирал бы то, что автор
+  // напечатал в поле другой ещё не отправленной карточки.
+  const seedEl = document.getElementById('wSeed');
+  if(seedEl) seedEl.addEventListener('input', ()=>{ _ideaSeed = seedEl.value; });
+  document.querySelectorAll('.world-cat-hint').forEach(inp=>{
+    inp.addEventListener('input', ()=>{ _hints[inp.dataset.cat] = inp.value; });
   });
 
+  // Точечная генерация одной категории.
+  document.querySelectorAll('.world-cat-gen').forEach(btn=>btn.onclick=async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+    const cat = btn.dataset.cat;
+    if(_busyCategory || _bulkBusy) return;
+    _busyCategory = cat; renderWorld(els);
+    try{
+      const fresh = await suggestWorldFacts(s, cat, { hint:_hints[cat], ideaSeed:_ideaSeed });
+      _candidates = _candidates.filter(c=>c.category!==cat).concat(fresh);
+      fresh.forEach(c=>_selected.add(c.id));
+    }catch(e){ alert('Мир: '+e.message); }
+    finally{ _busyCategory = null; renderWorld(els); }
+  });
+
+  // «Предложить весь мир» — последовательно, категория за категорией (не
+  // Promise.all — все категории пишут в общий _candidates, параллельные
+  // резолвы гонялись бы за одним и тем же состоянием; спек-ревью явно
+  // рекомендовало последовательный обход).
+  const sa = document.getElementById('wSuggestAll');
+  if(sa) sa.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+    if(_busyCategory || _bulkBusy) return;
+    const cats = categoriesFor(s.project.genre);
+    _bulkBusy = true;
+    for(let i=0;i<cats.length;i++){
+      const cat = cats[i];
+      _bulkProgress = `${i+1} из ${cats.length}`;
+      renderWorld(els);
+      try{
+        const fresh = await suggestWorldFacts(s, cat, { hint:_hints[cat], ideaSeed:_ideaSeed });
+        _candidates = _candidates.filter(c=>c.category!==cat).concat(fresh);
+        fresh.forEach(c=>_selected.add(c.id));
+      }catch(e){ console.warn('Мир, категория '+cat+':', e.message); }
+    }
+    _bulkBusy = false; _bulkProgress = '';
+    renderWorld(els);
+  };
+
+  // Кандидаты: чекбокс/правка текста (как раньше, только теперь рендерятся внутри карточки категории).
   document.querySelectorAll('.w-cb').forEach(cb=>cb.onchange=()=>{
     if(cb.checked) _selected.add(cb.dataset.id); else _selected.delete(cb.dataset.id);
     renderWorld(els);
@@ -165,20 +190,53 @@ function bindHandlers(els, s){
     const c = _candidates.find(x=>x.id===t.dataset.id); if(c) c.keys = t.value.trim();
   }));
 
-  const wc = document.getElementById('wClear');
-  if(wc) wc.onclick = ()=>{ _candidates=[]; _selected=new Set(); renderWorld(els); };
-
-  const wa = document.getElementById('wApprove');
-  if(wa) wa.onclick = ()=>{
-    const approved = _candidates.filter(c=>_selected.has(c.id));
+  // Отменить/сохранить в канон — теперь на уровне одной категории.
+  document.querySelectorAll('.world-cat-clear').forEach(btn=>btn.onclick=()=>{
+    const cat = btn.dataset.cat;
+    _candidates.filter(c=>c.category===cat).forEach(c=>_selected.delete(c.id));
+    _candidates = _candidates.filter(c=>c.category!==cat);
+    renderWorld(els);
+  });
+  document.querySelectorAll('.world-cat-approve').forEach(btn=>btn.onclick=()=>{
+    const cat = btn.dataset.cat;
+    const approved = _candidates.filter(c=>c.category===cat && _selected.has(c.id));
     s.bible = s.bible || [];
-    approved.forEach(c=>{ s.bible.push({ keys:c.keys, text:c.text, source:'world', category:c.category }); });
+    approved.forEach(c=>{ s.bible.push({ keys:c.keys, text:c.text, source:'world', category:c.category }); _selected.delete(c.id); });
+    _candidates = _candidates.filter(c=>!approved.includes(c));
     rebuildBibleVecs(s.bible);
-    _candidates = _candidates.filter(c=>!_selected.has(c.id));
-    _selected = new Set();
     if((s.structure||[]).some(n=>n.type==='chapter')) s.structureStale = true;
     save(); renderWorld(els);
-  };
+  });
+
+  // Правка/удаление/перегенерация факта уже в каноне.
+  document.querySelectorAll('.wc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
+    e.stopPropagation();
+    const i = +b.dataset.bi; const fact = s.bible[i]; if(!fact) return;
+    if(b.dataset.act==='del'){ if(deleteBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); } return; }
+    if(b.dataset.act==='edit'){ if(editBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); } return; }
+    if(b.dataset.act==='reroll'){
+      if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели (⚙).'); return; }
+      b.disabled = true; const orig = b.textContent; b.textContent = '…';
+      try{
+        const newText = await rerollWorldFact(s, fact);
+        fact.text = newText;
+        rebuildBibleVecs(s.bible); save(); renderWorld(els);
+      }catch(err){ alert('Мир: '+err.message); b.disabled=false; b.textContent=orig; }
+    }
+  });
+
+  // Добавить вручную — те же два prompt(), что и bibleAdd в ui/memory.js,
+  // категория проставляется автоматически (карточка уже про конкретную категорию).
+  document.querySelectorAll('.world-cat-add').forEach(el=>el.onclick=()=>{
+    const cat = el.dataset.cat;
+    const keys = prompt('Ключи факта (через запятую, напр.: «город, климат»):'); if(keys===null) return;
+    const text = prompt('Сам факт:'); if(!text) return;
+    s.bible = s.bible || [];
+    s.bible.push({ keys:keys.trim(), text:text.trim(), source:'world', category:cat });
+    rebuildBibleVecs(s.bible);
+    if((s.structure||[]).some(n=>n.type==='chapter')) s.structureStale = true;
+    save(); renderWorld(els);
+  });
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
