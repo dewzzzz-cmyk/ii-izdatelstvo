@@ -229,20 +229,20 @@ export function renderConcept(els){
         </label>
         <div id="visualVoiceField" style="${s.style?.visualVoiceOn?'':'display:none'}">
           <textarea id="visualVoice" rows="2" placeholder="например: акварель, тёплые приглушённые тона, мягкий рассеянный свет, в духе книжной иллюстрации начала XX века">${esc(s.style?.visualVoice||'')}</textarea>
-          <div class="field" style="margin-top:10px">
-            <label>Художественный стиль <span class="hint">(необязательно — добавляется к промпту картинки вместе с «Визуальным голосом»)</span></label>
-            <select id="artStyleId">
-              <option value="">— без пресета —</option>
-              ${ART_STYLES.map(st=>`<option value="${st.id}"${st.id===(s.style?.artStyleId||'')?' selected':''}>${esc(st.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field row" style="gap:8px;align-items:center;margin-top:8px">
-            <label>Цвет</label>
-            <select id="colorMode">
-              <option value="color"${s.style?.colorMode!=='bw'?' selected':''}>Цветные</option>
-              <option value="bw"${s.style?.colorMode==='bw'?' selected':''}>Чёрно-белые</option>
-            </select>
-          </div>
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label>Художественный стиль <span class="hint">(необязательно — добавляется к промпту картинки; не зависит от «Визуального голоса»)</span></label>
+          <select id="artStyleId">
+            <option value="">— без пресета —</option>
+            ${ART_STYLES.map(st=>`<option value="${st.id}"${st.id===(s.style?.artStyleId||'')?' selected':''}>${esc(st.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field row" style="gap:8px;align-items:center;margin-top:8px">
+          <label>Цвет</label>
+          <select id="colorMode">
+            <option value="color"${s.style?.colorMode!=='bw'?' selected':''}>Цветные</option>
+            <option value="bw"${s.style?.colorMode==='bw'?' selected':''}>Чёрно-белые</option>
+          </select>
         </div>
         <div class="field"><label>Обложка <span class="hint">необязательно — попадёт в EPUB (JPEG/PNG, до 3 МБ)</span></label>
           <div class="row" style="gap:10px;align-items:center">
