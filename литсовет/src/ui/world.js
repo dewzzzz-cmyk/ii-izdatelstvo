@@ -4,34 +4,61 @@
 // image-API, только по явному клику (спека §5, §6, §9).
 
 import { getState, save } from '../state.js';
-import { rebuildBibleVecs } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap } from '../world.js';
+import { rebuildBibleVecs, editBibleFactAt, deleteBibleFactAt } from '../bible.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, rerollWorldFact, categoriesFor, CATEGORY_HINTS } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
 
-let _candidates = [];       // предложенные, ещё не одобренные факты
-let _selected = new Set();  // id одобренных чекбоксом
-let _collapsed = new Set(); // свёрнутые категории (по умолчанию всё развёрнуто)
-let _busy = false;
-let _busyText = '';
+let _candidates = [];        // предложенные, ещё не одобренные факты (все категории вместе, у каждого своё .category)
+let _selected = new Set();   // id одобренных чекбоксом
+let _hints = {};             // текст подсказки на категорию — держим тут (не в state), иначе теряется при ре-рендере во время генерации другой карточки
+let _ideaSeed = '';          // общая «Идея мира» — та же причина держать вне DOM/state
+let _busyCategory = null;    // категория, для которой сейчас идёт точечная генерация
+let _bulkBusy = false;       // «Предложить весь мир» — идёт последовательный обход категорий
+let _bulkProgress = '';      // текст прогресса булк-генерации, напр. "2 из 4"
 let _mapBusy = false;
 
-function groupByCategory(items){
-  const out = {};
-  items.forEach(c=>{ (out[c.category] = out[c.category]||[]).push(c); });
-  return out;
+function factsOfCategory(worldFacts, cat){ return worldFacts.filter(f=>f.category===cat); }
+function candidatesOfCategory(cat){ return _candidates.filter(c=>c.category===cat); }
+
+function wordForm(n, one, few, many){
+  const mod10=n%10, mod100=n%100;
+  if(mod10===1 && mod100!==11) return one;
+  if(mod10>=2 && mod10<=4 && (mod100<10||mod100>=20)) return few;
+  return many;
 }
 
-function renderCandidates(){
-  if(!_candidates.length) return '';
-  const byCat = groupByCategory(_candidates);
-  return `<div class="ph">Кандидаты</div>
-    ${Object.entries(byCat).map(([cat, items])=>`
-      <div class="mem-h mem-h-toggle" data-cat="${esc(cat)}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px">
-        <span>${_collapsed.has(cat)?'▸':'▾'} ${esc(cat)} (${items.length})</span>
-      </div>
-      ${_collapsed.has(cat) ? '' : items.map(c=>`
+function renderCategoryCard(s, worldFacts, cat, busyAny){
+  const canon = factsOfCategory(worldFacts, cat);
+  const cands = candidatesOfCategory(cat);
+  const busy = _busyCategory===cat;
+  const selCount = cands.filter(c=>_selected.has(c.id)).length;
+  return `<div class="world-cat-card" data-cat="${esc(cat)}">
+    <div class="world-cat-h">
+      <b>${esc(cat)}</b>
+      <span class="muted">${canon.length ? `${canon.length} ${wordForm(canon.length,'факт','факта','фактов')}` : 'пусто'}</span>
+    </div>
+    <input type="text" class="world-cat-hint" data-cat="${esc(cat)}" value="${esc(_hints[cat]||'')}" placeholder="${esc(CATEGORY_HINTS[cat]||'подсказка (необязательно)')}">
+    <button class="btn world-cat-gen" data-cat="${esc(cat)}" ${busyAny?'disabled':''}>${busy?'<span class="spinner"></span> …':'✨ Предложить'}</button>
+
+    ${canon.length ? `<div class="world-cat-facts">
+      ${canon.map(f=>{
+        const i = s.bible.indexOf(f);
+        return `<div class="mem-card bible-card" data-bi="${i}">
+          <div class="bible-actions">
+            <button class="bc-act wc-act" data-act="edit" data-bi="${i}" title="Редактировать">✎</button>
+            <button class="bc-act wc-act" data-act="reroll" data-bi="${i}" title="Другой вариант (ИИ)">🔄</button>
+            <button class="bc-act wc-act" data-act="del" data-bi="${i}" title="Удалить">✕</button>
+          </div>
+          <div class="mem-title" style="color:var(--accent)">${esc(f.keys||'факт')}</div>
+          <div class="muted" style="font-size:12px">${esc(f.text)}</div>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+
+    ${cands.length ? `<div class="world-cat-cands">
+      ${cands.map(c=>`
         <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
           <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
             <input type="checkbox" class="w-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} style="margin-top:3px">
@@ -41,22 +68,14 @@ function renderCandidates(){
             </div>
           </label>
         </div>`).join('')}
-    `).join('')}
-    <div class="row" style="justify-content:flex-end;gap:8px;margin:10px 0 18px">
-      <button class="btn" id="wClear">Отменить</button>
-      <button class="btn btn-primary" id="wApprove" ${_selected.size?'':'disabled'}>Сохранить в канон (${_selected.size})</button>
-    </div>`;
-}
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:6px">
+        <button class="btn world-cat-clear" data-cat="${esc(cat)}">Отменить</button>
+        <button class="btn btn-primary world-cat-approve" data-cat="${esc(cat)}" ${selCount?'':'disabled'}>Сохранить в канон (${selCount})</button>
+      </div>
+    </div>` : ''}
 
-function renderCanon(worldFacts){
-  if(!worldFacts.length) return '';
-  return `<div class="ph">Уже в каноне</div>
-    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px">
-      ${worldFacts.map(f=>`<div class="mem-card">
-        <div class="mem-title" style="color:var(--accent)">${esc(f.keys||f.category||'факт')}</div>
-        <div class="muted" style="font-size:12px">${esc(f.text)}</div>
-      </div>`).join('')}
-    </div>`;
+    <div class="world-cat-add" data-cat="${esc(cat)}">+ добавить вручную</div>
+  </div>`;
 }
 
 function renderMapBlock(s, geoCount){
@@ -78,19 +97,16 @@ export function renderWorld(els){
   const s = getState();
   const p = s.project;
   const worldFacts = (s.bible||[]).filter(b=>b.source==='world');
+  const cats = categoriesFor(p.genre);
   const geoCount = worldFacts.filter(b=>b.category==='география').length;
   const podWarning = missingPOD(s);
+  const busyAny = _bulkBusy || !!_busyCategory;
 
   els.left.innerHTML = `<div class="ph">Мир</div>
     <div class="pad muted" style="font-size:12px">${worldFacts.length ? `${worldFacts.length} фактов в каноне` : 'Пока нет фактов мира.'}</div>`;
 
-  els.right.innerHTML = `<div class="ph">Подсказки (необязательно)</div><div class="pad">
-    <div class="field"><label>Идея мира</label>
-      <textarea id="wSeed" rows="2" placeholder="в общих чертах, если есть — иначе агент оттолкнётся от жанра и синопсиса"></textarea></div>
-    <div class="field"><label>Что герой не может получить/сделать без магии/технологии?</label>
-      <input type="text" id="wLimit" placeholder="это и есть её главное ограничение"></div>
-    <div class="field"><label>Какая фракция/сила антагонистична герою?</label>
-      <input type="text" id="wAntag" placeholder="и почему"></div>
+  els.right.innerHTML = `<div class="ph">Идея мира (необязательно)</div><div class="pad">
+    <div class="field"><textarea id="wSeed" rows="3" placeholder="в общих чертах, если есть — иначе агент оттолкнётся от жанра и синопсиса">${esc(_ideaSeed)}</textarea></div>
   </div>`;
 
   els.center.className = 'panel panel-center';
@@ -98,14 +114,13 @@ export function renderWorld(els){
     <div class="read-bar">
       <span class="read-title">Мир</span>
       <span style="flex:1"></span>
-      <button class="btn btn-primary" id="wSuggest">${_busy?'<span class="spinner"></span> '+esc(_busyText):'✨ Предложить мир'}</button>
+      <button class="btn btn-primary" id="wSuggestAll" ${busyAny?'disabled':''}>${_bulkBusy?'<span class="spinner"></span> '+esc(_bulkProgress):'✨ Предложить весь мир'}</button>
     </div>
     <div class="read-body" id="wBody">
       ${podWarning ? `<div class="pad" style="border:1px solid var(--err);border-radius:8px;margin:0 0 14px;background:var(--surface-2)">
         <div style="font-size:12px;color:var(--err)">⚠ Для альтернативной истории точка развилки — основа жанра. Добавьте факт категории «История» с чёткой развилкой (событие + год + следствия), прежде чем продолжать.</div>
       </div>` : ''}
-      ${renderCandidates()}
-      ${renderCanon(worldFacts)}
+      ${cats.map(cat=>renderCategoryCard(s, worldFacts, cat, busyAny)).join('')}
       ${renderMapBlock(s, geoCount)}
       <div class="row" style="margin-top:18px;justify-content:flex-end">
         <button class="btn btn-primary" id="wNext">Дальше — ${p.useVoice?'Голос':'Структура'} →</button>
