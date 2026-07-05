@@ -34,7 +34,7 @@ export function categoriesFor(genre){
   return cats;
 }
 
-const CATEGORY_HINTS = {
+export const CATEGORY_HINTS = {
   'география': 'места действия, расстояния, климат, что где находится',
   'история': 'ключевые прошлые события, формирующие настоящее',
   'магия/технология': 'как это работает — и ЯВНО, что оно НЕ может делать / чего стоит (ограничения не менее важны, чем возможности: без них автор потом придумывает deus ex machina, а стражи не могут это поймать, т.к. в каноне нет отрицательных фактов)',
@@ -51,45 +51,64 @@ function altHistoryNote(genre){
   return 'ЭТОТ ЖАНР ТРЕБУЕТ явной точки развилки в категории «история»: конкретное историческое событие + год + что пошло иначе + 2-3 конкретных следствия (технологические/политические/культурные), логически из неё вытекающих. Без точки развилки жанр не работает — обязательно включи такой факт.';
 }
 
-export function worldSuggestMessages(state, hints={}){
+export function worldSuggestMessages(state, category, opts={}){
   const p = state.project;
-  const cats = categoriesFor(p.genre);
+  const hint = (opts.hint||'').trim();
+  const ideaSeed = (opts.ideaSeed||'').trim();
   const sys = [
     'Ты — соавтор по мироустройству (worldbuilding). Ты предлагаешь конкретные факты мира книги — НЕ пишешь прозу и не строишь сюжет.',
     'Каждый факт — конкретное, проверяемое утверждение (не «в этом мире есть магия», а «боевая магия истощает год жизни за каждое применение») — расплывчатые факты хуже работают с системой поиска канона и не помогают стражам ловить противоречия.',
-    `Категории и что в них важно:\n${cats.map(c=>`— ${c}: ${CATEGORY_HINTS[c]||''}`).join('\n')}`,
+    `Сейчас нужны факты ТОЛЬКО категории «${category}»: ${CATEGORY_HINTS[category]||''}`,
     altHistoryNote(p.genre),
   ].filter(Boolean).join('\n');
   const user = [
     `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
     p.era ? `Эпоха: ${p.era}.` : '',
     (p.synopsis||p.idea) ? `Синопсис: ${p.synopsis||p.idea}` : '',
-    hints.ideaSeed ? `Идея мира от автора: ${hints.ideaSeed}` : '',
-    hints.limitation ? `Что герой не может получить/сделать без магии/технологии: ${hints.limitation}` : '',
-    hints.antagonistFaction ? `Фракция/сила, антагонистичная герою: ${hints.antagonistFaction}` : '',
+    ideaSeed ? `Идея мира от автора: ${ideaSeed}` : '',
+    hint ? `Подсказка автора для категории «${category}»: ${hint}` : '',
     '',
-    `Предложи 8-15 фактов мира, распределённых по категориям: ${cats.join(', ')}.`,
-    'Верни JSON: { "facts": [ { "category": "одна из категорий выше", "keys": "2-4 ключевых слова через запятую", "text": "сам факт, 1-2 предложения" } ] }',
+    `Предложи 3-6 фактов категории «${category}».`,
+    `Верни JSON: { "facts": [ { "keys": "2-4 ключевых слова через запятую", "text": "сам факт, 1-2 предложения" } ] }`,
     'Только JSON.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
-export async function suggestWorldFacts(state, hints={}){
+export async function suggestWorldFacts(state, category, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
-  const msgs = worldSuggestMessages(state, hints);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.8, messages:msgs, maxTokens:1800, retries:g.retries });
+  const msgs = worldSuggestMessages(state, category, opts);
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.8, messages:msgs, maxTokens:800, retries:g.retries });
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.facts) ? j.facts : null;
   if(!arr) throw new Error('Не удалось разобрать ответ агента «Мир».');
-  const cats = categoriesFor(state.project.genre);
-  return arr.slice(0, 20).map((f,i)=>({
+  return arr.slice(0, 6).map((f,i)=>({
     id: 'wf_'+Date.now().toString(36)+'_'+i,
-    category: cats.includes(f.category) ? f.category : cats[0],
+    category,
     keys: String(f.keys||'').slice(0,120),
     text: String(f.text||'').trim().slice(0,500),
   })).filter(f=>f.text);
+}
+
+// Перегенерация ОДНОГО уже одобренного факта — «эта формулировка не устроила»,
+// не путать с ✨-расширением в ui/memory.js (то дописывает деталями, это меняет
+// саму формулировку, не трогая суть). Возвращает новый текст — вызывающая
+// сторона (ui/world.js) сама присваивает fact.text и вызывает rebuildBibleVecs.
+export async function rerollWorldFact(state, fact){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  const sys = 'Ты — соавтор по мироустройству. Автору не понравилась формулировка факта мира — предложи ДРУГУЮ версию ТОЙ ЖЕ сути (тот же смысл, другие слова), не меняя факт по содержанию.';
+  const user = [
+    `Жанр: ${state.project.genre||'роман'}.`,
+    `Факт (категория «${fact.category||''}»): ${fact.text}`,
+    '',
+    'Верни только новый текст факта, одно-два предложения, без пояснений и без кавычек.',
+  ].join('\n');
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.9, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:300, retries:g.retries });
+  const text = res.text.trim().replace(/^["«]+|["»]+$/g,'');
+  if(!text) throw new Error('Пустой ответ.');
+  return text;
 }
 
 // Мягкая проверка (не блокирует, спека §10) — для альт-истории нужен хотя бы
