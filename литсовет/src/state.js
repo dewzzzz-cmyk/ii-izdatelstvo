@@ -50,6 +50,8 @@ export function defaultState(){
       forbidden: ['клише','эмоц. ярлыки','восклицания'],
       rules: [],               // правила автора (do/don't): идут Прозаику, Оценщику, Стражу стиля
       profanity: 'moderate',   // off | mild | moderate | strict
+      colorMode: 'color',      // color | bw — цветные иллюстрации или чёрно-белые
+      artStyleId: '',          // id пресета из artStyles.js; '' = без пресета (только «Визуальный голос»)
     },
     voice: {
       sample: '',              // вставленный образец прозы
@@ -70,6 +72,7 @@ export function defaultState(){
       model: '',                // пусто → дефолт провайдера (gpt-image-1 / gemini-2.5-flash-image)
       quality: 'standard',     // standard | hd
       items: [],                // {id, type, sceneId, sceneTitle, prompt, dataUrl, createdAt}
+      suggestCount: 7,          // сколько кандидатов предлагать (включая обложку), 1-15
     },
     global: {
       baseURL: 'https://api.deepseek.com',
