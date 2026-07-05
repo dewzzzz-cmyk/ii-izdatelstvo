@@ -288,6 +288,13 @@ textarea{resize:vertical;min-height:60px}
 .bible-card:hover .bible-actions{display:flex}
 .bc-act{border:1px solid var(--border-2);background:var(--surface);border-radius:5px;font-size:11px;padding:1px 5px;cursor:pointer}
 .bc-act:hover{background:var(--surface-2)}
+.world-cat-card{border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;background:var(--surface)}
+.world-cat-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.world-cat-hint{width:100%;box-sizing:border-box;margin-bottom:8px}
+.world-cat-facts{margin-top:10px}
+.world-cat-cands{margin-top:10px}
+.world-cat-add{font-size:12px;color:var(--text-2);cursor:pointer}
+.world-cat-add:hover{color:var(--accent)}
 .mem-mini{font-size:11px;padding:1px 7px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--accent);font-weight:400}
 .mem-rb,.mem-rs{font-size:11px;padding:2px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface-2);color:var(--text-2)}
 .mem-rb:hover,.mem-rs:hover{background:var(--surface)}

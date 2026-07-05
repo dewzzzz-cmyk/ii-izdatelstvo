@@ -59,3 +59,21 @@ export function parseBibleLines(text){
     .map(l=>{ const i=l.indexOf('|'); return { keys:l.slice(0,i).replace(/^[-•*\d.)\s]+/,'').trim(), text:l.slice(i+1).trim() }; })
     .filter(e=>e.text);
 }
+
+// Правка/удаление одной записи канона по индексу в state.bible — общее для
+// панели «Память» (ui/memory.js) и вкладки «Мир» (ui/world.js). save() и
+// rebuildBibleVecs() — на стороне вызывающего UI, как и для остальных мутаций
+// state в этом файле (см. saveMapItem в illustrations.js — тот же паттерн).
+export function editBibleFactAt(bible, i){
+  const fact = bible[i]; if(!fact) return false;
+  const keys = prompt('Ключи:', fact.keys||''); if(keys===null) return false;
+  const text = prompt('Факт:', fact.text||''); if(text===null) return false;
+  fact.keys = keys.trim(); fact.text = text.trim();
+  return true;
+}
+
+export function deleteBibleFactAt(bible, i){
+  if(!bible[i]) return false;
+  bible.splice(i,1);
+  return true;
+}
