@@ -1525,17 +1525,27 @@ export function renderRoadmap(s){
 function exportPdf(s){
   const title = esc(s.project.title||'Книга');
   const nodes = s.structure||[];
+  const items = s.illustrations?.items || [];
+  const illustrationForScene = (sceneId)=>{ const it=items.find(i=>i.type==='scene' && i.sceneId===sceneId); return it?it.dataUrl:null; };
+  const mapItem = items.find(i=>i.type==='map') || null;
   let body='';
+  if(mapItem) body += `<div class="pdf-img"><img src="${mapItem.dataUrl}"></div>`;
   nodes.forEach(n=>{
     if(n.type==='chapter') body+=`<h2>${esc(n.title)}</h2>`;
-    else if(n.type==='scene'&&n.text) body+=`<div class="scene"><h3>${esc(n.title)}</h3><div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
+    else if(n.type==='scene'&&n.text){
+      const illust = illustrationForScene(n.id);
+      body+=`<div class="scene">${illust?`<div class="pdf-img"><img src="${illust}"></div>`:''}<h3>${esc(n.title)}</h3><div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
+    }
   });
   const html=`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title><style>
     @page{margin:2cm 2.5cm}body{font-family:Georgia,serif;font-size:12pt;line-height:1.7;color:#111;max-width:680px;margin:0 auto}
     h1{font-size:22pt;text-align:center;margin:3cm 0 1cm}h2{font-size:16pt;margin:2cm 0 .5cm;border-bottom:1px solid #ccc;padding-bottom:.3cm}
     h3{font-size:12pt;font-weight:normal;font-style:italic;color:#555;margin:.8cm 0 .2cm}.prose p{text-indent:1.5em;margin:.15em 0}
-    .prose p:first-child{text-indent:0}@media print{h2{page-break-before:always}}
-  </style></head><body><h1>${title}</h1>${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
+    .prose p:first-child{text-indent:0}.pdf-img{text-align:center;margin:.5cm 0}.pdf-img img{max-width:100%;max-height:22cm}
+    @media print{h2{page-break-before:always}}
+  </style></head><body><h1>${title}</h1>
+  ${s.project.coverDataUrl?`<div class="pdf-img" style="margin:0 0 1.5cm">\n<img src="${s.project.coverDataUrl}" style="max-height:26cm"></div>`:''}
+  ${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
   const w=window.open('','_blank'); if(!w) return;
   w.document.write(html); w.document.close();
 }
