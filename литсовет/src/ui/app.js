@@ -36,8 +36,8 @@ const STAGES = [
   { id:'voice',     label:'Голос' },
   { id:'structure', label:'Структура' },
   { id:'write',     label:'Написание' },
-  { id:'edit',      label:'Редактура' },
   { id:'illustrations', label:'Иллюстрации' },
+  { id:'edit',      label:'Редактура' },
 ];
 
 const els = {
