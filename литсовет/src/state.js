@@ -344,10 +344,17 @@ export async function init(){
 
 export function newProject(){
   const prevKey = _state?.global?.apiKey || '';
-  const prevIcKey = _state?.illustrations?.apiKey || '';
+  const prevIc = _state?.illustrations || {};
   _state = defaultState();
   _state.global.apiKey = prevKey;
-  _state.illustrations.apiKey = prevIcKey;
+  _state.illustrations.apiKey = prevIc.apiKey || '';
+  // Провайдер/модель/качество/размер идут вместе с ключом — ключ одного
+  // провайдера не работает у другого (иначе после первого нового проекта
+  // ключ молча остаётся, а провайдер откатывается на дефолтный gemini).
+  if(prevIc.provider) _state.illustrations.provider = prevIc.provider;
+  if(prevIc.model) _state.illustrations.model = prevIc.model;
+  if(prevIc.quality) _state.illustrations.quality = prevIc.quality;
+  if(prevIc.size) _state.illustrations.size = prevIc.size;
   lsSet('litsovet_last', _state.id);
   save();
   return _state;
