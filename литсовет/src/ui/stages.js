@@ -1564,10 +1564,17 @@ export function renderEdit(els){
   els.right.innerHTML = `<div class="ph">Готовность книги</div>${renderRoadmap(s)}`;
   els.center.className='panel panel-center read-mode';
 
+  const illustrationForScene = (sceneId)=>{ const it=(s.illustrations?.items||[]).find(i=>i.type==='scene' && i.sceneId===sceneId); return it?it.dataUrl:null; };
   let body='';
+  if(s.project.coverDataUrl) body += `<div class="read-cover"><img src="${s.project.coverDataUrl}" alt="Обложка"></div>`;
+  const mapItem = (s.illustrations?.items||[]).find(i=>i.type==='map');
+  if(mapItem) body += `<div class="read-cover"><img src="${mapItem.dataUrl}" alt="Карта мира"></div>`;
   nodes.forEach(n=>{
     if(n.type==='chapter') body+=`<h2 class="read-ch">${esc(n.title)}</h2>`;
-    else if(n.type==='scene' && n.text) body+=`<div class="read-scene" id="read-${n.id}"><div class="read-scene-t">${esc(n.title)}</div><div class="read-prose">${esc(n.text)}</div></div>`;
+    else if(n.type==='scene' && n.text){
+      const illust = illustrationForScene(n.id);
+      body+=`<div class="read-scene" id="read-${n.id}">${illust?`<img class="read-illust" src="${illust}" alt="${esc(n.title)}">`:''}<div class="read-scene-t">${esc(n.title)}</div><div class="read-prose">${esc(n.text)}</div></div>`;
+    }
   });
 
   els.center.innerHTML = `
