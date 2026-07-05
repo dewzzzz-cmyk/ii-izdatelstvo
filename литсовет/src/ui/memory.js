@@ -6,7 +6,7 @@ import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 import { callLLM } from '../llm.js';
-import { rebuildBibleVecs } from '../bible.js';
+import { rebuildBibleVecs, editBibleFactAt, deleteBibleFactAt } from '../bible.js';
 import { openRuleModal } from './rule-modal.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -261,12 +261,8 @@ function bindMemory(){
   document.querySelectorAll('.bc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
-    if(b.dataset.act==='del'){ s.bible.splice(i,1); rebuildBibleVecs(s.bible); save(); return; }
-    if(b.dataset.act==='edit'){
-      const keys=prompt('Ключи:', fact.keys||''); if(keys===null) return;
-      const text=prompt('Факт:', fact.text||''); if(text===null) return;
-      fact.keys=keys.trim(); fact.text=text.trim(); rebuildBibleVecs(s.bible); save(); return;
-    }
+    if(b.dataset.act==='del'){ if(deleteBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); } return; }
+    if(b.dataset.act==='edit'){ if(editBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); } return; }
     if(b.dataset.act==='expand'){
       if(!s.global.apiKey){ alert('Задайте API-ключ (⚙).'); return; }
       b.textContent='…'; b.disabled=true;
