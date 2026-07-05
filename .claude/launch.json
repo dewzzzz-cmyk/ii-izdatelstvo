@@ -15,12 +15,5 @@
       "port": 8788,
       "autoPort": false
     },
-    {
-      "name": "litsovet-illustrations-export",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["C:\\Users\\user\\Documents\\webar-main\\издательство\\.worktrees\\litsovet-illustrations-export\\литсовет\\server.js"],
-      "port": 8792,
-      "autoPort": false
-    }
   ]
 }
