@@ -65,7 +65,6 @@ function renderRail(){
   els.stages.innerHTML = '';
   const visibleStages = STAGES.filter(st=>{
     if(st.id==='voice') return !!s.project?.useVoice;
-    if(st.id==='world') return !!s.project?.useWorld;
     return true;
   });
   visibleStages.forEach(st=>{

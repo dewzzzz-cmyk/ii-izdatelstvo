@@ -23,7 +23,7 @@ import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
 import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles } from '../bookreview.js';
 import { GENRES, ERAS } from '../genres.js';
-import { genreWantsWorld, suggestMissingWorldFacts } from '../world.js';
+import { suggestMissingWorldFacts } from '../world.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -134,7 +134,6 @@ export function renderConcept(els){
   const _eraSelectVal = _knownEra ? p.era : (p.era ? 'другой' : '');
   const _showCustomEra = !_knownEra && !!p.era;
   const _canTitles = canSuggestTitles(s);
-  const _worldAutoLabel = (p.useWorld && genreWantsWorld(p.genre));
   els.left.innerHTML = `<div class="ph">Проект</div><div class="pad">
     <div class="muted">Прогрессивный онбординг: один вопрос, остальное по желанию.</div></div>`;
   els.right.innerHTML = '';
@@ -223,13 +222,6 @@ export function renderConcept(els){
           <span><b>Голос автора</b> — включить вкладку «Голос» <span class="hint">загрузить образец своей прозы, чтобы модель писала в вашем стиле</span></span>
         </label>
         <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
-          <input type="checkbox" id="useWorld" ${p.useWorld?'checked':''}
-            style="width:16px;height:16px;flex-shrink:0">
-          <span><b>Мир</b> — включить стадию «Мир» <span class="hint">зафиксировать факты сеттинга до Структуры: география, история, магия/технология, фракции, культура</span></span>
-        </label>
-        <div id="useWorldAutoLabel" class="hint" style="margin:-6px 0 10px 24px;${_worldAutoLabel?'':'display:none'}">Включено автоматически для жанра «${esc(GENRES.find(g=>g.v===p.genre)?.label||p.genre)}» — можно выключить</div>
-
-        <label class="field row" style="gap:8px;cursor:pointer;align-items:center">
           <input type="checkbox" id="visualVoiceOn" ${s.style?.visualVoiceOn?'checked':''}
             style="width:16px;height:16px;flex-shrink:0">
           <span><b>Визуальный голос</b> <span class="hint">единый арт-стиль для всех иллюстраций книги — описание ниже добавляется в промпт каждой картинки</span></span>
@@ -261,7 +253,7 @@ export function renderConcept(els){
       </div>
 
       <div class="row" style="margin-top:16px;justify-content:flex-end">
-        <button class="btn btn-primary" id="toNext">Дальше — ${p.useWorld?'Мир':p.useVoice?'Голос':'Структура'} →</button>
+        <button class="btn btn-primary" id="toNext">Дальше — Мир →</button>
       </div>
     </div>`;
 
@@ -335,11 +327,6 @@ export function renderConcept(els){
         genreCustom.style.display='none';
         p.genre = v;
         if(gd && gd.words){ p.targetWords=gd.words; const tw=document.getElementById('tw'); if(tw) tw.value=gd.words; const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(gd.words); }
-        p.useWorld = genreWantsWorld(v);
-        const uw = document.getElementById('useWorld'); if(uw) uw.checked = p.useWorld;
-        const lbl = document.getElementById('useWorldAutoLabel');
-        if(lbl){ lbl.style.display = p.useWorld?'':'none'; lbl.textContent = `Включено автоматически для жанра «${gd?gd.label:v}» — можно выключить`; }
-        const btn = document.getElementById('toNext'); if(btn) btn.textContent = 'Дальше — '+(p.useWorld?'Мир':p.useVoice?'Голос':'Структура')+' →';
         save();
       }
     };
@@ -373,14 +360,6 @@ export function renderConcept(els){
   };
   document.getElementById('useVoice').onchange = (ev)=>{
     p.useVoice = ev.target.checked;
-    const btn = document.getElementById('toNext');
-    if(btn) btn.textContent = 'Дальше — '+(p.useVoice?'Голос':'Структура')+' →';
-    save();
-  };
-  document.getElementById('useWorld').onchange = (ev)=>{
-    p.useWorld = ev.target.checked;
-    const btn = document.getElementById('toNext'); if(btn) btn.textContent = 'Дальше — '+(p.useWorld?'Мир':p.useVoice?'Голос':'Структура')+' →';
-    const lbl = document.getElementById('useWorldAutoLabel'); if(lbl) lbl.style.display = 'none'; // ручное решение — авто-подсказка больше не актуальна
     save();
   };
   s.style = s.style || {};
@@ -394,7 +373,7 @@ export function renderConcept(els){
   if(artStyleSel) artStyleSel.onchange = ()=>{ s.style.artStyleId = artStyleSel.value; save(); };
   const colorModeSel = document.getElementById('colorMode');
   if(colorModeSel) colorModeSel.onchange = ()=>{ s.style.colorMode = colorModeSel.value; save(); };
-  document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = p.useWorld?'world':(p.useVoice?'voice':'structure'); save(); };
+  document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = 'world'; save(); };
 }
 
 // ─────────────────────────────── ГОЛОС ───────────────────────────────
@@ -1490,7 +1469,7 @@ function resolveSuggestion(scene, idx, accept){
 }
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
-const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['illustrations','Иллюстрации'],['edit','Редактура']];
+const STAGE_LABELS = [['concept','Концепция'],['world','Мир'],['voice','Голос'],['structure','Структура'],['write','Написание'],['illustrations','Иллюстрации'],['edit','Редактура']];
 // Роадмап — переиспользуемая секция (правая панель «Написания» + стадия «Редактура»).
 export function renderRoadmap(s){
   const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
@@ -1780,6 +1759,7 @@ function openChekhovModal(setups){
 function stageDoneFor(s,id){
   switch(id){
     case 'concept': return !!(s.project.idea||s.project.title);
+    case 'world': return (s.bible||[]).some(b=>b.source==='world');
     case 'voice': return (s.voice.examples||[]).length>0;
     case 'structure': return (s.structure||[]).some(n=>n.type==='scene');
     case 'write': return (s.structure||[]).filter(n=>n.type==='scene').some(n=>n.status==='done');

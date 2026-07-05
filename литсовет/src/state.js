@@ -38,7 +38,6 @@ export function defaultState(){
       seriesBook: 1,
       mode: 'director',         // director (режиссёр) | factory (фабрика)
       useVoice: false,          // показывать вкладку «Голос» и учитывать образец
-      useWorld: false,          // показывать вкладку «Мир» (проактивный worldbuilding)
       sceneWords: 0,            // 0 = авто (totalWords/60, зажато 700-2000); явное значение — диапазон 300-4000
       chapterCount: 0,          // 0 = «авто» — предзаполняет #chCount на Структуре
       pacing: 'balanced',       // action | balanced | reflective — доля сцена/секвель у Архитектора
