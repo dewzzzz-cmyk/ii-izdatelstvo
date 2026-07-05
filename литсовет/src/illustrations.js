@@ -14,6 +14,7 @@ import { generateImage } from './imagegen.js';
 // ── 1) Кандидаты на иллюстрации (текстовый LLM) ──
 export function illustrationSuggestMessages(state){
   const p = state.project;
+  const count = state.illustrations?.suggestCount || 7;
   const sys = [
     'Ты — арт-директор книги. Ты НЕ рисуешь — ты предлагаешь кандидатов на иллюстрации и текстовые промпты для генератора изображений.',
     'Промпт для картинки должен быть самодостаточным визуальным описанием (место, персонажи, свет, композиция, настроение) — генератор изображений не читал книгу и не поймёт отсылок к именам без описания их внешности.',
@@ -26,8 +27,8 @@ export function illustrationSuggestMessages(state){
     'ОБЗОР КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку):',
     bookOverview(state),
     '',
-    'Предложи кандидатов на иллюстрации: 1 обложка + до 7 сильных визуальных сцен (не каждую, только те, что реально дают яркую картинку — не диалоги и не размышления, а моменты с явным визуальным образом).',
-    'Верни JSON: { "candidates": [ { "type":"cover|scene", "sceneTitle":"точное название сцены из обзора (пусто для обложки)", "prompt":"самодостаточный визуальный промпт для генератора изображений, на английском, 1-3 предложения", "reason":"почему эта сцена/образ — по-русски, коротко" } ] }',
+    `Предложи кандидатов на иллюстрации: 1 обложка + до ${count-1} сильных визуальных сцен (не каждую, только те, что реально дают яркую картинку — не диалоги и не размышления, а моменты с явным визуальным образом).`,
+    'Верни JSON: { "candidates": [ { "type":"cover|scene", "sceneTitle":"точное название сцены из обзора (пусто для обложки)", "prompt":"самодостаточный визуальный промпт для генератора изображений, на английском, 1-3 предложения", "reason":"почему эта сцена/образ — по-русски, коротко", "importance":"число 1-10, насколько сильна эта картинка для книги — 10 = ключевой визуальный момент, 1 = проходной" } ] }',
     'Только JSON.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -44,7 +45,8 @@ export async function suggestIllustrations(state){
   const arr = j && Array.isArray(j.candidates) ? j.candidates : null;
   if(!arr) throw new Error('Не удалось разобрать ответ арт-директора.');
   const sceneByTitle = new Map(scenes.map(s=>[s.title.trim().toLowerCase(), s]));
-  return arr.slice(0, 8).map((c,i)=>{
+  const cap = state.illustrations?.suggestCount || 7;
+  return arr.slice(0, cap).map((c,i)=>{
     const sceneTitle = String(c.sceneTitle||'').trim();
     const matched = sceneTitle ? sceneByTitle.get(sceneTitle.toLowerCase()) : null;
     return {
@@ -54,6 +56,7 @@ export async function suggestIllustrations(state){
       sceneTitle: matched ? matched.title : sceneTitle,
       prompt: String(c.prompt||'').slice(0,600),
       reason: String(c.reason||'').slice(0,300),
+      importance: Math.max(1, Math.min(10, Math.round(Number(c.importance)||5))),
     };
   });
 }
