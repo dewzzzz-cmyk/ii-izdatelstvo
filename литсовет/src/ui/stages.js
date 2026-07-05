@@ -54,6 +54,13 @@ let _edSuggestions = [];    // необработанные предложени
 let _edReviewSceneId = null; // id сцены, к которой относятся _edSuggestions (сброс при смене сцены)
 let _autoClosingChapters = new Set(); // главы, которые сейчас автозакрываются в «Фабрике» (защита от повторного вызова)
 let _conceptAdvOpen = false; // «Дополнительные настройки» в Концепции — раскрыто/свёрнуто, переживает save()→rerender()
+// Последние разборы Бета-ридера/Критика/Ружей Чехова — модалка закрывается по
+// клику мимо (легко случайно), а сам разбор — реальный платный/долгий вызов
+// LLM; без кэша закрытие теряет результат безвозвратно и его нужно оплачивать
+// заново. Кнопка «↺» рядом с основной открывает этот кэш без нового вызова.
+let _lastBetaRead = null;
+let _lastCriticReview = null;
+let _lastChekhov = null;
 
 // Лента «Процесс»: пошагово что делают агенты и почему (особенно доработки).
 function renderProcess(){
@@ -1592,8 +1599,11 @@ export function renderEdit(els){
       <span class="read-meta">${doneScenes.length} сцен · ${doneScenes.reduce((a,x)=>a+(x.words||0),0).toLocaleString('ru')} сл.</span>
       <span style="flex:1"></span>
       <button class="btn" id="betaRead" data-tip="Читает книгу целиком (не по сценам) и честно отвечает вопросами анкеты бета-ридера: цепляет ли начало, ясны ли мотивации героя, где проседает интерес, satisfying ли финал.">📖 Бета-ридер</button>
+      ${_lastBetaRead?'<button class="btn" id="betaReadAgain" title="Открыть последний разбор снова — без нового вызова" style="padding:6px 8px">↺</button>':''}
       <button class="btn" id="chekhovCheck" data-tip="Отслеживает заявленные сюжетные заготовки (предмет, тайна, обещание) на масштабе всей книги — получили ли они развязку.">🔫 Ружья Чехова</button>
+      ${_lastChekhov?'<button class="btn" id="chekhovAgain" title="Открыть последний разбор снова — без нового вызова" style="padding:6px 8px">↺</button>':''}
       <button class="btn" id="criticReview" data-tip="Несокращённая рецензия литературного критика — не анкета с баллами, а честное развёрнутое мнение о рукописи, с конкретными претензиями к конкретным сценам.">🎭 Критик</button>
+      ${_lastCriticReview?'<button class="btn" id="criticAgain" title="Открыть последний разбор снова — без нового вызова" style="padding:6px 8px">↺</button>':''}
       <button class="btn" id="exMd">📕 .md</button>
       <button class="btn" id="exDocx">📄 .doc</button>
       <button class="btn" id="exEpub">📗 .epub</button>
@@ -1612,35 +1622,58 @@ export function renderEdit(els){
   if(br) br.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     br.disabled=true; const orig=br.textContent; br.innerHTML='<span class="spinner"></span> Читаю книгу…';
-    try{ const report=await runBetaRead(s); openBetaReadModal(report); }
+    try{ const report=await runBetaRead(s); _lastBetaRead=report; openBetaReadModal(report); }
     catch(e){ alert('Бета-ридер: '+e.message); }
-    finally{ br.disabled=false; br.textContent=orig; }
+    finally{ br.disabled=false; br.textContent=orig; renderEdit(els); }
   };
+  const bra=document.getElementById('betaReadAgain');
+  if(bra) bra.onclick=(ev)=>{ ev.stopPropagation(); if(_lastBetaRead) openBetaReadModal(_lastBetaRead); };
   const cc=document.getElementById('chekhovCheck');
   if(cc) cc.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     cc.disabled=true; const orig=cc.textContent; cc.innerHTML='<span class="spinner"></span> Ищу заготовки…';
-    try{ const setups=await runChekhovCheck(s); openChekhovModal(setups); }
+    try{ const setups=await runChekhovCheck(s); _lastChekhov=setups; openChekhovModal(setups); }
     catch(e){ alert('Ружья Чехова: '+e.message); }
-    finally{ cc.disabled=false; cc.textContent=orig; }
+    finally{ cc.disabled=false; cc.textContent=orig; renderEdit(els); }
   };
+  const cha=document.getElementById('chekhovAgain');
+  if(cha) cha.onclick=(ev)=>{ ev.stopPropagation(); if(_lastChekhov) openChekhovModal(_lastChekhov); };
   const crb=document.getElementById('criticReview');
   if(crb) crb.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     crb.disabled=true; const orig=crb.textContent; crb.innerHTML='<span class="spinner"></span> Читаю и пишу рецензию…';
-    try{ const report=await runCriticReview(s); openCriticModal(s, report); }
+    try{ const report=await runCriticReview(s); _lastCriticReview=report; openCriticModal(s, report); }
     catch(e){ alert('Критик: '+e.message); }
-    finally{ crb.disabled=false; crb.textContent=orig; }
+    finally{ crb.disabled=false; crb.textContent=orig; renderEdit(els); }
   };
+  const cra=document.getElementById('criticAgain');
+  if(cra) cra.onclick=(ev)=>{ ev.stopPropagation(); if(_lastCriticReview) openCriticModal(s, _lastCriticReview); };
 }
 
 function scoreColor(n){ return n>=7?'var(--ok)':n>=4?'var(--warn)':'var(--err)'; }
+
+// Кнопка «Скопировать» для находок Бета-ридера/Критика, которые не привязаны
+// к конкретной сцене (или привязаны, но автор хочет вставить замечание сам,
+// не переходя сразу в «Написание») — единственный способ вообще что-то
+// сделать с находкой, если её нельзя адресовать через crit-goto.
+function copyNoteBtn(text){
+  if(!text) return '';
+  return `<button class="btn ares-copy-note" data-copy="${esc(text)}" title="Скопировать в буфер — вставьте в поле «Сказать агенту, что изменить» на нужной сцене" style="font-size:11px;padding:2px 8px;align-self:flex-start;margin-top:2px">📋 Копировать</button>`;
+}
+function bindCopyNotes(){
+  document.querySelectorAll('.ares-copy-note').forEach(b=>b.onclick=()=>{
+    navigator.clipboard?.writeText(b.dataset.copy).catch(()=>{});
+    const orig=b.textContent; b.textContent='✓ Скопировано'; b.disabled=true;
+    setTimeout(()=>{ b.textContent=orig; b.disabled=false; }, 1200);
+  });
+}
 
 function openBetaReadModal(r){
   const root=document.getElementById('modalRoot');
   const row=(label, score, note)=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px">
     <div class="row" style="justify-content:space-between"><b>${label}</b><span style="font-weight:700;color:${scoreColor(score)}">${score}/10</span></div>
     <div class="muted" style="font-size:12px">${esc(note||'—')}</div>
+    ${copyNoteBtn(note)}
   </div>`;
   root.innerHTML=`<div class="modal-bg" id="brBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>📖 Бета-ридер</h2>
@@ -1651,10 +1684,11 @@ function openBetaReadModal(r){
       ${row('Финал', r.endingScore, r.endingNote)}
       ${r.paceDrops.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
         <b>Где проседал интерес</b>
-        ${r.paceDrops.map(p=>`<div style="font-size:12px;color:var(--text-2)">• ${esc(p)}</div>`).join('')}
+        ${r.paceDrops.map(p=>`<div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px"><div style="font-size:12px;color:var(--text-2)">• ${esc(p)}</div>${copyNoteBtn(p)}</div>`).join('')}
       </div>`:''}
       <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:var(--accent-bg)">
         <b>Общее впечатление</b><div style="font-size:13px">${esc(r.overall||'—')}</div>
+        ${copyNoteBtn(r.overall)}
       </div>
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="brClose">Закрыть</button></div>
@@ -1662,6 +1696,7 @@ function openBetaReadModal(r){
   const close=()=>root.innerHTML='';
   document.getElementById('brBg').onclick=close;
   document.getElementById('brClose').onclick=close;
+  bindCopyNotes();
 }
 
 function openCriticModal(s, r){
@@ -1687,8 +1722,11 @@ function openCriticModal(s, r){
           return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-top:1px solid var(--border)">
             <div style="font-size:13px">${esc(p.issue)}</div>
             ${p.note?`<div style="font-size:12px;color:var(--text-2)">${esc(p.note)}</div>`:''}
-            ${sc?`<button class="btn crit-goto" data-sc="${sc.id}" data-note="${esc(noteText)}" style="align-self:flex-start;font-size:11px;padding:3px 8px">→ «${esc(sc.title)}» (открыть и скопировать замечание)</button>`
-                :(p.sceneTitle?`<div class="muted" style="font-size:11px">сцена «${esc(p.sceneTitle)}» не найдена в структуре</div>`:'')}
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              ${sc?`<button class="btn crit-goto" data-sc="${sc.id}" data-note="${esc(noteText)}" style="align-self:flex-start;font-size:11px;padding:3px 8px">→ «${esc(sc.title)}» (открыть и скопировать замечание)</button>`
+                  :(p.sceneTitle?`<div class="muted" style="font-size:11px">сцена «${esc(p.sceneTitle)}» не найдена в структуре</div>`:'')}
+              ${!sc?copyNoteBtn(noteText):''}
+            </div>
           </div>`;
         }).join('')}
       </div>`:''}
@@ -1707,6 +1745,7 @@ function openCriticModal(s, r){
     s.ui.activeScene=b.dataset.sc; s.ui.stage='write'; save();
     close();
   });
+  bindCopyNotes();
 }
 
 function openChekhovModal(setups){
