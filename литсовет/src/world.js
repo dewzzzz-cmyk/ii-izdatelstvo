@@ -120,6 +120,23 @@ export function missingPOD(state){
   return !(state.bible||[]).some(b=>b.source==='world' && b.category==='история');
 }
 
+// Стилевые вариации карты — без этого модель при тонком промпте раз за разом
+// выбирает один и тот же дефолтный облик (тот же эффект конвергенции, что и
+// у Архитектора при генерации структуры на скудном входе). Выбор случайный,
+// не по проекту — разные карты одного мира (перегенерация) тоже не должны
+// выглядеть одинаково, если автору не понравился первый вариант.
+// Осознанное отличие от ART_STYLES (artStyles.js) и AUTHOR_STYLES (styles.js) —
+// там выбор ЕДИНСТВЕННЫЙ и ручной (автор выбирает и это сохраняется в state).
+// Для карты пока нет своего UI-слота под выбор стиля — авто-рандом здесь
+// временное решение, не постоянный архитектурный паттерн для будущих списков.
+const MAP_STYLE_FLAVORS = [
+  "weathered antique parchment, sepia ink linework, hand-lettered typography",
+  "painterly illuminated atlas page, muted watercolor washes, gilded border ornaments",
+  "woodcut-engraving style, cross-hatched shading, Renaissance-explorer aesthetic",
+  "hand-drawn adventurer's field map, ink-and-wash, coffee-stained edges, sketchy compass rose",
+  "richly illustrated tabletop-RPG atlas, saturated color, ornate cartouche title banner",
+];
+
 // ── Карта мира — НЕ через suggestIllustrations()/illustrationSuggestMessages()
 // (те требуют doneScenesOrdered(state), а на стадии «Мир» сцен ещё нет, спека §9).
 // Переиспользуется только низкоуровневый generateImage() из imagegen.js.
@@ -127,9 +144,20 @@ export function mapPromptFor(state){
   const geoFacts = (state.bible||[]).filter(b=>b.source==='world' && b.category==='география');
   if(!geoFacts.length) throw new Error('Нужно хотя бы несколько фактов категории «География» в каноне.');
   const p = state.project;
-  const facts = geoFacts.map(f=>f.text).join(' ');
+  // Бюджет символов — у фактов ОТДЕЛЬНЫЙ кап, а не общий с шаблоном: при
+  // насыщенном каноне (10+ фактов географии) общий .slice() в конце срезал
+  // промпт прямо на середине списка фактов, тихо теряя половину из них —
+  // не резать хвост, а ограничивать именно факты.
+  const facts = geoFacts.map(f=>f.text).join(' ').slice(0, 900);
   const style = `${p.genre||'роман'}${p.era?', '+p.era:''}`;
-  return `Fantasy-style map, top-down bird's-eye view, labeled key locations, cartography illustration style, aged paper texture, no text artifacts. Setting: ${style}. Geography: ${facts}`.slice(0, 900);
+  const flavor = MAP_STYLE_FLAVORS[Math.floor(Math.random()*MAP_STYLE_FLAVORS.length)];
+  return [
+    `Fantasy-style map, top-down bird's-eye view, cartography illustration, no text artifacts.`,
+    `Art direction: ${flavor}.`,
+    `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — compass rose, sea monsters or ships in unmapped waters, decorative border, scale bar, weathered texture, subtle terrain shading. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
+    `Setting: ${style}.`,
+    `Geography (must appear, labeled): ${facts}`,
+  ].join(' ');
 }
 
 export async function generateWorldMap(state){
