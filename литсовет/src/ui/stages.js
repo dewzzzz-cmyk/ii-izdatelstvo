@@ -1132,6 +1132,7 @@ export function renderWrite(els){
     <div class="scene-bar">
       <span class="scene-tag" data-tip="${scene.sceneType==='sequel'?'Секвель: реакция героя → дилемма → решение. Меньше внешнего действия, передышка после потрясения.':'Сцена: цель героя → конфликт → поражение/осложнение. Растущее напряжение.'}">${scene.sceneType==='sequel'?'↺ Секвель':'Сцена'}</span>
       <span class="scene-title">${esc(scene.title)}</span>
+      ${(()=>{ const illust=illustrationForScene(s, scene.id); return illust?`<img class="scene-thumb" src="${illust}" alt="Иллюстрация сцены" data-tip="Иллюстрация сцены — клик открывает в полный размер" id="sceneThumb">`:''; })()}
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
       <span style="flex:1"></span>
@@ -1220,6 +1221,9 @@ export function renderWrite(els){
   const edU=document.getElementById('edUndo'), edR=document.getElementById('edRedo');
   if(edU) edU.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('undo'); scene.text=ed.innerText; scene._dirty=true; } };
   if(edR) edR.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('redo'); scene.text=ed.innerText; scene._dirty=true; } };
+
+  const sceneThumb = document.getElementById('sceneThumb');
+  if(sceneThumb) sceneThumb.onclick = ()=>{ const w = window.open(); if(w) w.document.write(`<img src="${sceneThumb.src}" style="max-width:100%">`); };
 
   // Откат ПЕРЕГЕНЕРАЦИИ (как было) — вернуть прошлый вариант прозы.
   // Честный откат (LIFO), не свап с той же позицией — см. фикс revertSkeleton:

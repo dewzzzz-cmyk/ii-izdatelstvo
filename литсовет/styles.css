@@ -119,6 +119,7 @@ textarea{resize:vertical;min-height:60px}
 .scene-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
 .scene-tag{font-size:11px;background:var(--accent-bg);color:var(--accent);border-radius:10px;padding:2px 9px;font-weight:500}
 .scene-title{font-size:14px;font-weight:500}
+.scene-thumb{width:32px;height:32px;object-fit:cover;border-radius:var(--radius);cursor:pointer;flex-shrink:0}
 .iconbtn{font-size:12px;padding:4px 10px;border:1px solid var(--border-2);border-radius:var(--radius);background:var(--surface);color:var(--text-2);white-space:nowrap}
 .iconbtn:hover:not(:disabled){background:var(--surface-2);color:var(--text)}
 .iconbtn:disabled{opacity:.4;cursor:not-allowed}
