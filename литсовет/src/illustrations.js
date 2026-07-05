@@ -10,6 +10,7 @@
 import { callLLM, extractJSON } from './llm.js';
 import { bookOverview, doneScenesOrdered } from './bookreview.js';
 import { generateImage } from './imagegen.js';
+import { ART_STYLES } from './artStyles.js';
 
 // ── 1) Кандидаты на иллюстрации (текстовый LLM) ──
 export function illustrationSuggestMessages(state){
@@ -62,12 +63,20 @@ export async function suggestIllustrations(state){
 }
 
 // ── 2) Генерация ОДНОЙ картинки (провайдер картинок, тратит деньги) ──
-// visualVoice — текст стиля из Концепции (state.style.visualVoice), если тумблер включён.
+// Стиль картинки собирается из трёх необязательных частей (все могут сочетаться):
+// visualVoice (state.style.visualVoice, если тумблер включён), пресет ART_STYLES
+// (state.style.artStyleId) и чёрно-белый режим (state.style.colorMode==='bw').
+// Цвет по умолчанию — без доп. инструкции (большинство генераторов рисуют
+// цветное по умолчанию), явная инструкция нужна только для ч/б.
 export async function generateIllustrationFor(state, candidate){
   const ic = state.illustrations || {};
   if(!ic.apiKey) throw new Error('Не задан API-ключ для генерации картинок (⚙).');
-  const voiceOn = state.style?.visualVoiceOn && state.style?.visualVoice;
-  const prompt = voiceOn ? `${candidate.prompt}\n\nСтиль: ${state.style.visualVoice}` : candidate.prompt;
+  const parts = [];
+  if(state.style?.visualVoiceOn && state.style?.visualVoice) parts.push(`Стиль: ${state.style.visualVoice}`);
+  const artStyle = ART_STYLES.find(s=>s.id===state.style?.artStyleId);
+  if(artStyle) parts.push(artStyle.promptFragment);
+  if(state.style?.colorMode==='bw') parts.push('black and white, monochrome, no color');
+  const prompt = parts.length ? `${candidate.prompt}\n\n${parts.join('. ')}` : candidate.prompt;
   const { dataUrl } = await generateImage({
     provider: ic.provider||'gemini',
     apiKey: ic.apiKey,
