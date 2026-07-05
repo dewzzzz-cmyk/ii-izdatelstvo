@@ -1132,6 +1132,7 @@ export function renderWrite(els){
     <div class="scene-bar">
       <span class="scene-tag" data-tip="${scene.sceneType==='sequel'?'Секвель: реакция героя → дилемма → решение. Меньше внешнего действия, передышка после потрясения.':'Сцена: цель героя → конфликт → поражение/осложнение. Растущее напряжение.'}">${scene.sceneType==='sequel'?'↺ Секвель':'Сцена'}</span>
       <span class="scene-title">${esc(scene.title)}</span>
+      ${(()=>{ const illust=illustrationForScene(s, scene.id); return illust?`<img class="scene-thumb" src="${illust}" alt="Иллюстрация сцены" data-tip="Иллюстрация сцены — клик открывает в полный размер" id="sceneThumb">`:''; })()}
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
       <span style="flex:1"></span>
@@ -1220,6 +1221,9 @@ export function renderWrite(els){
   const edU=document.getElementById('edUndo'), edR=document.getElementById('edRedo');
   if(edU) edU.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('undo'); scene.text=ed.innerText; scene._dirty=true; } };
   if(edR) edR.onclick=()=>{ const ed=document.getElementById('editor'); if(ed){ ed.focus(); document.execCommand('redo'); scene.text=ed.innerText; scene._dirty=true; } };
+
+  const sceneThumb = document.getElementById('sceneThumb');
+  if(sceneThumb) sceneThumb.onclick = ()=>{ const w = window.open(); if(w) w.document.write(`<img src="${sceneThumb.src}" style="max-width:100%">`); };
 
   // Откат ПЕРЕГЕНЕРАЦИИ (как было) — вернуть прошлый вариант прозы.
   // Честный откат (LIFO), не свап с той же позицией — см. фикс revertSkeleton:
@@ -1479,7 +1483,7 @@ function resolveSuggestion(scene, idx, accept){
 }
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
-const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['edit','Редактура']];
+const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['illustrations','Иллюстрации'],['edit','Редактура']];
 // Роадмап — переиспользуемая секция (правая панель «Написания» + стадия «Редактура»).
 export function renderRoadmap(s){
   const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
@@ -1522,20 +1526,36 @@ export function renderRoadmap(s){
   </div>`;
 }
 
+// Иллюстрация сцены (если есть) — общий хелпер для PDF-экспорта и «Редактуры»,
+// оба показывают книгу целиком с уже сгенерированными картинками.
+function illustrationForScene(s, sceneId){
+  const it = (s.illustrations?.items||[]).find(i=>i.type==='scene' && i.sceneId===sceneId);
+  return it ? it.dataUrl : null;
+}
+
 function exportPdf(s){
   const title = esc(s.project.title||'Книга');
   const nodes = s.structure||[];
+  const items = s.illustrations?.items || [];
+  const mapItem = items.find(i=>i.type==='map') || null;
   let body='';
+  if(mapItem) body += `<div class="pdf-img"><img src="${mapItem.dataUrl}"></div>`;
   nodes.forEach(n=>{
     if(n.type==='chapter') body+=`<h2>${esc(n.title)}</h2>`;
-    else if(n.type==='scene'&&n.text) body+=`<div class="scene"><h3>${esc(n.title)}</h3><div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
+    else if(n.type==='scene'&&n.text){
+      const illust = illustrationForScene(s, n.id);
+      body+=`<div class="scene">${illust?`<div class="pdf-img"><img src="${illust}"></div>`:''}<h3>${esc(n.title)}</h3><div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
+    }
   });
   const html=`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title><style>
     @page{margin:2cm 2.5cm}body{font-family:Georgia,serif;font-size:12pt;line-height:1.7;color:#111;max-width:680px;margin:0 auto}
     h1{font-size:22pt;text-align:center;margin:3cm 0 1cm}h2{font-size:16pt;margin:2cm 0 .5cm;border-bottom:1px solid #ccc;padding-bottom:.3cm}
     h3{font-size:12pt;font-weight:normal;font-style:italic;color:#555;margin:.8cm 0 .2cm}.prose p{text-indent:1.5em;margin:.15em 0}
-    .prose p:first-child{text-indent:0}@media print{h2{page-break-before:always}}
-  </style></head><body><h1>${title}</h1>${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
+    .prose p:first-child{text-indent:0}.pdf-img{text-align:center;margin:.5cm 0}.pdf-img img{max-width:100%;max-height:22cm}
+    @media print{h2{page-break-before:always}}
+  </style></head><body><h1>${title}</h1>
+  ${s.project.coverDataUrl?`<div class="pdf-img" style="margin:0 0 1.5cm">\n<img src="${s.project.coverDataUrl}" style="max-height:26cm"></div>`:''}
+  ${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
   const w=window.open('','_blank'); if(!w) return;
   w.document.write(html); w.document.close();
 }
@@ -1555,9 +1575,15 @@ export function renderEdit(els){
   els.center.className='panel panel-center read-mode';
 
   let body='';
+  if(s.project.coverDataUrl) body += `<div class="read-cover"><img src="${s.project.coverDataUrl}" alt="Обложка"></div>`;
+  const mapItem = (s.illustrations?.items||[]).find(i=>i.type==='map');
+  if(mapItem) body += `<div class="read-cover"><img src="${mapItem.dataUrl}" alt="Карта мира"></div>`;
   nodes.forEach(n=>{
     if(n.type==='chapter') body+=`<h2 class="read-ch">${esc(n.title)}</h2>`;
-    else if(n.type==='scene' && n.text) body+=`<div class="read-scene" id="read-${n.id}"><div class="read-scene-t">${esc(n.title)}</div><div class="read-prose">${esc(n.text)}</div></div>`;
+    else if(n.type==='scene' && n.text){
+      const illust = illustrationForScene(s, n.id);
+      body+=`<div class="read-scene" id="read-${n.id}">${illust?`<img class="read-illust" src="${illust}" alt="${esc(n.title)}">`:''}<div class="read-scene-t">${esc(n.title)}</div><div class="read-prose">${esc(n.text)}</div></div>`;
+    }
   });
 
   els.center.innerHTML = `
@@ -1718,6 +1744,7 @@ function stageDoneFor(s,id){
     case 'voice': return (s.voice.examples||[]).length>0;
     case 'structure': return (s.structure||[]).some(n=>n.type==='scene');
     case 'write': return (s.structure||[]).filter(n=>n.type==='scene').some(n=>n.status==='done');
+    case 'illustrations': return (s.illustrations?.items||[]).length>0;
     default: return false;
   }
 }

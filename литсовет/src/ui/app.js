@@ -36,8 +36,8 @@ const STAGES = [
   { id:'voice',     label:'Голос' },
   { id:'structure', label:'Структура' },
   { id:'write',     label:'Написание' },
-  { id:'edit',      label:'Редактура' },
   { id:'illustrations', label:'Иллюстрации' },
+  { id:'edit',      label:'Редактура' },
 ];
 
 const els = {
@@ -252,7 +252,7 @@ async function openSettings(){
             <option value="gemini"${(s.illustrations?.provider||'gemini')==='gemini'?' selected':''}>Google Gemini (Nano Banana)</option>
             <option value="openai"${s.illustrations?.provider==='openai'?' selected':''}>OpenAI (gpt-image-1)</option>
             <option value="qwen"${s.illustrations?.provider==='qwen'?' selected':''} title="Менее проверенная интеграция — асинхронный API DashScope">Qwen / DashScope (Wanxiang, менее проверено)</option>
-            <option value="recraft"${s.illustrations?.provider==='recraft'?' selected':''} title="Менее проверенная интеграция — точный формат имени модели неподтверждён">Recraft V4.1 (менее проверено)</option>
+            <option value="recraft"${s.illustrations?.provider==='recraft'?' selected':''}>Recraft V4.1</option>
           </select>
           <select id="setIcQuality" style="flex:1">
             <option value="standard"${(s.illustrations?.quality||'standard')==='standard'?' selected':''}>Стандарт</option>
