@@ -32,6 +32,10 @@ export function renderIllustrations(els){
     <div class="read-bar">
       <span class="read-title">Иллюстрации</span>
       <span style="flex:1"></span>
+      <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Сколько кандидатов предложит арт-директор (включая обложку)">
+        Кандидатов:
+        <input type="number" id="illSuggestCount" min="1" max="15" value="${s.illustrations?.suggestCount||7}" style="width:52px">
+      </label>
       <button class="btn btn-primary" id="illSuggest" data-tip="Арт-директор (текстовый LLM, тот же что и для прозы) читает книгу и предлагает кандидатов на иллюстрации: обложку + сильные визуальные сцены. Ничего не тратит сверх обычного текстового вызова.">
         ${_busy?'<span class="spinner"></span> '+esc(_busyText):'🎨 Предложить иллюстрации'}
       </button>
@@ -56,6 +60,7 @@ function renderCandidates(s){
           <input type="checkbox" class="ill-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} style="margin-top:3px">
           <div style="flex:1">
             <b>${c.type==='cover'?'📕 Обложка':'🖼 «'+esc(c.sceneTitle||'')+'»'}</b>
+            <span class="muted" style="font-size:11px;margin-left:6px">★ ${c.importance||5}/10</span>
             <div class="muted" style="font-size:12px;margin-top:2px">${esc(c.reason||'')}</div>
             <div style="font-size:12px;color:var(--text-2);margin-top:2px;font-style:italic">${esc(c.prompt)}</div>
           </div>
@@ -85,6 +90,13 @@ function renderGallery(items){
 }
 
 function bindHandlers(els, s){
+  const countInp = document.getElementById('illSuggestCount');
+  if(countInp) countInp.onchange = ()=>{
+    const v = Math.max(1, Math.min(15, parseInt(countInp.value)||7));
+    s.illustrations = s.illustrations || {};
+    s.illustrations.suggestCount = v;
+    save();
+  };
   const sb = document.getElementById('illSuggest');
   if(sb) sb.onclick = async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
@@ -92,6 +104,7 @@ function bindHandlers(els, s){
     _busy = true; _busyText = 'Читаю книгу и продумываю кандидатов…'; renderIllustrations(els);
     try{
       _candidates = await suggestIllustrations(s);
+      _candidates.sort((a,b)=>b.importance-a.importance);
       _selected = new Set(_candidates.map(c=>c.id));
     }catch(e){ alert('Арт-директор: '+e.message); }
     finally{ _busy = false; _busyText=''; renderIllustrations(els); }
