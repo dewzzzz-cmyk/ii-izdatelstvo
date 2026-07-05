@@ -14,13 +14,6 @@
       "runtimeArgs": ["литсовет/server.js"],
       "port": 8788,
       "autoPort": false
-    },
-    {
-      "name": "litsovet-world-tab-cards",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [".worktrees/litsovet-world-tab-cards/литсовет/server.js"],
-      "port": 8790,
-      "autoPort": false
     }
   ]
 }
