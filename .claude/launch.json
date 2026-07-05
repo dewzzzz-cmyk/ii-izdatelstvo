@@ -15,5 +15,12 @@
       "port": 8788,
       "autoPort": false
     },
+    {
+      "name": "litsovet-illustrations-ux",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\user\\Documents\\webar-main\\издательство\\.worktrees\\litsovet-illustrations-ux\\литсовет\\server.js"],
+      "port": 8794,
+      "autoPort": false
+    }
   ]
 }
