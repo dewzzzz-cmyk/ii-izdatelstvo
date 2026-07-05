@@ -16,13 +16,20 @@ export function doneScenesOrdered(state){
 }
 
 // Компактный обзор книги по порядку ЧТЕНИЯ (structure), не порядку написания.
-export function bookOverview(state){
+// onlyWritten=true — пропускает ещё не написанные сцены целиком (не показывает даже
+// их бриф-план): нужно Бета-ридеру и Критику, которые симулируют человека, реально
+// прочитавшего рукопись, — им нельзя видеть бриф ненаписанной сцены как будто это
+// уже случившееся событие книги. onlyWritten=false (по умолчанию) — прежнее
+// поведение, весь план книги целиком: нужно трекеру чеховских ружей (сознательно
+// смотрит на структуру наперёд) и подсказчику названий.
+export function bookOverview(state, onlyWritten=false){
   const mem = state.memory||{};
   const nodes = state.structure||[];
   const parts = [];
   nodes.forEach(n=>{
     if(n.type==='chapter'){ parts.push(`\nГЛАВА: «${n.title}»`); }
     else if(n.type==='scene'){
+      if(onlyWritten && !(n.status==='done' && n.text)) return;
       const sum = mem.scenes?.[n.id]?.current || n.brief || '';
       if(sum) parts.push(`  «${n.title}»${n.lastEval?.weighted?` [оценка ${n.lastEval.weighted}/10]`:''}: ${sum}`);
     }
@@ -52,8 +59,8 @@ export function betaReaderMessages(state){
     'ПОСЛЕДНЯЯ СЦЕНА КНИГИ (целиком):',
     (last?.text||'').slice(0, 4000) || '(нет)',
     '',
-    'ОБЗОР ВСЕЙ КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку):',
-    bookOverview(state),
+    'ОБЗОР ВСЕЙ КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку, только написанные сцены):',
+    bookOverview(state, true),
     lowScored.length ? '\nСцены с низкой внутренней оценкой (возможные места провала интереса): ' + lowScored.map(s=>`«${s.title}»`).join(', ') : '',
     '',
     'Ответь как бета-ридер. Верни JSON:',
@@ -127,8 +134,8 @@ export function criticReviewMessages(state){
     lowScored.length ? '\nСЦЕНЫ С НИЗКОЙ ВНУТРЕННЕЙ ОЦЕНКОЙ (целиком, вероятные слабые места):' : '',
     ...lowScored.flatMap(s=>[`«${s.title}»:`, (s.text||'').slice(0, 3000)]),
     '',
-    'ОБЗОР ВСЕЙ КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку):',
-    bookOverview(state),
+    'ОБЗОР ВСЕЙ КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку, только написанные сцены):',
+    bookOverview(state, true),
     '',
     'Напиши рецензию. Верни JSON:',
     '{ "verdict": "развёрнутое, живое мнение — 4-8 предложений, как настоящая рецензия, не анкета", "strengths": ["конкретные сильные стороны с примерами, 1-4"], "problems": [ { "issue": "конкретная проблема", "sceneTitle": "название сцены/главы, где заметнее всего, если применимо — иначе пусто", "note": "что именно исправить" } ], "recommendation": "одна фраза: рекомендовал бы читателям жанра или нет, и почему" }',
