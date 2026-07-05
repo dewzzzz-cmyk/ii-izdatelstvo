@@ -1483,7 +1483,7 @@ function resolveSuggestion(scene, idx, accept){
 }
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
-const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['edit','Редактура']];
+const STAGE_LABELS = [['concept','Концепция'],['voice','Голос'],['structure','Структура'],['write','Написание'],['illustrations','Иллюстрации'],['edit','Редактура']];
 // Роадмап — переиспользуемая секция (правая панель «Написания» + стадия «Редактура»).
 export function renderRoadmap(s){
   const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
@@ -1744,6 +1744,7 @@ function stageDoneFor(s,id){
     case 'voice': return (s.voice.examples||[]).length>0;
     case 'structure': return (s.structure||[]).some(n=>n.type==='scene');
     case 'write': return (s.structure||[]).filter(n=>n.type==='scene').some(n=>n.status==='done');
+    case 'illustrations': return (s.illustrations?.items||[]).length>0;
     default: return false;
   }
 }
