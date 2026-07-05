@@ -13,9 +13,14 @@ import { generateImage } from './imagegen.js';
 import { ART_STYLES } from './artStyles.js';
 
 // ── 1) Кандидаты на иллюстрации (текстовый LLM) ──
+// Обложке не нужны готовые сцены (промпт для неё строится только из
+// жанра/синопсиса/идеи) — поэтому функция работает и без единой законченной
+// сцены, просто просит у арт-директора только обложку в этом случае.
 export function illustrationSuggestMessages(state){
   const p = state.project;
   const count = state.illustrations?.suggestCount || 7;
+  const scenes = doneScenesOrdered(state);
+  const hasScenes = scenes.length > 0;
   const sys = [
     'Ты — арт-директор книги. Ты НЕ рисуешь — ты предлагаешь кандидатов на иллюстрации и текстовые промпты для генератора изображений.',
     'Промпт для картинки должен быть самодостаточным визуальным описанием (место, персонажи, свет, композиция, настроение) — генератор изображений не читал книгу и не поймёт отсылок к именам без описания их внешности.',
@@ -27,11 +32,13 @@ export function illustrationSuggestMessages(state){
     `Жанр: ${p.genre||'роман'}. Аудитория: ${p.audience||'широкая'}.`,
     p.synopsis||p.idea ? `Синопсис: ${p.synopsis||p.idea}` : '',
     '',
-    'ОБЗОР КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку):',
-    bookOverview(state),
+    hasScenes ? 'ОБЗОР КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку):' : '',
+    hasScenes ? bookOverview(state) : '',
     '',
     knownChars.length ? `ИЗВЕСТНАЯ ВНЕШНОСТЬ ПЕРСОНАЖЕЙ (используй дословно вместо того, чтобы придумывать заново):\n${knownChars.join('\n')}\n` : '',
-    `Предложи кандидатов на иллюстрации: 1 обложка + до ${Math.max(0, count-1)} сильных визуальных сцен (не каждую, только те, что реально дают яркую картинку — не диалоги и не размышления, а моменты с явным визуальным образом).`,
+    hasScenes
+      ? `Предложи кандидатов на иллюстрации: 1 обложка + до ${Math.max(0, count-1)} сильных визуальных сцен (не каждую, только те, что реально дают яркую картинку — не диалоги и не размышления, а моменты с явным визуальным образом).`
+      : 'Готовых сцен ещё нет — предложи только ОБЛОЖКУ (1 кандидат), по жанру, аудитории и синопсису/идее выше.',
     'Верни JSON: { "candidates": [ { "type":"cover|scene", "sceneTitle":"точное название сцены из обзора (пусто для обложки)", "prompt":"самодостаточный визуальный промпт для генератора изображений, на английском, 1-3 предложения", "reason":"почему эта сцена/образ — по-русски, коротко", "importance":"число 1-10, насколько сильна эта картинка для книги — 10 = ключевой визуальный момент, 1 = проходной" } ] }',
     'Только JSON.',
   ].filter(Boolean).join('\n');
@@ -42,7 +49,6 @@ export async function suggestIllustrations(state){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const scenes = doneScenesOrdered(state);
-  if(!scenes.length) throw new Error('Нужна хотя бы одна законченная сцена.');
   const msgs = illustrationSuggestMessages(state);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:1500, retries:g.retries });
   const j = extractJSON(res.text);
@@ -50,7 +56,11 @@ export async function suggestIllustrations(state){
   if(!arr) throw new Error('Не удалось разобрать ответ арт-директора.');
   const sceneByTitle = new Map(scenes.map(s=>[s.title.trim().toLowerCase(), s]));
   const cap = state.illustrations?.suggestCount || 7;
-  return arr.slice(0, cap).map((c,i)=>{
+  // Без единой законченной сцены брать в расчёт только обложку — сцену-кандидата
+  // без реального текста подставить всё равно не к чему (модель могла
+  // ослушаться инструкции и предложить сцену тоже).
+  const usable = scenes.length ? arr : arr.filter(c=>c.type==='cover');
+  return usable.slice(0, cap).map((c,i)=>{
     const sceneTitle = String(c.sceneTitle||'').trim();
     const matched = sceneTitle ? sceneByTitle.get(sceneTitle.toLowerCase()) : null;
     return {

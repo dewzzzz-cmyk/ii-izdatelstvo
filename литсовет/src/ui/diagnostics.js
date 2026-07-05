@@ -225,8 +225,24 @@ export function renderSceneAnalysis(){
     <input type="text" id="askInput" placeholder="Спросить о сцене: «где показано, что его заметили?»" data-tip="Разовый вопрос стражу о текущей сцене. Он ответит по тексту (с цитатой) и предложит правку — без создания агента.">
     <button class="btn" id="askBtn">Спросить</button>
   </div>`;
-  return ask + (renderFlags(activeScene) || `<div class="ph">Анализ сцены</div><div class="empty-state">Задайте вопрос о сцене выше или запустите агентов — флаги появятся здесь.</div>`)
+  const scores = renderSceneScores(activeScene);
+  return ask + scores
+    + (renderFlags(activeScene) || `<div class="ph">Флаги сцены</div><div class="empty-state">Задайте вопрос о сцене выше или запустите агентов — флаги появятся здесь.</div>`)
     + renderRejectedNotes(activeScene);
+}
+
+// Оценка Оценщика (5 осей + итог) для текущей сцены — раньше была видна
+// только крохотным бейджем в списке сцен слева (title-подсказка, легко
+// пропустить) или закопана в «Прогонах»; теперь показывается прямо в
+// основной панели анализа. `lastEval` сбрасывается в null при любой ручной
+// правке текста (см. места сброса в stages.js/chat.js) — это осознанно
+// (оценка относилась к прошлой версии текста), поэтому для этого случая
+// отдельное объясняющее сообщение, а не молчание.
+function renderSceneScores(scene){
+  if(!scene) return '';
+  if(scene.lastEval?.ok) return `<div class="ph">Оценка Оценщика</div>${renderScores(scene.lastEval)}`;
+  if(scene.status==='done') return `<div class="ph">Оценка Оценщика</div><div class="empty-state">Пока нет оценки для текущего текста — появится после прогона через агентов. Если сцена уже была оценена, но текст потом правили вручную (в редакторе, через Стража, через чат), прошлая оценка сброшена: она относилась к другой версии текста.</div>`;
+  return '';
 }
 
 function bindAskScene(scene){
