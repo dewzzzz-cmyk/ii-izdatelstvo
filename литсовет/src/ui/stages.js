@@ -4,6 +4,7 @@
 import { getState, save, uid, addRule, charNamesMatch } from '../state.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
+import { ART_STYLES } from '../artStyles.js';
 import { runScene, isRunning } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
@@ -228,6 +229,20 @@ export function renderConcept(els){
         </label>
         <div id="visualVoiceField" style="${s.style?.visualVoiceOn?'':'display:none'}">
           <textarea id="visualVoice" rows="2" placeholder="например: акварель, тёплые приглушённые тона, мягкий рассеянный свет, в духе книжной иллюстрации начала XX века">${esc(s.style?.visualVoice||'')}</textarea>
+          <div class="field" style="margin-top:10px">
+            <label>Художественный стиль <span class="hint">(необязательно — добавляется к промпту картинки вместе с «Визуальным голосом»)</span></label>
+            <select id="artStyleId">
+              <option value="">— без пресета —</option>
+              ${ART_STYLES.map(st=>`<option value="${st.id}"${st.id===(s.style?.artStyleId||'')?' selected':''}>${esc(st.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field row" style="gap:8px;align-items:center;margin-top:8px">
+            <label>Цвет</label>
+            <select id="colorMode">
+              <option value="color"${s.style?.colorMode!=='bw'?' selected':''}>Цветные</option>
+              <option value="bw"${s.style?.colorMode==='bw'?' selected':''}>Чёрно-белые</option>
+            </select>
+          </div>
         </div>
         <div class="field"><label>Обложка <span class="hint">необязательно — попадёт в EPUB (JPEG/PNG, до 3 МБ)</span></label>
           <div class="row" style="gap:10px;align-items:center">
@@ -368,6 +383,10 @@ export function renderConcept(els){
     save();
   };
   bind('visualVoice', e=>{ s.style.visualVoice = e.target.value; });
+  const artStyleSel = document.getElementById('artStyleId');
+  if(artStyleSel) artStyleSel.onchange = ()=>{ s.style.artStyleId = artStyleSel.value; save(); };
+  const colorModeSel = document.getElementById('colorMode');
+  if(colorModeSel) colorModeSel.onchange = ()=>{ s.style.colorMode = colorModeSel.value; save(); };
   document.getElementById('toNext').onclick = ()=>{ save(); s.ui.stage = p.useWorld?'world':(p.useVoice?'voice':'structure'); save(); };
 }
 
