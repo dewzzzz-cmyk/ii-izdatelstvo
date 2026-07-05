@@ -27,7 +27,7 @@ export function illustrationSuggestMessages(state){
     'ОБЗОР КНИГИ ПО ГЛАВАМ И СЦЕНАМ (сводки по порядку):',
     bookOverview(state),
     '',
-    `Предложи кандидатов на иллюстрации: 1 обложка + до ${count-1} сильных визуальных сцен (не каждую, только те, что реально дают яркую картинку — не диалоги и не размышления, а моменты с явным визуальным образом).`,
+    `Предложи кандидатов на иллюстрации: 1 обложка + до ${Math.max(0, count-1)} сильных визуальных сцен (не каждую, только те, что реально дают яркую картинку — не диалоги и не размышления, а моменты с явным визуальным образом).`,
     'Верни JSON: { "candidates": [ { "type":"cover|scene", "sceneTitle":"точное название сцены из обзора (пусто для обложки)", "prompt":"самодостаточный визуальный промпт для генератора изображений, на английском, 1-3 предложения", "reason":"почему эта сцена/образ — по-русски, коротко", "importance":"число 1-10, насколько сильна эта картинка для книги — 10 = ключевой визуальный момент, 1 = проходной" } ] }',
     'Только JSON.',
   ].filter(Boolean).join('\n');
@@ -56,7 +56,7 @@ export async function suggestIllustrations(state){
       sceneTitle: matched ? matched.title : sceneTitle,
       prompt: String(c.prompt||'').slice(0,600),
       reason: String(c.reason||'').slice(0,300),
-      importance: Math.max(1, Math.min(10, Math.round(Number(c.importance)||5))),
+      importance: (n=>Math.max(1, Math.min(10, Math.round(Number.isFinite(n)?n:5))))(Number(c.importance)),
     };
   });
 }
