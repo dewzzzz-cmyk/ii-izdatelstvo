@@ -6,10 +6,12 @@ import { getState, save } from '../state.js';
 import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
+import { announce } from './a11y.js';
 
 let _candidates = [];   // предложенные арт-директором, ещё не сгенерированные
 let _selected = new Set(); // id выбранных чекбоксом кандидатов
 let _errors = new Map(); // id кандидата → текст последней ошибки генерации (не удалось — не теряем кандидата)
+let _suggestError = ''; // ошибка арт-директора — инлайн вместо блокирующего alert()
 let _busy = false;
 let _busyText = '';
 
@@ -41,6 +43,7 @@ export function renderIllustrations(els){
         ${_busy?'<span class="spinner"></span> '+esc(_busyText):'🎨 Предложить иллюстрации'}
       </button>
     </div>
+    ${_suggestError?`<div class="pad" style="color:var(--err);font-size:12px">⚠ Арт-директор: ${esc(_suggestError)}</div>`:''}
     <div class="read-body" id="illBody">
       ${renderCandidates(s)}
       ${renderGallery(items, s)}
@@ -60,17 +63,26 @@ function renderCandidates(s){
         const chapter = c.type==='scene' ? chapterTitleForScene(s, c.sceneId) : null;
         const label = c.type==='cover' ? '📕 Обложка' : `🖼 ${chapter?esc(chapter)+' · ':''}«${esc(c.sceneTitle||'')}»`;
         const err = _errors.get(c.id);
+        // Ниже label — только чекбокс+заголовок (короткое accessible-name чекбокса,
+        // + явный aria-label на случай, если браузер всё равно взял бы текст label
+        // целиком). Причина/промпт/ошибка — вне label, иначе вложенный <details>
+        // конфликтовал бы с click-делегированием label на чекбокс.
         return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-          <input type="checkbox" class="ill-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} style="margin-top:3px">
+          <input type="checkbox" class="ill-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} aria-label="Выбрать: ${esc(label)}" style="margin-top:3px">
           <div style="flex:1">
             <b>${label}</b>
             <span class="muted" style="font-size:11px;margin-left:6px">★ ${c.importance||5}/10</span>
-            <div class="muted" style="font-size:12px;margin-top:2px">${esc(c.reason||'')}</div>
-            <div style="font-size:12px;color:var(--text-2);margin-top:2px;font-style:italic">${esc(c.prompt)}</div>
-            ${err?`<div style="font-size:12px;color:var(--err);margin-top:4px">⚠ Не удалось сгенерировать: ${esc(err)}</div>`:''}
           </div>
         </label>
+        <div style="margin-left:24px">
+          <div class="muted" style="font-size:12px">${esc(c.reason||'')}</div>
+          <details style="margin-top:2px">
+            <summary style="cursor:pointer;font-size:11px;color:var(--text-2)">Промпт для генератора</summary>
+            <div style="font-size:12px;color:var(--text-2);margin-top:4px;font-style:italic">${esc(c.prompt)}</div>
+          </details>
+          ${err?`<div style="font-size:12px;color:var(--err);margin-top:4px">⚠ Не удалось сгенерировать: ${esc(err)}</div>`:''}
+        </div>
       </div>`;}).join('')}
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-bottom:18px">
@@ -91,7 +103,7 @@ function renderGallery(items, s){
         return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px">
         <img src="${it.dataUrl}" style="width:100%;border-radius:var(--radius);display:block" alt="${esc(label)}">
         <div style="font-size:11px" class="muted">${it.type==='map'?'🗺 '+esc(label):esc(label)}</div>
-        <button class="btn ill-del" data-id="${it.id}" style="font-size:11px;padding:3px 8px;align-self:flex-start">🗑 Удалить</button>
+        <button class="btn ill-del" data-id="${it.id}" data-label="${esc(label)}" style="align-self:flex-start">🗑 Удалить</button>
       </div>`;}).join('')}
     </div>`;
 }
@@ -108,13 +120,15 @@ function bindHandlers(els, s){
   if(sb) sb.onclick = async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
     if(_busy) return;
-    _busy = true; _busyText = 'Читаю книгу и продумываю кандидатов…'; renderIllustrations(els);
+    if(_candidates.length && !confirm('Заменить текущий список кандидатов? Несохранённый выбор и отметки об ошибках будут потеряны.')) return;
+    _busy = true; _busyText = 'Читаю книгу и продумываю кандидатов…'; _suggestError=''; renderIllustrations(els);
     try{
       _candidates = await suggestIllustrations(s);
       _candidates.sort((a,b)=>b.importance-a.importance);
       _selected = new Set(_candidates.map(c=>c.id));
       _errors = new Map();
-    }catch(e){ alert('Арт-директор: '+e.message); }
+      announce(`Арт-директор предложил ${_candidates.length} кандидатов`);
+    }catch(e){ _suggestError = e.message; announce('Арт-директор: '+e.message); }
     finally{ _busy = false; _busyText=''; renderIllustrations(els); }
   };
 
@@ -124,7 +138,7 @@ function bindHandlers(els, s){
   });
 
   const cc = document.getElementById('illClearCand');
-  if(cc) cc.onclick = ()=>{ _candidates=[]; _selected=new Set(); _errors=new Map(); renderIllustrations(els); };
+  if(cc) cc.onclick = ()=>{ _candidates=[]; _selected=new Set(); _errors=new Map(); _suggestError=''; renderIllustrations(els); };
 
   const gb = document.getElementById('illGenerate');
   if(gb) gb.onclick = async ()=>{
@@ -152,11 +166,14 @@ function bindHandlers(els, s){
     _candidates = _candidates.filter(c=>!succeeded.has(c.id));
     _selected = new Set([..._selected].filter(id=>!succeeded.has(id)));
     _busy = false; _busyText='';
+    const failed = toGen.length - succeeded.size;
+    announce(failed ? `Сгенерировано ${succeeded.size} из ${toGen.length}, ${failed} с ошибкой` : `Сгенерировано ${succeeded.size} из ${toGen.length}`);
     save(); renderIllustrations(els);
   };
 
   document.querySelectorAll('.ill-del').forEach(b=>b.onclick=()=>{
     const id = b.dataset.id;
+    if(!confirm(`Удалить «${b.dataset.label}»? Картинка сгенерирована платно — заново придётся оплатить и подождать.`)) return;
     const it = (s.illustrations.items||[]).find(x=>x.id===id);
     s.illustrations.items = (s.illustrations.items||[]).filter(x=>x.id!==id);
     if(it && it.type==='cover' && s.project.coverDataUrl===it.dataUrl) s.project.coverDataUrl='';

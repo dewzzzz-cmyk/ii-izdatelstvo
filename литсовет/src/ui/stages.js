@@ -27,6 +27,33 @@ import { suggestMissingWorldFacts } from '../world.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// .mode-switch/.mode-opt (Режиссёр/Фабрика, Отдельная книга/Серия, Голос) —
+// раньше это были голые <div onclick>, недоступные с клавиатуры и без ролей
+// для скринридера. Клик по-прежнему обрабатывает уже существующий onclick на
+// контейнере (мы лишь синтетически вызываем .click() на нужной опции) —
+// сама логика выбора не дублируется.
+function bindModeSwitchKeyboard(container){
+  if(!container) return;
+  container.setAttribute('role', 'radiogroup');
+  const opts = [...container.querySelectorAll('.mode-opt')];
+  opts.forEach(o=>{
+    o.setAttribute('role', 'radio');
+    o.setAttribute('tabindex', o.classList.contains('sel') ? '0' : '-1');
+    o.setAttribute('aria-checked', o.classList.contains('sel') ? 'true' : 'false');
+  });
+  container.onkeydown = (ev)=>{
+    const cur = ev.target.closest?.('.mode-opt'); if(!cur || !opts.includes(cur)) return;
+    if(ev.key===' '||ev.key==='Enter'){ ev.preventDefault(); cur.click(); }
+    else if(['ArrowRight','ArrowDown','ArrowLeft','ArrowUp'].includes(ev.key)){
+      ev.preventDefault();
+      const i = opts.indexOf(cur);
+      const dir = (ev.key==='ArrowRight'||ev.key==='ArrowDown') ? 1 : -1;
+      const next = opts[(i+dir+opts.length)%opts.length];
+      next.focus(); next.click();
+    }
+  };
+}
+
 // Кнопка «→ Прозаику» в панели Анализ сцены диспетчирует это событие.
 // stages.js регистрирует слушатель один раз и вызывает doRun текущей сцены.
 let _activeFlagFix = null;
@@ -347,10 +374,17 @@ export function renderConcept(els){
   document.getElementById('typeSwitch').onclick = (ev)=>{
     const o=ev.target.closest('.mode-opt'); if(!o) return;
     p.type=o.dataset.type;
-    document.querySelectorAll('#typeSwitch .mode-opt').forEach(el=>el.classList.toggle('sel',el.dataset.type===p.type));
+    document.querySelectorAll('#typeSwitch .mode-opt').forEach(el=>{
+      const sel = el.dataset.type===p.type;
+      el.classList.toggle('sel', sel);
+      el.setAttribute('aria-checked', sel?'true':'false');
+      el.setAttribute('tabindex', sel?'0':'-1');
+    });
     document.getElementById('seriesFields').style.display=p.type==='series'?'':'none';
   };
   document.getElementById('modeSwitch').onclick = (ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; p.mode=o.dataset.mode; save(); };
+  bindModeSwitchKeyboard(document.getElementById('modeSwitch'));
+  bindModeSwitchKeyboard(document.getElementById('typeSwitch'));
   const dam = document.getElementById('disableAllManual');
   if(dam) dam.onclick = ()=>{
     (s.agents||[]).forEach(a=>{ a.manual=false; });
@@ -420,6 +454,7 @@ export function renderVoice(els){
     </div>`;
 
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
+  bindModeSwitchKeyboard(document.getElementById('vmode'));
   bindRefsEditor();
   bindRulesEditor();
   document.querySelectorAll('.style-add').forEach(btn=>{

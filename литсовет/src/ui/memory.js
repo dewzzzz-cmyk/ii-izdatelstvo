@@ -6,8 +6,8 @@ import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 import { callLLM } from '../llm.js';
-import { rebuildBibleVecs, editBibleFactAt, deleteBibleFactAt } from '../bible.js';
-import { openRuleModal } from './rule-modal.js';
+import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt } from '../bible.js';
+import { openRuleModal, openFactModal } from './rule-modal.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -251,9 +251,10 @@ function bindMemory(){
   // Bible: добавить факт
   const ba=document.getElementById('bibleAdd');
   if(ba) ba.onclick=()=>{
-    const keys=prompt('Ключи факта (через запятую, напр.: «город, климат»):'); if(keys===null) return;
-    const text=prompt('Сам факт:'); if(!text) return;
-    const s=getState(); s.bible.push({keys:keys.trim(), text:text.trim()}); rebuildBibleVecs(s.bible); save();
+    const s=getState();
+    openFactModal({}, (keys, text)=>{
+      s.bible.push({keys, text}); rebuildBibleVecs(s.bible); save();
+    });
   };
   // Bible: ред./AI-расширить/удалить. Матчим по [data-bi] (только у Bible-кнопок),
   // а не по классу bc-act — тот общий для char-edit/char-merge/obs-*, и раньше
@@ -261,8 +262,18 @@ function bindMemory(){
   document.querySelectorAll('.bc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
-    if(b.dataset.act==='del'){ if(deleteBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); } return; }
-    if(b.dataset.act==='edit'){ if(editBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); } return; }
+    if(b.dataset.act==='del'){
+      const preview = fact.text.length>60 ? fact.text.slice(0,60)+'…' : fact.text;
+      if(!confirm(`Удалить факт «${preview}»? Отменить нельзя.`)) return;
+      if(deleteBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); }
+      return;
+    }
+    if(b.dataset.act==='edit'){
+      openFactModal({ keys: fact.keys, text: fact.text }, (keys, text)=>{
+        if(applyFactEdit(s.bible, i, keys, text)){ rebuildBibleVecs(s.bible); save(); }
+      });
+      return;
+    }
     if(b.dataset.act==='expand'){
       if(!s.global.apiKey){ alert('Задайте API-ключ (⚙).'); return; }
       b.textContent='…'; b.disabled=true;

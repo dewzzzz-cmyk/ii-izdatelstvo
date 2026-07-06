@@ -64,11 +64,12 @@ export function parseBibleLines(text){
 // панели «Память» (ui/memory.js) и вкладки «Мир» (ui/world.js). save() и
 // rebuildBibleVecs() — на стороне вызывающего UI, как и для остальных мутаций
 // state в этом файле (см. saveMapItem в illustrations.js — тот же паттерн).
-export function editBibleFactAt(bible, i){
+// Значения (keys/text) собирает вызывающий UI через openFactModal() (см.
+// ui/rule-modal.js) — раньше здесь были два prompt(), но нативный prompt()
+// блокирует страницу и не работает в iOS PWA.
+export function applyFactEdit(bible, i, keys, text){
   const fact = bible[i]; if(!fact) return false;
-  const keys = prompt('Ключи:', fact.keys||''); if(keys===null) return false;
-  const text = prompt('Факт:', fact.text||''); if(text===null) return false;
-  fact.keys = keys.trim(); fact.text = text.trim();
+  fact.keys = String(keys||'').trim(); fact.text = String(text||'').trim();
   return true;
 }
 

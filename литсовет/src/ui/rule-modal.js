@@ -76,3 +76,37 @@ export function openInputModal({ title, hint='', value='', placeholder='', okLab
   document.getElementById('inModalOk').onclick = ok;
   inp.onkeydown = e=>{ if(e.key==='Enter') ok(); else if(e.key==='Escape') close(); };
 }
+
+// Модалка "Ключи + Факт" — замена двух последовательных prompt() при
+// добавлении/правке факта Библии/Мира (ui/world.js, ui/memory.js).
+// onSave(keys, text) вызывается только при сохранении с непустым фактом;
+// отмена/клик по фону/Escape — просто закрыть.
+export function openFactModal({ keys='', text='' }={}, onSave){
+  const root = ruleModalRoot();
+  root.innerHTML = `<div class="modal-bg" id="factModalBg"><div class="modal" style="width:480px;max-width:92vw" onclick="event.stopPropagation()">
+    <h2>Факт канона</h2>
+    <div class="muted" style="margin-bottom:4px;font-size:12px">Ключи (через запятую)</div>
+    <input type="text" id="factModalKeys" value="${esc(keys)}" placeholder="например: город, климат" style="width:100%;box-sizing:border-box;margin-bottom:10px">
+    <div class="muted" style="margin-bottom:4px;font-size:12px">Факт</div>
+    <textarea id="factModalText" rows="3" style="width:100%;box-sizing:border-box">${esc(text)}</textarea>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" id="factModalCancel">Отмена</button>
+      <button class="btn btn-primary" id="factModalOk">Сохранить</button>
+    </div>
+  </div></div>`;
+  const close = ()=>{ root.innerHTML=''; };
+  document.getElementById('factModalBg').onclick = close;
+  document.getElementById('factModalCancel').onclick = close;
+  const keysInp = document.getElementById('factModalKeys');
+  const textInp = document.getElementById('factModalText');
+  keysInp.focus();
+  const ok = ()=>{
+    const k = keysInp.value.trim(); const t = textInp.value.trim();
+    if(!t) return;
+    close();
+    if(onSave) onSave(k, t);
+  };
+  document.getElementById('factModalOk').onclick = ok;
+  keysInp.onkeydown = e=>{ if(e.key==='Escape') close(); };
+  textInp.onkeydown = e=>{ if(e.key==='Escape') close(); };
+}

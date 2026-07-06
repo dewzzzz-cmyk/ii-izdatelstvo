@@ -6,7 +6,7 @@
   --border-2: #cfccc0;
   --text: #2c2c2a;
   --text-2: #5f5e5a;
-  --text-3: #97958c;
+  --text-3: #726f66; /* было #97958c — 3.01:1 на белом, ниже WCAG AA 4.5:1; текущее ~5:1 */
   --accent: #185fa5;
   --accent-bg: #e6f1fb;
   --accent-border: #85b7eb;
@@ -110,7 +110,9 @@ textarea{resize:vertical;min-height:60px}
 
 /* ── Mode switch ── */
 .mode-switch{display:flex;gap:8px;margin:10px 0}
-.mode-opt{flex:1;padding:8px 10px;border:1px solid var(--border-2);border-radius:var(--radius);font-size:12px;text-align:center;background:var(--surface);color:var(--text-2)}
+.mode-opt{flex:1;padding:8px 10px;border:1px solid var(--border-2);border-radius:var(--radius);font-size:12px;text-align:center;background:var(--surface);color:var(--text-2);cursor:pointer}
+.mode-opt:hover{border-color:var(--accent-border)}
+.mode-opt:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mode-opt.sel{border-color:var(--accent);background:var(--accent-bg);color:var(--accent);font-weight:500}
 .mode-opt small{display:block;font-size:10px;color:var(--text-3);margin-top:2px;font-weight:400}
 .mode-opt.sel small{color:var(--accent)}

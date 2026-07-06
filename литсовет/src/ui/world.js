@@ -4,11 +4,12 @@
 // image-API, только по явному клику (спека §5, §6, §9).
 
 import { getState, save } from '../state.js';
-import { rebuildBibleVecs, editBibleFactAt, deleteBibleFactAt } from '../bible.js';
+import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt } from '../bible.js';
 import { suggestWorldFacts, missingPOD, generateWorldMap, rerollWorldFact, categoriesFor, CATEGORY_HINTS } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
+import { openFactModal } from './rule-modal.js';
 
 let _candidates = [];        // предложенные, ещё не одобренные факты (все категории вместе, у каждого своё .category)
 let _selected = new Set();   // id одобренных чекбоксом
@@ -212,8 +213,18 @@ function bindHandlers(els, s){
   document.querySelectorAll('.wc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const i = +b.dataset.bi; const fact = s.bible[i]; if(!fact) return;
-    if(b.dataset.act==='del'){ if(deleteBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); } return; }
-    if(b.dataset.act==='edit'){ if(editBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); } return; }
+    if(b.dataset.act==='del'){
+      const preview = fact.text.length>60 ? fact.text.slice(0,60)+'…' : fact.text;
+      if(!confirm(`Удалить факт «${preview}»? Отменить нельзя.`)) return;
+      if(deleteBibleFactAt(s.bible,i)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); }
+      return;
+    }
+    if(b.dataset.act==='edit'){
+      openFactModal({ keys: fact.keys, text: fact.text }, (keys, text)=>{
+        if(applyFactEdit(s.bible, i, keys, text)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); }
+      });
+      return;
+    }
     if(b.dataset.act==='reroll'){
       if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели (⚙).'); return; }
       b.disabled = true; const orig = b.textContent; b.textContent = '…';
@@ -225,17 +236,17 @@ function bindHandlers(els, s){
     }
   });
 
-  // Добавить вручную — те же два prompt(), что и bibleAdd в ui/memory.js,
+  // Добавить вручную — та же модалка, что и bibleAdd в ui/memory.js,
   // категория проставляется автоматически (карточка уже про конкретную категорию).
   document.querySelectorAll('.world-cat-add').forEach(el=>el.onclick=()=>{
     const cat = el.dataset.cat;
-    const keys = prompt('Ключи факта (через запятую, напр.: «город, климат»):'); if(keys===null) return;
-    const text = prompt('Сам факт:'); if(!text) return;
-    s.bible = s.bible || [];
-    s.bible.push({ keys:keys.trim(), text:text.trim(), source:'world', category:cat });
-    rebuildBibleVecs(s.bible);
-    if((s.structure||[]).some(n=>n.type==='chapter')) s.structureStale = true;
-    save(); renderWorld(els);
+    openFactModal({}, (keys, text)=>{
+      s.bible = s.bible || [];
+      s.bible.push({ keys, text, source:'world', category:cat });
+      rebuildBibleVecs(s.bible);
+      if((s.structure||[]).some(n=>n.type==='chapter')) s.structureStale = true;
+      save(); renderWorld(els);
+    });
   });
 
   const wm = document.getElementById('wMap');

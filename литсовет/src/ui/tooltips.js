@@ -38,6 +38,18 @@ export function initTooltips(){
     const t = e.target.closest('[data-tip]');
     if(t && t===_cur) hide();
   });
+  // Клавиатурный фокус — тот же показ, что и hover (WCAG 1.4.13: подсказка
+  // на hover обязана быть доступна и по фокусу, иначе Tab-навигация её не видит).
+  document.addEventListener('focusin', e=>{
+    const t = e.target.closest('[data-tip]');
+    if(!t || t===_cur) return;
+    hide(); _cur = t;
+    _timer = setTimeout(()=>{ if(_cur===t && document.body.contains(t)) show(t); }, DELAY);
+  });
+  document.addEventListener('focusout', e=>{
+    const t = e.target.closest('[data-tip]');
+    if(t && t===_cur) hide();
+  });
   // прячем при скролле/клике
   document.addEventListener('scroll', hide, true);
   document.addEventListener('mousedown', hide, true);
