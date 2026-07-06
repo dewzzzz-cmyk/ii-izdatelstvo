@@ -112,10 +112,15 @@ export function buildSceneContext(state, scene, opts={}){
   const synopsis = runningSynopsis(state);
   if(synopsis) layers.push({ name:'synopsis', text:'=== РАНЕЕ В КНИГЕ (СИНОПСИС) ===\n'+synopsis, fixed:true });
 
-  // 3c. Сводки завершённых глав (в порядке structure, не случайном)
+  // 3c. Сводки завершённых глав (в порядке structure, не случайном). entries,
+  // не голая строка — как и у сцен ниже, чтобы applyBudget мог урезать САМЫЕ
+  // старые по одной, а не сбрасывать весь слой разом на длинной книге (см. (б2)).
   const chapterSums = (state.structure||[]).filter(n=>n.type==='chapter')
     .map(n=>(mem.chapters||{})[n.id]?.current).filter(Boolean);
-  if(chapterSums.length) layers.push({ name:'chapters', text:'=== ГЛАВЫ (СВОДКИ) ===\n'+chapterSums.join('\n\n') });
+  if(chapterSums.length){
+    layers.push({ name:'chapters', entries:chapterSums, header:'=== ГЛАВЫ (СВОДКИ) ===',
+      get text(){ return this.header+'\n'+this.entries.join('\n\n'); } });
+  }
 
   // 3d. Последние развёрнутые посценные сводки (окно, без свёрнутых; кроме текущей)
   const recent = activeSceneSummaries(state).filter(e=>e.id!==scene.id);
@@ -250,6 +255,17 @@ function applyBudget(layers, BUDGET){
   const scenesLayer = layers.find(l=>l.name==='scenes' && l.entries);
   while(scenesLayer && scenesLayer.entries.length>1 && total() > BUDGET){
     scenesLayer.entries.shift();
+  }
+  if(total() <= BUDGET) return;
+
+  // (б2) Слой глав — та же логика: на длинной книге (или при уменьшенном
+  // budgetTokens) сводок глав накапливается без ограничения, в отличие от
+  // сцен (их сдерживает KEEP_SCENES + сворачивание в бегущий синопсис) —
+  // без этого шага (в) сбросил бы весь слой глав разом, и Прозаик одномоментно
+  // терял бы понимание всех ранних глав книги вместо постепенной деградации.
+  const chaptersLayer = layers.find(l=>l.name==='chapters' && l.entries);
+  while(chaptersLayer && chaptersLayer.entries.length>1 && total() > BUDGET){
+    chaptersLayer.entries.shift();
   }
   if(total() <= BUDGET) return;
 
