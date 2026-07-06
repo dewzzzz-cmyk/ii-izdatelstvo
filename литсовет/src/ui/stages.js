@@ -1933,7 +1933,15 @@ async function doRun(els, s, scene, directive, runFlags={}){
     btn.innerHTML='<span class="spinner"></span> Суммаризация…';
     try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }
     catch(e){ console.warn('summarize failed', e); }
-  }catch(e){ ed.textContent='Ошибка: '+e.message; pushProc({log:{icon:'⚠', text:'Ошибка: '+e.message, state:'warn'}}); }
+  }catch(e){
+    // Стриминг (prog.streaming выше) уже мог записать в scene.text свежий,
+    // но неотревьюенный черновик (напр. упал вызов Оценщика ПОСЛЕ прозы) —
+    // без отката следующий же save() (по любому несвязанному действию)
+    // тихо затрёт последнюю хорошую версию, и её не будет даже в истории,
+    // т.к. proseVersions пишется только при УСПЕШНОМ прогоне (строка выше).
+    if(wasDone) scene.text = oldText;
+    ed.textContent='Ошибка: '+e.message; pushProc({log:{icon:'⚠', text:'Ошибка: '+e.message, state:'warn'}});
+  }
   finally{
     btn.disabled=false; _busy=false; _runCurrent='';
     document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='');
