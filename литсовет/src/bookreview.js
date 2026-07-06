@@ -147,6 +147,105 @@ export function criticReviewMessages(state){
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
+// ── Глубина мира (клише магии/технологии/системы) ──
+// Отдельный вызов, не часть основной рецензии — иначе рискуем повторно
+// упереться в maxTokens (см. комментарий к maxTokens Критика выше в этом файле).
+// Работает по фактам Библии категории «магия/технология»/«система» (см. world.js
+// categoriesFor) — если таких фактов нет (не тот жанр или автор их не заполнил),
+// проверка невозможна, вызывающий код должен это учитывать (hasWorldDepthFacts).
+export function hasWorldDepthFacts(state){
+  return (state.bible||[]).some(b=>b.source==='world' && (b.category==='магия/технология' || b.category==='система'));
+}
+
+export function worldDepthMessages(state){
+  const p = state.project;
+  const worldFacts = (state.bible||[]).filter(b=>b.source==='world' && (b.category==='магия/технология' || b.category==='система'));
+  const sys = [
+    'Ты — редактор фэнтези/фантастики/литрпг, специализирующийся на worldbuilding. Тебя попросили оценить, насколько система магии/технологии/прогрессии в этой книге СВОЯ, а не типовой набор жанровых клише.',
+    'Типовое клише — это то, что можно вставить в любую книгу жанра без изменений: «маг черпает силу из недр земли», «уровни растут от убийства монстров», «технология работает потому что так решил автор». Своё — это конкретное ограничение, цена, правило или образ, которых не было бы в соседней книге того же жанра.',
+    'Ограничения и цена системы важны не меньше её возможностей: если в каноне только то, что герои МОГУТ, а не то, чего они НЕ могут и чем платят — это тоже симптом клише-глубины, даже если сами формулировки не штампованные.',
+  ].join('\n');
+  const user = [
+    `Жанр: ${p.genre||'—'}.`,
+    '',
+    'ФАКТЫ КАНОНА (магия/технология/система):',
+    worldFacts.map(f=>`— [${f.category}] ${f.text}`).join('\n'),
+    '',
+    'ОБЗОР КНИГИ ПО ГЛАВАМ И СЦЕНАМ (как система реально проявляется в тексте):',
+    bookOverview(state, true),
+    '',
+    'Верни JSON: { "depth": 0-10 (0 = чистый шаблон жанра, 10 = полностью своя система), "items": [ { "fact": "какой факт/аспект канона поверхностный", "issue": "чем именно это шаблон, без конкретики", "suggestion": "куда копать, чтобы стало своим — не готовая формулировка, а направление" } ] }',
+    'items — до 4 самых важных. Если система уже достаточно своя — верни пустой массив items и depth 7+. Только JSON.',
+  ].filter(Boolean).join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export async function runWorldDepthCheck(state){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  if(!hasWorldDepthFacts(state)) throw new Error('В Библии нет фактов категории «магия/технология»/«система» — заполните их на вкладке «Мир».');
+  const msgs = worldDepthMessages(state);
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1200, retries:g.retries });
+  const j = extractJSON(res.text);
+  if(!j) throw new Error('Не удалось разобрать ответ.');
+  return {
+    depth: clamp10(j.depth),
+    items: Array.isArray(j.items) ? j.items.slice(0,4).map(x=>({
+      fact: String(x?.fact||'').slice(0,200),
+      issue: String(x?.issue||'').slice(0,300),
+      suggestion: String(x?.suggestion||'').slice(0,300),
+    })) : [],
+  };
+}
+
+// ── Картонные второстепенные персонажи ──
+// Тоже отдельный вызов (см. причину у Глубины мира выше). Явного флага
+// «протагонист» в модели данных нет (state.characters[] — просто {name,desc,
+// stateNote,book}) — вместо того чтобы городить новое поле под одну проверку,
+// доверяем модели самой узнать протагониста по контексту обзора книги (кто
+// в каждой сцене ведёт POV — очевидно из сводок) и судить только про остальных.
+export function hasCharactersToCheck(state){
+  return (state.characters||[]).length >= 2;
+}
+
+export function flatCharacterMessages(state){
+  const p = state.project;
+  const chars = state.characters||[];
+  const sys = [
+    'Ты — редактор, оценивающий второстепенных персонажей на «картонность» — одномерность, отсутствие своих желаний/противоречий, служебную функцию вместо живого характера.',
+    'Главного POV-героя книги в оценку не включай — определи, кто это, по обзору книги (тот, чьими глазами идёт большинство сцен), и суди только остальных.',
+    'Картонность — это когда персонаж существует только для функции (помощник, преграда, награда) и ни разу не хочет чего-то СВОЕГО, не противоречит герою, не удивляет.',
+  ].join('\n');
+  const user = [
+    `Жанр: ${p.genre||'роман'}.`,
+    '',
+    'КАРТОЧКИ ПЕРСОНАЖЕЙ:',
+    chars.map(c=>`— ${c.name}: ${c.desc||'(без описания)'}${c.stateNote?' · текущее состояние: '+c.stateNote:''}`).join('\n'),
+    '',
+    'ОБЗОР КНИГИ ПО ГЛАВАМ И СЦЕНАМ:',
+    bookOverview(state, true),
+    '',
+    'Верни JSON: { "items": [ { "name": "имя персонажа — ТОЧНО как в карточках выше", "issue": "в чём именно картонность — конкретно, со ссылкой на то, что он делает/не делает в книге", "suggestion": "какое СВОЁ желание/противоречие могло бы его оживить" } ] }',
+    'items — до 4, только реально картонные (не критикуй персонажей, у которых и так есть арка/противоречие). Если таких нет — пустой массив. Только JSON.',
+  ].filter(Boolean).join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export async function runFlatCharacterCheck(state){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  if(!hasCharactersToCheck(state)) throw new Error('Нужно хотя бы 2 персонажа в карточках (Память → Персонажи).');
+  const msgs = flatCharacterMessages(state);
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1200, retries:g.retries });
+  const j = extractJSON(res.text);
+  if(!j || !Array.isArray(j.items)) throw new Error('Не удалось разобрать ответ.');
+  return j.items.slice(0,4).map(x=>({
+    name: String(x?.name||'').slice(0,80),
+    issue: String(x?.issue||'').slice(0,300),
+    suggestion: String(x?.suggestion||'').slice(0,300),
+  }));
+}
+
 export async function runCriticReview(state){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');

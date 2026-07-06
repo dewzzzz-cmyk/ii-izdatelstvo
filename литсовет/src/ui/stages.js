@@ -21,7 +21,8 @@ import { rebuildBibleVecs } from '../bible.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
-import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles } from '../bookreview.js';
+import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles,
+         hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck } from '../bookreview.js';
 import { GENRES, ERAS } from '../genres.js';
 import { suggestMissingWorldFacts } from '../world.js';
 
@@ -1664,7 +1665,24 @@ export function renderEdit(els){
   if(crb) crb.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     crb.disabled=true; const orig=crb.textContent; crb.innerHTML='<span class="spinner"></span> Читаю и пишу рецензию…';
-    try{ const report=await runCriticReview(s); _lastCriticReview=report; openCriticModal(s, report); }
+    try{
+      // Глубина мира и картонность персонажей — отдельные вызовы (не часть
+      // основной рецензии, см. комментарий в bookreview.js про maxTokens),
+      // идут параллельно с ней. Каждый опционален по своим предпосылкам
+      // (нужны факты магии/технологии; нужно ≥2 персонажа) — падение одного
+      // не должно скрывать остальные два, поэтому allSettled, не all.
+      const [reviewR, worldR, charR] = await Promise.allSettled([
+        runCriticReview(s),
+        hasWorldDepthFacts(s) ? runWorldDepthCheck(s) : Promise.resolve(null),
+        hasCharactersToCheck(s) ? runFlatCharacterCheck(s) : Promise.resolve(null),
+      ]);
+      if(reviewR.status!=='fulfilled') throw reviewR.reason;
+      const report = { ...reviewR.value,
+        worldDepth: worldR.status==='fulfilled' ? worldR.value : null,
+        flatCharacters: charR.status==='fulfilled' ? charR.value : null,
+      };
+      _lastCriticReview=report; openCriticModal(s, report);
+    }
     catch(e){ alert('Критик: '+e.message); }
     finally{ crb.disabled=false; crb.textContent=orig; renderEdit(els); }
   };
@@ -1794,6 +1812,28 @@ function openCriticModal(s, r){
       </div>`:''}
       ${r.recommendation?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px">
         <b>Итог</b><div style="font-size:13px">${esc(r.recommendation)}</div>
+      </div>`:''}
+      ${r.worldDepth && r.worldDepth.items.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div class="row" style="justify-content:space-between"><b>Глубина мира</b><span style="font-weight:700;color:${scoreColor(r.worldDepth.depth)}">${r.worldDepth.depth}/10</span></div>
+        ${r.worldDepth.items.map(x=>{
+          const noteText = (x.issue||'')+(x.suggestion?': '+x.suggestion:'');
+          return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-top:1px solid var(--border)">
+            <div style="font-size:13px">${esc(x.fact)}</div>
+            <div style="font-size:12px;color:var(--text-2)">${esc(x.issue)}${x.suggestion?' — '+esc(x.suggestion):''}</div>
+            <div class="row" style="gap:6px;flex-wrap:wrap">${copyNoteBtn(noteText)}</div>
+          </div>`;
+        }).join('')}
+      </div>`:''}
+      ${r.flatCharacters && r.flatCharacters.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <b>Картонные персонажи</b>
+        ${r.flatCharacters.map(x=>{
+          const noteText = (x.issue||'')+(x.suggestion?': '+x.suggestion:'');
+          return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-top:1px solid var(--border)">
+            <div style="font-size:13px"><b>${esc(x.name)}</b></div>
+            <div style="font-size:12px;color:var(--text-2)">${esc(x.issue)}${x.suggestion?' — '+esc(x.suggestion):''}</div>
+            <div class="row" style="gap:6px;flex-wrap:wrap">${copyNoteBtn(noteText)}</div>
+          </div>`;
+        }).join('')}
       </div>`:''}
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="crClose">Закрыть</button></div>

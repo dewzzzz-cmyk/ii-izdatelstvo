@@ -3,7 +3,7 @@
 // Деньги тратятся ТОЛЬКО по явному клику «Сгенерировать выбранные».
 
 import { getState, save } from '../state.js';
-import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene } from '../illustrations.js';
+import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene, suggestOneIllustration } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
 import { announce } from './a11y.js';
@@ -12,8 +12,17 @@ let _candidates = [];   // предложенные арт-директором,
 let _selected = new Set(); // id выбранных чекбоксом кандидатов
 let _errors = new Map(); // id кандидата → текст последней ошибки генерации (не удалось — не теряем кандидата)
 let _suggestError = ''; // ошибка арт-директора — инлайн вместо блокирующего alert()
+let _manualChecked = new Set(); // 'cover' | id главы — отмеченные в ручном режиме цели
+let _rerollErrors = new Map(); // id элемента галереи → ошибка «другой промпт»/«перегенерировать картинку»
 let _busy = false;
 let _busyText = '';
+
+// Главы, для которых вообще есть что иллюстрировать (хотя бы одна написанная сцена).
+function chaptersWithProse(s){
+  const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+  const scenes = (s.structure||[]).filter(n=>n.type==='scene');
+  return chapters.filter(ch=>scenes.some(sc=>sc.chapterId===ch.id && sc.status==='done' && sc.text));
+}
 
 export function renderIllustrations(els){
   const s = getState();
@@ -23,26 +32,51 @@ export function renderIllustrations(els){
     ${items.length ? `<div class="pad muted" style="font-size:12px">${items.length} иллюстраци${items.length===1?'я':items.length<5?'и':'й'}${s.project.coverDataUrl?' · обложка задана':''}</div>`
       : '<div class="empty-state">Пока нет сгенерированных картинок.</div>'}`;
 
+  const ic = s.illustrations || {};
+  const mode = ic.mode==='manual' ? 'manual' : 'auto';
   els.right.innerHTML = `<div class="ph">Настройки</div><div class="pad">
-    ${s.illustrations?.apiKey
-      ? `<div class="muted" style="font-size:12px">Провайдер: ${esc(s.illustrations.provider==='openai'?'OpenAI':s.illustrations.provider==='qwen'?'Qwen / DashScope':'Gemini (Nano Banana)')} · качество: ${esc(s.illustrations.quality==='hd'?'HD':'стандарт')}</div>`
+    ${ic.apiKey
+      ? `<div class="muted" style="font-size:12px">Провайдер: ${esc(ic.provider==='openai'?'OpenAI':ic.provider==='qwen'?'Qwen / DashScope':'Gemini (Nano Banana)')} · качество: ${esc(ic.quality==='hd'?'HD':'стандарт')}</div>`
       : `<div class="muted" style="font-size:12px">⚠ Ключ для картинок не задан — откройте ⚙ настройки.</div>`}
     <div class="muted" style="font-size:12px;margin-top:8px">Визуальный голос: ${s.style?.visualVoiceOn ? 'включён' : 'выключен'} <span class="hint">(настраивается в Концепции)</span></div>
+    <div class="settings-section" style="margin-top:14px">Режим подбора</div>
+    <div class="row" style="gap:6px">
+      <button class="btn ${mode==='auto'?'btn-primary':''}" id="illModeAuto" style="flex:1">🎲 Авто</button>
+      <button class="btn ${mode==='manual'?'btn-primary':''}" id="illModeManual" style="flex:1">☑ Ручной</button>
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:4px">${mode==='auto'?'Арт-директор сам подбирает кандидатов на всю книгу.':'Вы сами отмечаете, что иллюстрировать — обложку и/или конкретные главы.'}</div>
+    <div class="settings-section" style="margin-top:14px">Текст на картинке</div>
+    <label class="row" style="gap:6px;align-items:center;font-size:12px;margin-top:4px"><input type="checkbox" id="illRuText" ${ic.ruText?'checked':''} ${ic.noText?'disabled':''}> Надписи (обложка, карта) — на русском</label>
+    <label class="row" style="gap:6px;align-items:center;font-size:12px;margin-top:6px"><input type="checkbox" id="illNoText" ${ic.noText?'checked':''}> Совсем без текста на картинке</label>
+    <label class="row" style="gap:6px;align-items:center;font-size:12px;margin-top:6px" data-tip="Часть провайдеров (Gemini/Recraft) не поддерживает точный размер и рисует по промпту — портретность не гарантирована на 100%, но промпт всегда просит вертикальную ориентацию."><input type="checkbox" id="illPortrait" ${ic.portraitCover?'checked':''}> Портретная обложка (под требования площадок)</label>
   </div>`;
 
   els.center.className = 'panel panel-center';
-  els.center.innerHTML = `
+  const actionBar = mode==='manual' ? `
+    <div class="read-bar">
+      <span class="read-title">Иллюстрации</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary" id="illSuggestManual" ${_manualChecked.size?'':'disabled'} data-tip="Для каждой отмеченной цели арт-директор предложит один промпт (текстовый вызов, бесплатно) — картинка генерируется отдельным шагом ниже.">
+        ${_busy?'<span class="spinner"></span> '+esc(_busyText):`🎨 Предложить промпты (${_manualChecked.size})`}
+      </button>
+    </div>
+    <div class="pad" style="display:flex;flex-direction:column;gap:4px">
+      <label class="row" style="gap:6px;align-items:center;font-size:13px"><input type="checkbox" class="ill-manual-cb" data-target="cover" ${_manualChecked.has('cover')?'checked':''}> 📕 Обложка</label>
+      ${chaptersWithProse(s).map(ch=>`<label class="row" style="gap:6px;align-items:center;font-size:13px"><input type="checkbox" class="ill-manual-cb" data-target="${ch.id}" data-title="${esc(ch.title)}" ${_manualChecked.has(ch.id)?'checked':''}> ${esc(ch.title)}</label>`).join('') || '<div class="muted" style="font-size:12px">Пока нет глав с написанными сценами.</div>'}
+    </div>` : `
     <div class="read-bar">
       <span class="read-title">Иллюстрации</span>
       <span style="flex:1"></span>
       <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Сколько кандидатов предложит арт-директор (включая обложку)">
         Кандидатов:
-        <input type="number" id="illSuggestCount" min="1" max="15" value="${s.illustrations?.suggestCount||7}" style="width:52px">
+        <input type="number" id="illSuggestCount" min="1" max="15" value="${ic.suggestCount||7}" style="width:52px">
       </label>
       <button class="btn btn-primary" id="illSuggest" data-tip="Арт-директор (текстовый LLM, тот же что и для прозы) читает книгу и предлагает кандидатов на иллюстрации: обложку + сильные визуальные сцены. Ничего не тратит сверх обычного текстового вызова.">
         ${_busy?'<span class="spinner"></span> '+esc(_busyText):'🎨 Предложить иллюстрации'}
       </button>
-    </div>
+    </div>`;
+  els.center.innerHTML = `
+    ${actionBar}
     ${_suggestError?`<div class="pad" style="color:var(--err);font-size:12px">⚠ Арт-директор: ${esc(_suggestError)}</div>`:''}
     <div class="read-body" id="illBody">
       ${renderCandidates(s)}
@@ -100,15 +134,66 @@ function renderGallery(items, s){
       ${items.slice().reverse().map(it=>{
         const chapter = it.type==='scene' ? chapterTitleForScene(s, it.sceneId) : null;
         const label = it.type==='cover'?'Обложка':it.type==='map'?'Карта мира':(chapter?`${chapter} · ${it.sceneTitle||'Иллюстрация'}`:(it.sceneTitle||'Иллюстрация'));
+        const canReroll = it.type==='cover' || it.type==='scene'; // карта — отдельный поток (world.js), без промпта
+        const rerollErr = _rerollErrors.get(it.id);
         return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px">
         <img src="${it.dataUrl}" style="width:100%;border-radius:var(--radius);display:block" alt="${esc(label)}">
         <div style="font-size:11px" class="muted">${it.type==='map'?'🗺 '+esc(label):esc(label)}</div>
-        <button class="btn ill-del" data-id="${it.id}" data-label="${esc(label)}" style="align-self:flex-start">🗑 Удалить</button>
+        ${rerollErr?`<div style="font-size:11px;color:var(--err)">⚠ ${esc(rerollErr)}</div>`:''}
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          ${canReroll?`<button class="btn ill-reroll-prompt" data-id="${it.id}" title="Предложить другой промпт (текстовый вызов, бесплатно) — картинку это не трогает">🔄 Другой промпт</button>`:''}
+          ${canReroll?`<button class="btn ill-regen-img" data-id="${it.id}" title="Перегенерировать картинку по текущему промпту — платно">🖼 Другая картинка</button>`:''}
+          <button class="btn ill-del" data-id="${it.id}" data-label="${esc(label)}">🗑 Удалить</button>
+        </div>
       </div>`;}).join('')}
     </div>`;
 }
 
 function bindHandlers(els, s){
+  s.illustrations = s.illustrations || {};
+
+  const modeA = document.getElementById('illModeAuto');
+  const modeM = document.getElementById('illModeManual');
+  if(modeA) modeA.onclick = ()=>{ if(s.illustrations.mode!=='auto'){ s.illustrations.mode='auto'; save(); } renderIllustrations(els); };
+  if(modeM) modeM.onclick = ()=>{ if(s.illustrations.mode!=='manual'){ s.illustrations.mode='manual'; save(); } renderIllustrations(els); };
+
+  const ruTextCb = document.getElementById('illRuText');
+  if(ruTextCb) ruTextCb.onchange = ()=>{ s.illustrations.ruText = ruTextCb.checked; save(); };
+  const noTextCb = document.getElementById('illNoText');
+  if(noTextCb) noTextCb.onchange = ()=>{ s.illustrations.noText = noTextCb.checked; save(); renderIllustrations(els); };
+  const portraitCb = document.getElementById('illPortrait');
+  if(portraitCb) portraitCb.onchange = ()=>{ s.illustrations.portraitCover = portraitCb.checked; save(); };
+
+  document.querySelectorAll('.ill-manual-cb').forEach(cb=>cb.onchange=()=>{
+    if(cb.checked) _manualChecked.add(cb.dataset.target); else _manualChecked.delete(cb.dataset.target);
+    renderIllustrations(els);
+  });
+
+  const sm = document.getElementById('illSuggestManual');
+  if(sm) sm.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+    if(_busy || !_manualChecked.size) return;
+    const chapters = chaptersWithProse(s);
+    const targets = [..._manualChecked].map(t=>{
+      if(t==='cover') return {type:'cover'};
+      const ch = chapters.find(c=>c.id===t);
+      return ch ? {type:'scene', chapterId:ch.id, chapterTitle:ch.title} : null;
+    }).filter(Boolean);
+    _busy = true; _suggestError='';
+    const fresh = [];
+    for(let i=0;i<targets.length;i++){
+      _busyText = `Подбираю промпт ${i+1}/${targets.length}…`; renderIllustrations(els);
+      try{ fresh.push(await suggestOneIllustration(s, targets[i])); }
+      catch(e){ _suggestError = e.message; }
+    }
+    _candidates = [..._candidates, ...fresh];
+    fresh.forEach(c=>_selected.add(c.id));
+    _manualChecked = new Set();
+    _busy = false; _busyText='';
+    announce(fresh.length ? `Предложено ${fresh.length} промптов` : 'Не удалось предложить промпты');
+    renderIllustrations(els);
+  };
+
   const countInp = document.getElementById('illSuggestCount');
   if(countInp) countInp.onchange = ()=>{
     const v = Math.max(1, Math.min(15, parseInt(countInp.value)||7));
@@ -178,5 +263,52 @@ function bindHandlers(els, s){
     s.illustrations.items = (s.illustrations.items||[]).filter(x=>x.id!==id);
     if(it && it.type==='cover' && s.project.coverDataUrl===it.dataUrl) s.project.coverDataUrl='';
     save(); renderIllustrations(els);
+  });
+
+  // Реконструирует «цель» под существующий элемент галереи — для повторного
+  // текстового вызова арт-директора (item сам не хранит chapterId, только sceneId).
+  function targetForItem(it){
+    if(it.type==='cover') return {type:'cover'};
+    const scene = (s.structure||[]).find(n=>n.type==='scene' && n.id===it.sceneId);
+    if(!scene) return null; // сцена удалена/переименована — предложить точечно уже не по чему
+    return { type:'scene', chapterId:scene.chapterId, chapterTitle: chapterTitleForScene(s, scene.id)||'' };
+  }
+
+  document.querySelectorAll('.ill-reroll-prompt').forEach(b=>b.onclick=async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+    if(_busy) return;
+    const id = b.dataset.id;
+    const it = (s.illustrations.items||[]).find(x=>x.id===id);
+    if(!it) return;
+    const target = targetForItem(it);
+    if(!target){ _rerollErrors.set(id, 'Сцена этой картинки больше не найдена в структуре книги.'); renderIllustrations(els); return; }
+    _busy = true; _busyText='Подбираю другой промпт…'; renderIllustrations(els);
+    try{
+      const fresh = await suggestOneIllustration(s, target);
+      it.prompt = fresh.prompt;
+      _rerollErrors.delete(id);
+      save();
+      announce('Промпт обновлён — картинка пока прежняя, нажмите «Другая картинка», если хотите перегенерировать.');
+    }catch(e){ _rerollErrors.set(id, e.message); }
+    finally{ _busy=false; _busyText=''; renderIllustrations(els); }
+  });
+
+  document.querySelectorAll('.ill-regen-img').forEach(b=>b.onclick=async ()=>{
+    if(!s.illustrations?.apiKey){ alert('Задайте ключ для генерации картинок в настройках (⚙).'); return; }
+    if(_busy) return;
+    const id = b.dataset.id;
+    const it = (s.illustrations.items||[]).find(x=>x.id===id);
+    if(!it) return;
+    if(!confirm('Перегенерировать картинку по текущему промпту? Это платно.')) return;
+    _busy = true; _busyText='Генерирую картинку…'; renderIllustrations(els);
+    try{
+      const dataUrl = await generateIllustrationFor(s, it);
+      it.dataUrl = dataUrl;
+      if(it.type==='cover') s.project.coverDataUrl = dataUrl;
+      _rerollErrors.delete(id);
+      save();
+      announce('Картинка перегенерирована');
+    }catch(e){ _rerollErrors.set(id, e.message); }
+    finally{ _busy=false; _busyText=''; renderIllustrations(els); }
   });
 }

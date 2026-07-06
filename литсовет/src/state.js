@@ -72,6 +72,10 @@ export function defaultState(){
       quality: 'standard',     // standard | hd
       items: [],                // {id, type, sceneId, sceneTitle, prompt, dataUrl, createdAt}
       suggestCount: 7,          // сколько кандидатов предлагать (включая обложку), 1-15
+      mode: 'auto',             // auto (арт-директор сам предлагает) | manual (автор выбирает главы/обложку галочкой)
+      ruText: true,             // если на картинке есть надписи (обложка/карта) — они на русском
+      noText: false,            // вообще без текста на картинке — приоритет над ruText
+      portraitCover: false,     // обложка в портретных пропорциях (под требования площадок публикации)
     },
     global: {
       baseURL: 'https://api.deepseek.com',
