@@ -3,12 +3,13 @@
 // Деньги тратятся ТОЛЬКО по явному клику «Сгенерировать выбранные».
 
 import { getState, save } from '../state.js';
-import { suggestIllustrations, generateIllustrationFor } from '../illustrations.js';
+import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
 
 let _candidates = [];   // предложенные арт-директором, ещё не сгенерированные
 let _selected = new Set(); // id выбранных чекбоксом кандидатов
+let _errors = new Map(); // id кандидата → текст последней ошибки генерации (не удалось — не теряем кандидата)
 let _busy = false;
 let _busyText = '';
 
@@ -42,7 +43,7 @@ export function renderIllustrations(els){
     </div>
     <div class="read-body" id="illBody">
       ${renderCandidates(s)}
-      ${renderGallery(items)}
+      ${renderGallery(items, s)}
     </div>`;
 
   bindHandlers(els, s);
@@ -55,17 +56,22 @@ function renderCandidates(s){
   const cost = estimateImageCost(provider, quality, _selected.size);
   return `<div class="ph">Кандидаты от арт-директора</div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
-      ${_candidates.map(c=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
+      ${_candidates.map(c=>{
+        const chapter = c.type==='scene' ? chapterTitleForScene(s, c.sceneId) : null;
+        const label = c.type==='cover' ? '📕 Обложка' : `🖼 ${chapter?esc(chapter)+' · ':''}«${esc(c.sceneTitle||'')}»`;
+        const err = _errors.get(c.id);
+        return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
           <input type="checkbox" class="ill-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} style="margin-top:3px">
           <div style="flex:1">
-            <b>${c.type==='cover'?'📕 Обложка':'🖼 «'+esc(c.sceneTitle||'')+'»'}</b>
+            <b>${label}</b>
             <span class="muted" style="font-size:11px;margin-left:6px">★ ${c.importance||5}/10</span>
             <div class="muted" style="font-size:12px;margin-top:2px">${esc(c.reason||'')}</div>
             <div style="font-size:12px;color:var(--text-2);margin-top:2px;font-style:italic">${esc(c.prompt)}</div>
+            ${err?`<div style="font-size:12px;color:var(--err);margin-top:4px">⚠ Не удалось сгенерировать: ${esc(err)}</div>`:''}
           </div>
         </label>
-      </div>`).join('')}
+      </div>`;}).join('')}
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-bottom:18px">
       <button class="btn" id="illClearCand">Отменить</button>
@@ -75,12 +81,13 @@ function renderCandidates(s){
     </div>`;
 }
 
-function renderGallery(items){
+function renderGallery(items, s){
   if(!items.length) return '';
   return `<div class="ph">Сгенерированные</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
       ${items.slice().reverse().map(it=>{
-        const label = it.type==='cover'?'Обложка':it.type==='map'?'Карта мира':(it.sceneTitle||'Иллюстрация');
+        const chapter = it.type==='scene' ? chapterTitleForScene(s, it.sceneId) : null;
+        const label = it.type==='cover'?'Обложка':it.type==='map'?'Карта мира':(chapter?`${chapter} · ${it.sceneTitle||'Иллюстрация'}`:(it.sceneTitle||'Иллюстрация'));
         return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px">
         <img src="${it.dataUrl}" style="width:100%;border-radius:var(--radius);display:block" alt="${esc(label)}">
         <div style="font-size:11px" class="muted">${it.type==='map'?'🗺 '+esc(label):esc(label)}</div>
@@ -106,6 +113,7 @@ function bindHandlers(els, s){
       _candidates = await suggestIllustrations(s);
       _candidates.sort((a,b)=>b.importance-a.importance);
       _selected = new Set(_candidates.map(c=>c.id));
+      _errors = new Map();
     }catch(e){ alert('Арт-директор: '+e.message); }
     finally{ _busy = false; _busyText=''; renderIllustrations(els); }
   };
@@ -116,7 +124,7 @@ function bindHandlers(els, s){
   });
 
   const cc = document.getElementById('illClearCand');
-  if(cc) cc.onclick = ()=>{ _candidates=[]; _selected=new Set(); renderIllustrations(els); };
+  if(cc) cc.onclick = ()=>{ _candidates=[]; _selected=new Set(); _errors=new Map(); renderIllustrations(els); };
 
   const gb = document.getElementById('illGenerate');
   if(gb) gb.onclick = async ()=>{
@@ -125,6 +133,7 @@ function bindHandlers(els, s){
     const toGen = _candidates.filter(c=>_selected.has(c.id));
     _busy = true;
     s.illustrations.items = s.illustrations.items || [];
+    const succeeded = new Set();
     for(let i=0;i<toGen.length;i++){
       const c = toGen[i];
       _busyText = `Генерирую ${i+1}/${toGen.length}…`; renderIllustrations(els);
@@ -132,11 +141,16 @@ function bindHandlers(els, s){
         const dataUrl = await generateIllustrationFor(s, c);
         s.illustrations.items.push({ id:c.id, type:c.type, sceneId:c.sceneId, sceneTitle:c.sceneTitle, prompt:c.prompt, dataUrl, createdAt:Date.now() });
         if(c.type==='cover') s.project.coverDataUrl = dataUrl;
+        succeeded.add(c.id);
+        _errors.delete(c.id);
         save();
-      }catch(e){ alert(`Не удалось сгенерировать «${c.sceneTitle||'обложку'}»: ${e.message}`); }
+      }catch(e){ _errors.set(c.id, e.message); }
     }
-    _candidates = _candidates.filter(c=>!_selected.has(c.id));
-    _selected = new Set();
+    // Убираем из списка только успешно сгенерированные — упавшие остаются
+    // кандидатами (и выбранными), чтобы повторить одним кликом «Сгенерировать»,
+    // а не заново вызывать арт-директора и терять уже подобранные промпты.
+    _candidates = _candidates.filter(c=>!succeeded.has(c.id));
+    _selected = new Set([..._selected].filter(id=>!succeeded.has(id)));
     _busy = false; _busyText='';
     save(); renderIllustrations(els);
   };

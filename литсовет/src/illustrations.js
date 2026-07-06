@@ -102,6 +102,19 @@ export async function generateIllustrationFor(state, candidate){
   return dataUrl;
 }
 
+// Глава, к которой относится сцена — по позиции в structure (та же логика,
+// что buildBook() в export.js), null для обложки/несцены или сцены без главы.
+export function chapterTitleForScene(state, sceneId){
+  if(!sceneId) return null;
+  const nodes = state.structure||[];
+  let cur = null;
+  for(const n of nodes){
+    if(n.type==='chapter') cur = n.title;
+    else if(n.type==='scene' && n.id===sceneId) return cur||null;
+  }
+  return null;
+}
+
 // Сохранить сгенерированную карту мира в общую галерею (единый источник
 // правды — state.illustrations.items, спека §9). Вызывается из world.js
 // напрямую, минуя suggestIllustrations()/doneScenesOrdered (на стадии «Мир»
