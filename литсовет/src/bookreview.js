@@ -64,8 +64,8 @@ export function betaReaderMessages(state){
     lowScored.length ? '\nСцены с низкой внутренней оценкой (возможные места провала интереса): ' + lowScored.map(s=>`«${s.title}»`).join(', ') : '',
     '',
     'Ответь как бета-ридер. Верни JSON:',
-    '{ "hookScore": 0-10, "hookNote": "затянула ли первая сцена, почему/почему нет", "motivationClarity": 0-10, "motivationNote": "ясны ли цели и мотивации героя, растёт ли он по ходу книги", "paceDrops": ["конкретные главы/сцены, где интерес проседал, с причиной — 0-4"], "endingScore": 0-10, "endingNote": "удовлетворяет ли финал, закрыты ли ожидания читателя", "overall": "2-3 предложения общего впечатления как реальный читатель, не редактор" }',
-    'Только JSON.',
+    '{ "hookScore": 0-10, "hookNote": "затянула ли первая сцена, почему/почему нет", "motivationClarity": 0-10, "motivationNote": "ясны ли цели и мотивации героя, растёт ли он по ходу книги", "paceDrops": [ { "sceneTitle": "название сцены, где именно просело — ТОЧНО как в обзоре книги выше, иначе пусто", "note": "в чём причина" } ], "endingScore": 0-10, "endingNote": "удовлетворяет ли финал, закрыты ли ожидания читателя", "overall": "2-3 предложения общего впечатления как реальный читатель, не редактор" }',
+    'paceDrops — до 4. Только JSON.',
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
@@ -76,13 +76,16 @@ export async function runBetaRead(state){
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 2) throw new Error('Нужно хотя бы 2 законченные сцены (нужны начало и финал).');
   const msgs = betaReaderMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1000, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1500, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j) throw new Error('Не удалось разобрать ответ бета-ридера.');
   return {
     hookScore: clamp10(j.hookScore), hookNote: str(j.hookNote),
     motivationClarity: clamp10(j.motivationClarity), motivationNote: str(j.motivationNote),
-    paceDrops: Array.isArray(j.paceDrops) ? j.paceDrops.slice(0,4).map(String) : [],
+    paceDrops: Array.isArray(j.paceDrops) ? j.paceDrops.slice(0,4).map(x=>({
+      sceneTitle: String(x?.sceneTitle||'').slice(0,100),
+      note: String(x?.note||'').slice(0,300),
+    })) : [],
     endingScore: clamp10(j.endingScore), endingNote: str(j.endingNote),
     overall: str(j.overall),
   };
@@ -103,7 +106,7 @@ export function chekhovMessages(state){
     bookOverview(state),
     '',
     'Найди сюжетные заготовки и для каждой определи: получила ли она развязку (и где) или осталась непогашенной. Верни JSON:',
-    '{ "setups": [ { "what": "что заложено", "introducedIn": "где введено (глава/сцена)", "resolved": true|false, "resolvedIn": "где получило развязку, если resolved" } ] }',
+    '{ "setups": [ { "what": "что заложено", "introducedIn": "где введено (глава/сцена)", "resolved": true|false, "resolvedIn": "где получило развязку, если resolved", "sceneTitle": "если НЕ resolved — название сцены (ТОЧНО как в обзоре книги выше), где логичнее всего дать развязку — последняя написанная сцена, если нет более подходящей; пусто, если неочевидно" } ] }',
     'До 8 самых значимых заготовок. Если книга ещё не закончена — заготовки из последних сцен, которым просто ещё рано получать развязку, НЕ считай непогашенными.',
     'Только JSON.',
   ].filter(Boolean).join('\n');
@@ -150,7 +153,7 @@ export async function runCriticReview(state){
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 2) throw new Error('Нужно хотя бы 2 законченные сцены (нужны начало и финал).');
   const msgs = criticReviewMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.5, messages:msgs, maxTokens:1800, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.5, messages:msgs, maxTokens:3200, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j) throw new Error('Не удалось разобрать ответ критика.');
   return {
@@ -171,7 +174,7 @@ export async function runChekhovCheck(state){
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 3) throw new Error('Нужно хотя бы 3 законченные сцены.');
   const msgs = chekhovMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1200, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1800, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || !Array.isArray(j.setups)) throw new Error('Не удалось разобрать ответ.');
   return j.setups.slice(0,8).map(s=>({
@@ -179,6 +182,7 @@ export async function runChekhovCheck(state){
     introducedIn: String(s.introducedIn||'').slice(0,100),
     resolved: !!s.resolved,
     resolvedIn: String(s.resolvedIn||'').slice(0,100),
+    sceneTitle: String(s.sceneTitle||'').slice(0,100),
   }));
 }
 

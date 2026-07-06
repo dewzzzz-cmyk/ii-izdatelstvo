@@ -1237,6 +1237,14 @@ export function renderWrite(els){
   document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
+  // Находка из Бета-ридера/Ружей Чехова/Критика (Редактура) с готовой директивой —
+  // см. goToSceneWithDirective. Применяем один раз при рендере: автор видит
+  // текст в поле, правит/жмёт «Переписать» сам — ничего не запускается сюда сама собой.
+  if(_pendingDirective!=null){
+    const dInp = document.getElementById('directive');
+    if(dInp) dInp.value = _pendingDirective;
+    _pendingDirective = null;
+  }
 
   // Undo/redo ТЕКСТА в редакторе (правки рукой) — нативная история contenteditable
   const edU=document.getElementById('edUndo'), edR=document.getElementById('edRedo');
@@ -1636,22 +1644,22 @@ export function renderEdit(els){
   if(br) br.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     br.disabled=true; const orig=br.textContent; br.innerHTML='<span class="spinner"></span> Читаю книгу…';
-    try{ const report=await runBetaRead(s); _lastBetaRead=report; openBetaReadModal(report); }
+    try{ const report=await runBetaRead(s); _lastBetaRead=report; openBetaReadModal(s, report); }
     catch(e){ alert('Бета-ридер: '+e.message); }
     finally{ br.disabled=false; br.textContent=orig; renderEdit(els); }
   };
   const bra=document.getElementById('betaReadAgain');
-  if(bra) bra.onclick=(ev)=>{ ev.stopPropagation(); if(_lastBetaRead) openBetaReadModal(_lastBetaRead); };
+  if(bra) bra.onclick=(ev)=>{ ev.stopPropagation(); if(_lastBetaRead) openBetaReadModal(s, _lastBetaRead); };
   const cc=document.getElementById('chekhovCheck');
   if(cc) cc.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     cc.disabled=true; const orig=cc.textContent; cc.innerHTML='<span class="spinner"></span> Ищу заготовки…';
-    try{ const setups=await runChekhovCheck(s); _lastChekhov=setups; openChekhovModal(setups); }
+    try{ const setups=await runChekhovCheck(s); _lastChekhov=setups; openChekhovModal(s, setups); }
     catch(e){ alert('Ружья Чехова: '+e.message); }
     finally{ cc.disabled=false; cc.textContent=orig; renderEdit(els); }
   };
   const cha=document.getElementById('chekhovAgain');
-  if(cha) cha.onclick=(ev)=>{ ev.stopPropagation(); if(_lastChekhov) openChekhovModal(_lastChekhov); };
+  if(cha) cha.onclick=(ev)=>{ ev.stopPropagation(); if(_lastChekhov) openChekhovModal(s, _lastChekhov); };
   const crb=document.getElementById('criticReview');
   if(crb) crb.onclick=async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
@@ -1666,13 +1674,50 @@ export function renderEdit(els){
 
 function scoreColor(n){ return n>=7?'var(--ok)':n>=4?'var(--warn)':'var(--err)'; }
 
-// Кнопка «Скопировать» для находок Бета-ридера/Критика, которые не привязаны
-// к конкретной сцене (или привязаны, но автор хочет вставить замечание сам,
-// не переходя сразу в «Написание») — единственный способ вообще что-то
-// сделать с находкой, если её нельзя адресовать через crit-goto.
+// Найти сцену по названию (точное совпадение без учёта регистра/пробелов) —
+// общее для Бета-ридера/Критика/Ружей Чехова: все три возвращают sceneTitle
+// как текстовое поле, не id, поэтому резолвить приходится по названию.
+function findSceneByTitle(s, title){
+  if(!title) return null;
+  const t = String(title).trim().toLowerCase(); if(!t) return null;
+  return (s.structure||[]).find(n=>n.type==='scene' && n.title.trim().toLowerCase()===t) || null;
+}
+
+// Не найденная модулем DOM-переменная, а «отложенная директива»: заметка
+// находки книжного обзора (Бета-ридер/Ружья Чехова/Критик), которую нужно
+// подставить в поле «Сказать агенту, что изменить» СРАЗУ после перехода на
+// нужную сцену в Написании — рендер сцены случается позже (после save()),
+// поэтому просто установить value синхронно здесь нельзя, элемент ещё не
+// существует. renderWrite() проверяет и применяет её один раз при рендере.
+let _pendingDirective = null;
+
+// Перейти к сцене находки книжного обзора с уже заполненной директивой для
+// Прозаика — автор видит готовое ТЗ в поле, может поправить и сам решает,
+// нажимать «Переписать» или нет (не запускаем ИИ без явного клика автора).
+function goToSceneWithDirective(s, sceneId, directive, close){
+  s.ui.activeScene = sceneId; s.ui.stage = 'write';
+  _pendingDirective = directive || '';
+  save();
+  if(close) close();
+}
+
+// Кнопка «Скопировать» для находок, которые не привязаны к конкретной сцене
+// (sceneTitle пуст, или сцена не нашлась в структуре) — единственный способ
+// хоть что-то сделать с такой находкой, раз перейти прямо к сцене нельзя.
 function copyNoteBtn(text){
   if(!text) return '';
   return `<button class="btn ares-copy-note" data-copy="${esc(text)}" title="Скопировать в буфер — вставьте в поле «Сказать агенту, что изменить» на нужной сцене" style="font-size:11px;padding:2px 8px;align-self:flex-start;margin-top:2px">📋 Копировать</button>`;
+}
+// Кнопка «→ исправить» — переход к сцене находки с готовой директивой.
+function fixSceneBtn(s, sceneTitle, directive){
+  const sc = findSceneByTitle(s, sceneTitle);
+  if(!sc) return sceneTitle ? `<div class="muted" style="font-size:11px">сцена «${esc(sceneTitle)}» не найдена в структуре</div>` : '';
+  return `<button class="btn goto-fix" data-sc="${sc.id}" data-directive="${esc(directive)}" style="align-self:flex-start;font-size:11px;padding:3px 8px">→ «${esc(sc.title)}» (открыть с этим замечанием)</button>`;
+}
+function bindFixButtons(s, close){
+  document.querySelectorAll('.goto-fix').forEach(b=>b.onclick=()=>{
+    goToSceneWithDirective(s, b.dataset.sc, b.dataset.directive, close);
+  });
 }
 function bindCopyNotes(){
   document.querySelectorAll('.ares-copy-note').forEach(b=>b.onclick=()=>{
@@ -1682,7 +1727,7 @@ function bindCopyNotes(){
   });
 }
 
-function openBetaReadModal(r){
+function openBetaReadModal(s, r){
   const root=document.getElementById('modalRoot');
   const row=(label, score, note)=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px">
     <div class="row" style="justify-content:space-between"><b>${label}</b><span style="font-weight:700;color:${scoreColor(score)}">${score}/10</span></div>
@@ -1698,7 +1743,13 @@ function openBetaReadModal(r){
       ${row('Финал', r.endingScore, r.endingNote)}
       ${r.paceDrops.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
         <b>Где проседал интерес</b>
-        ${r.paceDrops.map(p=>`<div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px"><div style="font-size:12px;color:var(--text-2)">• ${esc(p)}</div>${copyNoteBtn(p)}</div>`).join('')}
+        ${r.paceDrops.map(p=>`<div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">
+          <div style="font-size:12px;color:var(--text-2)">• ${esc(p.note)}</div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            ${fixSceneBtn(s, p.sceneTitle, p.note)}
+            ${!findSceneByTitle(s, p.sceneTitle)?copyNoteBtn(p.note):''}
+          </div>
+        </div>`).join('')}
       </div>`:''}
       <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:var(--accent-bg)">
         <b>Общее впечатление</b><div style="font-size:13px">${esc(r.overall||'—')}</div>
@@ -1710,13 +1761,12 @@ function openBetaReadModal(r){
   const close=()=>root.innerHTML='';
   document.getElementById('brBg').onclick=close;
   document.getElementById('brClose').onclick=close;
+  bindFixButtons(s, close);
   bindCopyNotes();
 }
 
 function openCriticModal(s, r){
   const root=document.getElementById('modalRoot');
-  const scenes = (s.structure||[]).filter(n=>n.type==='scene');
-  const findScene = title => scenes.find(sc=>sc.title.trim().toLowerCase()===String(title||'').trim().toLowerCase());
   root.innerHTML=`<div class="modal-bg" id="crBg"><div class="modal" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>🎭 Критик</h2>
     <div class="muted" style="margin-bottom:10px;font-size:12px">Несокращённая рецензия — не анкета со баллами. Мнение может быть резким; это осознанно.</div>
@@ -1731,15 +1781,13 @@ function openCriticModal(s, r){
       ${r.problems.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
         <b>Проблемы</b>
         ${r.problems.map(p=>{
-          const sc = findScene(p.sceneTitle);
           const noteText = (p.issue||'')+(p.note?': '+p.note:'');
           return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-top:1px solid var(--border)">
             <div style="font-size:13px">${esc(p.issue)}</div>
             ${p.note?`<div style="font-size:12px;color:var(--text-2)">${esc(p.note)}</div>`:''}
             <div class="row" style="gap:6px;flex-wrap:wrap">
-              ${sc?`<button class="btn crit-goto" data-sc="${sc.id}" data-note="${esc(noteText)}" style="align-self:flex-start;font-size:11px;padding:3px 8px">→ «${esc(sc.title)}» (открыть и скопировать замечание)</button>`
-                  :(p.sceneTitle?`<div class="muted" style="font-size:11px">сцена «${esc(p.sceneTitle)}» не найдена в структуре</div>`:'')}
-              ${!sc?copyNoteBtn(noteText):''}
+              ${fixSceneBtn(s, p.sceneTitle, noteText)}
+              ${!findSceneByTitle(s, p.sceneTitle)?copyNoteBtn(noteText):''}
             </div>
           </div>`;
         }).join('')}
@@ -1753,16 +1801,11 @@ function openCriticModal(s, r){
   const close=()=>root.innerHTML='';
   document.getElementById('crBg').onclick=close;
   document.getElementById('crClose').onclick=close;
-  document.querySelectorAll('.crit-goto').forEach(b=>b.onclick=()=>{
-    const text=b.dataset.note;
-    navigator.clipboard?.writeText(text).catch(()=>{});
-    s.ui.activeScene=b.dataset.sc; s.ui.stage='write'; save();
-    close();
-  });
+  bindFixButtons(s, close);
   bindCopyNotes();
 }
 
-function openChekhovModal(setups){
+function openChekhovModal(s, setups){
   const root=document.getElementById('modalRoot');
   if(!setups.length){
     root.innerHTML=`<div class="modal-bg" id="chBg"><div class="modal" style="width:380px" onclick="event.stopPropagation()">
@@ -1780,16 +1823,24 @@ function openChekhovModal(setups){
     <h2>🔫 Ружья Чехова${unresolved?` · ${unresolved} без развязки`:''}</h2>
     <div class="muted" style="margin-bottom:10px;font-size:12px">Значимые сюжетные заготовки и получили ли они развязку. Если книга не закончена — заготовки из последних сцен намеренно не отмечены как «без развязки».</div>
     <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto">
-      ${setups.map(x=>`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:${x.resolved?'var(--ok-bg,#f0faf0)':'var(--warn-bg,#fffbf0)'}">
+      ${setups.map(x=>{
+        const directive = `Дай развязку заготовке «${x.what}» (введено: ${x.introducedIn||'—'}) — она осталась непогашенной.`;
+        return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:${x.resolved?'var(--ok-bg,#f0faf0)':'var(--warn-bg,#fffbf0)'}">
         <div style="font-weight:500">${x.resolved?'✓':'⚠'} ${esc(x.what)}</div>
         <div class="muted" style="font-size:11px">введено: ${esc(x.introducedIn||'—')}${x.resolved?` · развязка: ${esc(x.resolvedIn||'—')}`:' · развязки не найдено'}</div>
-      </div>`).join('')}
+        ${!x.resolved?`<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:2px">
+          ${fixSceneBtn(s, x.sceneTitle, directive)}
+          ${!findSceneByTitle(s, x.sceneTitle)?copyNoteBtn(directive):''}
+        </div>`:''}
+      </div>`;}).join('')}
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="chClose">Закрыть</button></div>
   </div></div>`;
   const close=()=>root.innerHTML='';
   document.getElementById('chBg').onclick=close;
   document.getElementById('chClose').onclick=close;
+  bindFixButtons(s, close);
+  bindCopyNotes();
 }
 function stageDoneFor(s,id){
   switch(id){
