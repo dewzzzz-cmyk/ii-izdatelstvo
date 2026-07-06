@@ -1939,7 +1939,9 @@ async function doRun(els, s, scene, directive, runFlags={}){
     // без отката следующий же save() (по любому несвязанному действию)
     // тихо затрёт последнюю хорошую версию, и её не будет даже в истории,
     // т.к. proseVersions пишется только при УСПЕШНОМ прогоне (строка выше).
-    if(wasDone) scene.text = oldText;
+    // Безусловно (не только при wasDone) — у ещё не готовой сцены до прогона
+    // тоже мог быть текст (ручной черновик автора), его так же нельзя терять.
+    scene.text = oldText;
     ed.textContent='Ошибка: '+e.message; pushProc({log:{icon:'⚠', text:'Ошибка: '+e.message, state:'warn'}});
   }
   finally{
