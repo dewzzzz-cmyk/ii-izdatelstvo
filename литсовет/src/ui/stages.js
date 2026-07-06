@@ -1469,7 +1469,7 @@ function resolveSuggestion(scene, idx, accept){
 }
 
 // ─────────────────────────────── РЕДАКТУРА + РОАДМАП + ЭКСПОРТ ───────────────────────────────
-const STAGE_LABELS = [['concept','Концепция'],['world','Мир'],['voice','Голос'],['structure','Структура'],['write','Написание'],['illustrations','Иллюстрации'],['edit','Редактура']];
+const STAGE_LABELS = [['concept','Концепция'],['world','Мир'],['voice','Голос'],['structure','Структура'],['write','Написание'],['illustrations','Иллюстрации'],['edit','Редактура'],['publish','Публикация']];
 // Роадмап — переиспользуемая секция (правая панель «Написания» + стадия «Редактура»).
 export function renderRoadmap(s){
   const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
@@ -1764,6 +1764,9 @@ function stageDoneFor(s,id){
     case 'structure': return (s.structure||[]).some(n=>n.type==='scene');
     case 'write': return (s.structure||[]).filter(n=>n.type==='scene').some(n=>n.status==='done');
     case 'illustrations': return (s.illustrations?.items||[]).length>0;
+    // «Публикация» — всегда false: приложение не может знать, опубликовал ли
+    // автор книгу на внешней площадке (это происходит вне Литсовета вручную).
+    case 'publish': return false;
     default: return false;
   }
 }
