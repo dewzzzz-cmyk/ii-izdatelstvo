@@ -256,6 +256,31 @@ export function dismissOpenThread(state, idx){
   t.dismissed = true; return true;
 }
 
+// Обнаруженные противоречия нового факта канона с уже существующим —
+// state.memory.factConflicts[]. Пишется из summarizeScene() (memory.js), когда
+// архивариус извлёк новый факт, близкий по теме к уже записанному (та же
+// сущность/объект), а сверка ИИ решила, что они противоречат, а не дополняют
+// друг друга — напр. одна сцена описывает предмет как гаджет, другая как
+// магический артефакт. В отличие от openThreads/observed — не растёт
+// счётчиком повторов: каждая пара «новый факт против старого» своя запись,
+// дедуп по точному совпадению пары (не по смыслу — иначе разные пары A/B и
+// A/C схлопнутся в одну и потеряется, с чем именно противоречие).
+export function recordFactConflict(state, { newFact, oldFact, explain, sceneId, sceneTitle }){
+  const nf = (newFact||'').trim(), of = (oldFact||'').trim(); if(!nf || !of) return;
+  state.memory = state.memory || {};
+  state.memory.factConflicts = state.memory.factConflicts || [];
+  const conflicts = state.memory.factConflicts;
+  if(conflicts.some(c=>!c.dismissed && c.newFact===nf && c.oldFact===of)) return;
+  conflicts.push({ newFact:nf, oldFact:of, explain:(explain||'').trim(), sceneId:sceneId||'', sceneTitle:sceneTitle||'', at: Date.now() });
+  if(conflicts.length > 30) conflicts.splice(0, conflicts.length-30);
+}
+
+// Скрыть конфликт — автор решил (или уже исправил вручную). Та же логика: помечаем, не удаляем.
+export function dismissFactConflict(state, idx){
+  const c = (state.memory?.factConflicts||[])[idx]; if(!c) return false;
+  c.dismissed = true; return true;
+}
+
 let _agc = 0;
 // Добавить кастомного агента-стража (флагует по своему промпту, безопасно).
 export function addCustomAgent(state, name, prompt){

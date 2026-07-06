@@ -4,10 +4,26 @@
 
 import { callLLM } from './llm.js';
 import { sceneSummaryMessages, parseSceneSummary,
-         chapterSummaryMessages, bookSummaryMessages, parseSummary } from './summarizer.js';
-import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
+         chapterSummaryMessages, bookSummaryMessages, parseSummary,
+         factConflictMessages, parseFactConflicts } from './summarizer.js';
+import { rebuildBibleVecs, tokensOf, tfvec, cosine, stem } from './bible.js';
 import { RUBRIC_AXES } from './agents.js';
-import { findOrCreateCharacter } from './state.js';
+import { findOrCreateCharacter, recordFactConflict } from './state.js';
+
+// "Та же сущность" для поиска кандидата на противоречие — по ПЕРЕСЕЧЕНИЮ
+// ключей (keys), а не по косинусу полного текста. Живой тест показал: чем
+// сильнее два факта об одном предмете противоречат друг другу, тем МЕНЬШЕ у
+// них общей лексики в самом тексте («ИИ-гаджет, датчики, калибровка» против
+// «горный хрусталь, латунь, гравировка змей» — 0.12 косинуса, ниже любого
+// разумного порога), а ключи архивариус всё равно проставляет по предмету
+// («очки, …» в обоих случаях) — они и остаются надёжным сигналом «то же самое».
+function keysOverlap(keysA, keysB){
+  const a = new Set(tokensOf(keysA||'').map(stem));
+  const b = new Set(tokensOf(keysB||'').map(stem));
+  if(!a.size || !b.size) return false;
+  for(const t of a) if(t.length>=3 && b.has(t)) return true;
+  return false;
+}
 
 // Запись памяти с версиями: { current, versions:[{text, at}] }
 function putVersioned(bucket, id, text){
@@ -86,7 +102,15 @@ export async function summarizeScene(state, scene){
   // Известные имена — архивариусу, чтобы переиспользовал их, а не изобретал
   // новую форму («Олег» vs «Олег К.») и не расщеплял персонажа на два.
   const knownNames = (state.characters||[]).map(c=>c.name).filter(Boolean);
-  const msgs = sceneSummaryMessages(scene, scene.text, knownNames);
+  // Непосредственно предыдущая сцена по порядку СТРУКТУРЫ/чтения (не порядку
+  // написания — автор мог вернуться и переписать более раннюю главу) — тот же
+  // источник и принцип, что у стража логики/событий (см. factsBlock в
+  // guards.js): только сосед по сюжету, не весь бегущий синопсис книги.
+  const scenesInOrder = (state.structure||[]).filter(n=>n.type==='scene');
+  const curIdx = scenesInOrder.findIndex(n=>n.id===scene.id);
+  const prevNode = curIdx>0 ? [...scenesInOrder.slice(0, curIdx)].reverse().find(n=>(state.memory?.scenes||{})[n.id]?.current || n.text) : null;
+  const prevSummary = prevNode ? ((state.memory?.scenes||{})[prevNode.id]?.current || prevNode.text.slice(-400)) : '';
+  const msgs = sceneSummaryMessages(scene, scene.text, knownNames, prevSummary);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:500, retries:g.retries });
   const parsed = parseSceneSummary(res.text);
   if(!parsed) return null;
@@ -100,21 +124,44 @@ export async function summarizeScene(state, scene){
     ch.stateNote = c.state || ch.stateNote;
   });
 
-  // новые факты в Bible — дедуп по СХОДСТВУ (не только точному совпадению) + лимит
+  // новые факты в Bible — дедуп по СХОДСТВУ (не только точному совпадению) + лимит.
+  // Заодно ищем кандидатов на ПРОТИВОРЕЧИЕ: факт про ТУ ЖЕ сущность (пересечение
+  // ключей, см. keysOverlap выше — не дубль по тексту, но про тот же предмет),
+  // который новый факт может отменять/спорить с ним, а не просто дополнять
+  // (см. factConflictMessages).
   let added = 0;
+  const conflictCandidates = []; // {newText, oldText}
   parsed.facts.forEach(f=>{
     if(!f.text) return;
     const fvec = tfvec(tokensOf((f.keys||'')+' '+f.text));
-    const dup = state.bible.some(b=>{
-      if((b.text||'').toLowerCase()===f.text.toLowerCase()) return true;
+    let dup = false, closest = null;
+    state.bible.forEach(b=>{
+      if(dup) return;
+      if((b.text||'').toLowerCase()===f.text.toLowerCase()){ dup = true; return; }
       const bv = b._vec || tfvec(tokensOf((b.keys||'')+' '+(b.text||'')));
-      return cosine(fvec, bv) > 0.6; // близкий по смыслу факт уже есть
+      if(cosine(fvec, bv) > 0.6){ dup = true; return; } // близкий по смыслу факт уже есть
+      if(!closest && keysOverlap(f.keys, b.keys)) closest = b;
     });
-    if(!dup){ state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); added++; }
+    if(dup) return;
+    if(closest) conflictCandidates.push({ newText: f.text, oldText: closest.text });
+    state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); added++;
   });
   // лимит размера Bible (защита от раздувания на длинной книге): держим последние 300
   if(state.bible.length > 300) state.bible.splice(0, state.bible.length-300);
   if(added) rebuildBibleVecs(state.bible);
+
+  // Необязательная проверка — падение здесь не должно ронять суммаризацию сцены
+  // (сводка/состояния персонажей/факты уже сохранены выше).
+  if(conflictCandidates.length){
+    try{
+      const msgs = factConflictMessages(conflictCandidates);
+      const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:600, retries:g.retries });
+      parseFactConflicts(res.text).forEach(c=>{
+        const pair = conflictCandidates[c.index-1]; if(!pair) return;
+        recordFactConflict(state, { newFact:pair.newText, oldFact:pair.oldText, explain:c.explain, sceneId:scene.id, sceneTitle:scene.title });
+      });
+    }catch{ /* пропускаем — это подсказка автору, а не критичный шаг */ }
+  }
 
   return { summary: parsed.summary, charUpdates: parsed.characters.length, factsAdded: added };
 }

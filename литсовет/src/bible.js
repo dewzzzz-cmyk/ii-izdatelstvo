@@ -26,20 +26,30 @@ export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensO
 
 // Семантический поиск топ-K записей релевантных запросу (бриф сцены).
 // Возвращает массив записей {keys, text}.
+// Закреплённые (pinned) факты идут ВСЕГДА, независимо от релевантности —
+// для фактов, которые определяют суть повторяющегося объекта/механики мира
+// (напр. «очки Артёма — ИИ-гаджет, не магия»), TF-IDF top-K может не
+// подобрать их для сцены, чей бриф тематически не про этот объект, а
+// значит страж логики/событий и сам Прозаик их не увидят и не заметят
+// противоречие с уже написанным. Закрепление — ручное решение автора,
+// не эвристика.
 export function bibleMatches(bible, query, k=5){
   if(!bible || !bible.length) return [];
+  const pinned = bible.filter(b=>b.pinned);
+  const rest = bible.filter(b=>!b.pinned);
+  if(!rest.length) return pinned;
   const low=(query||'').toLowerCase(); const sset=stemSet(low);
   const qvec=tfvec(tokensOf(query));
-  const hasVecs=bible.some(b=>b._vec&&Object.keys(b._vec).length>0);
+  const hasVecs=rest.some(b=>b._vec&&Object.keys(b._vec).length>0);
   let hits;
   if(hasVecs && Object.keys(qvec).length>=2){
-    hits=bible.map(b=>({b,score:cosine(qvec,b._vec||{})}))
+    hits=rest.map(b=>({b,score:cosine(qvec,b._vec||{})}))
       .filter(x=>x.score>0.08).sort((a,c)=>c.score-a.score).slice(0,k).map(x=>x.b);
-    if(!hits.length) hits=keywordFallback(bible, low, sset);
+    if(!hits.length) hits=keywordFallback(rest, low, sset);
   } else {
-    hits=keywordFallback(bible, low, sset);
+    hits=keywordFallback(rest, low, sset);
   }
-  return hits.slice(0,k);
+  return [...pinned, ...hits.slice(0,k)];
 }
 function keywordFallback(bible, low, sset){
   return bible.filter(b=>{
@@ -76,5 +86,12 @@ export function applyFactEdit(bible, i, keys, text){
 export function deleteBibleFactAt(bible, i){
   if(!bible[i]) return false;
   bible.splice(i,1);
+  return true;
+}
+
+// Закрепить/открепить факт — см. bibleMatches() выше про то, зачем это нужно.
+export function toggleFactPinned(bible, i){
+  const fact = bible[i]; if(!fact) return false;
+  fact.pinned = !fact.pinned;
   return true;
 }

@@ -4,7 +4,7 @@
 // image-API, только по явному клику (спека §5, §6, §9).
 
 import { getState, save } from '../state.js';
-import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt } from '../bible.js';
+import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
 import { suggestWorldFacts, missingPOD, generateWorldMap, rerollWorldFact, categoriesFor, CATEGORY_HINTS } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
@@ -46,8 +46,9 @@ function renderCategoryCard(s, worldFacts, cat, busyAny){
     ${canon.length ? `<div class="world-cat-facts">
       ${canon.map(f=>{
         const i = s.bible.indexOf(f);
-        return `<div class="mem-card bible-card" data-bi="${i}">
+        return `<div class="mem-card bible-card${f.pinned?' pinned':''}" data-bi="${i}">
           <div class="bible-actions">
+            <button class="bc-act wc-act${f.pinned?' pinned':''}" data-act="pin" data-bi="${i}" title="${f.pinned?'Закреплён — всегда виден стражам и агентам, даже если сцена не про этот факт':'Закрепить — факт будет виден стражам/агентам всегда, а не только когда сцена тематически похожа'}">📌</button>
             <button class="bc-act wc-act" data-act="edit" data-bi="${i}" title="Редактировать">✎</button>
             <button class="bc-act wc-act" data-act="reroll" data-bi="${i}" title="Другой вариант (ИИ)">🔄</button>
             <button class="bc-act wc-act" data-act="del" data-bi="${i}" title="Удалить">✕</button>
@@ -213,6 +214,7 @@ function bindHandlers(els, s){
   document.querySelectorAll('.wc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const i = +b.dataset.bi; const fact = s.bible[i]; if(!fact) return;
+    if(b.dataset.act==='pin'){ if(toggleFactPinned(s.bible,i)){ save(); renderWorld(els); } return; }
     if(b.dataset.act==='del'){
       const preview = fact.text.length>60 ? fact.text.slice(0,60)+'…' : fact.text;
       if(!confirm(`Удалить факт «${preview}»? Отменить нельзя.`)) return;

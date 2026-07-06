@@ -1,12 +1,12 @@
 // Правая панель, вкладка «Память»: сводки (с откатом версий), состояния
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
-import { getState, save, mergeCharacters, charNamesMatch, dismissObserved, dismissOpenThread } from '../state.js';
+import { getState, save, mergeCharacters, charNamesMatch, dismissObserved, dismissOpenThread, dismissFactConflict } from '../state.js';
 import { rollback, summarizeScene } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 import { callLLM } from '../llm.js';
-import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt } from '../bible.js';
+import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
 import { openRuleModal, openFactModal } from './rule-modal.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -72,10 +72,13 @@ export function renderMemory(){
 
       ${openThreadsBlock(s)}
 
+      ${conflictsBlock(s)}
+
       ${sectionHeader('bible', `Канон / Bible (${(s.bible||[]).length})`, `<button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button>`)}
       ${collapsed.bible ? '' : ((s.bible||[]).map((b,i)=>`
-        <div class="mem-card bible-card" data-bi="${i}">
+        <div class="mem-card bible-card${b.pinned?' pinned':''}" data-bi="${i}">
           <div class="bible-actions">
+            <button class="bc-act${b.pinned?' pinned':''}" data-act="pin" data-bi="${i}" title="${b.pinned?'Закреплён — всегда виден стражам и агентам, даже если сцена не про этот факт':'Закрепить — факт будет виден стражам/агентам всегда, а не только когда сцена тематически похожа'}">📌</button>
             <button class="bc-act" data-act="edit" data-bi="${i}" title="Редактировать">✏</button>
             <button class="bc-act" data-act="expand" data-bi="${i}" title="✨ AI-расширить факт">✨</button>
             <button class="bc-act" data-act="del" data-bi="${i}" title="Удалить">🗑</button>
@@ -202,6 +205,24 @@ function openThreadsBlock(s){
     </div>`).join('')}`;
 }
 
+// Противоречия нового факта канона с уже существующим (state.memory.factConflicts[]) —
+// пишется автоматически архивариусом в summarizeScene() (memory.js), когда новый
+// факт близок по теме к старому, но им противоречит, а не дополняет его.
+// Автор решает сам, что верно, и правит соответствующий факт вручную в каноне ниже.
+function conflictsBlock(s){
+  const items = (s.memory?.factConflicts||[]).map((c,i)=>({...c,i})).filter(c=>!c.dismissed).sort((a,b)=>b.at-a.at);
+  if(!items.length) return '';
+  return `<div class="mem-h" style="color:var(--err)" title="Архивариус нашёл новый факт, который по теме близок к уже записанному в канон, но противоречит ему, а не дополняет">⚠ Противоречия канона</div>
+    ${items.map(c=>`<div class="mem-card" style="border-color:var(--err-border)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+        <div style="font-size:12px;flex:1">${esc(c.explain||'Похоже на противоречие')}</div>
+        <button class="bc-act conflict-dismiss" data-ci="${c.i}" title="Скрыть — уже разобрался или это не ошибка (не блокирует, только убирает из списка)">✕</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px"><b>Новое</b>${c.sceneTitle?` (${esc(c.sceneTitle)})`:''}: ${esc(c.newFact)}</div>
+      <div class="muted" style="font-size:11px;margin-top:2px"><b>Было</b>: ${esc(c.oldFact)}</div>
+    </div>`).join('')}`;
+}
+
 function bindMemory(){
   document.querySelectorAll('.mem-h-toggle').forEach(h=>h.onclick=(e)=>{
     if(e.target.closest('button')) return; // не сворачивать при клике на «+ факт» в заголовке
@@ -234,6 +255,10 @@ function bindMemory(){
   document.querySelectorAll('.thread-dismiss').forEach(b=>b.onclick=()=>{
     const s=getState(); if(dismissOpenThread(s, +b.dataset.ti)) save();
   });
+  // Противоречия канона: скрыть
+  document.querySelectorAll('.conflict-dismiss').forEach(b=>b.onclick=()=>{
+    const s=getState(); if(dismissFactConflict(s, +b.dataset.ci)) save();
+  });
   // Персонажи: редактировать состояние
   function editCharState(i){
     const s=getState(); const c=s.characters[i]; if(!c) return;
@@ -262,6 +287,7 @@ function bindMemory(){
   document.querySelectorAll('.bc-act[data-bi]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const s=getState(); const i=+b.dataset.bi; const fact=s.bible[i]; if(!fact) return;
+    if(b.dataset.act==='pin'){ if(toggleFactPinned(s.bible,i)) save(); return; }
     if(b.dataset.act==='del'){
       const preview = fact.text.length>60 ? fact.text.slice(0,60)+'…' : fact.text;
       if(!confirm(`Удалить факт «${preview}»? Отменить нельзя.`)) return;

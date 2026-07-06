@@ -286,10 +286,12 @@ textarea{resize:vertical;min-height:60px}
 .mem-title{font-size:12px;font-weight:500;margin-bottom:3px}
 .mem-sum{width:100%;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;resize:vertical;min-height:36px}
 .bible-card{position:relative}
+.bible-card.pinned{border-left:3px solid var(--accent)}
 .bible-actions{position:absolute;top:5px;right:5px;display:none;gap:3px}
 .bible-card:hover .bible-actions{display:flex}
 .bc-act{border:1px solid var(--border-2);background:var(--surface);border-radius:5px;font-size:11px;padding:1px 5px;cursor:pointer}
 .bc-act:hover{background:var(--surface-2)}
+.bc-act.pinned{border-color:var(--accent);background:var(--accent-bg)}
 .world-cat-card{border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;background:var(--surface)}
 .world-cat-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .world-cat-hint{width:100%;box-sizing:border-box;margin-bottom:8px}
