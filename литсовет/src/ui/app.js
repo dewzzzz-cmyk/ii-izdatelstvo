@@ -241,10 +241,10 @@ async function openSettings(){
           <div class="field" style="flex:1;margin-bottom:0"><label>Базовый URL</label><input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
           <div class="field" style="flex:1;margin-bottom:0"><label>Модель</label><input type="text" id="setModel" value="${escAttr(g.model)}"></div>
         </div>
-        <div class="field" style="margin-top:14px"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей</span></label>
+        <div class="field" style="margin-top:14px"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей, поднимайте выше для очень длинных серийных книг (70+ глав) на моделях с большим окном контекста</span></label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input type="range" id="setBudgetRange" min="8000" max="60000" step="4000" value="${escAttr(g.budgetTokens??32000)}" style="flex:1" oninput="document.getElementById('setBudgetNum').value=this.value">
-            <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??32000)}" min="8000" max="60000" step="4000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
+            <input type="range" id="setBudgetRange" min="8000" max="150000" step="4000" value="${escAttr(g.budgetTokens??32000)}" style="flex:1" oninput="document.getElementById('setBudgetNum').value=this.value">
+            <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??32000)}" min="8000" max="150000" step="4000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
           </div></div>
 
         <div class="settings-section">Иллюстрации</div>
