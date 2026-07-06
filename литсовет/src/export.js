@@ -48,7 +48,7 @@ function paraXhtml(text){
 }
 
 // ── Собрать главы→сцены в структуру для экспорта ──
-function buildBook(state){
+export function buildBook(state){
   const nodes = state.structure||[];
   const chapters = [];
   let cur = null;
@@ -229,4 +229,28 @@ ${coverMeta}</metadata>
 // ── .json (полный проект, секреты вычищены) ──
 export function exportJson(state){
   download(new Blob([exportCheckpoint(state)],{type:'application/json'}), (state.project.title||'litsovet')+'.json');
+}
+
+// ── .fb2 (для ЛитРес Самиздат) ──
+// Намеренно БЕЗ метаданных автора/жанра/цены/обложки в файле — по чек-листу
+// ЛитРес их заполняют в мастере публикации на сайте отдельно, встраивание
+// в файл создаёт дублирование источника правды и конфликтует при
+// конвертации (см. docs/superpowers/specs/2026-07-06-publishing-checklist-design.md §4).
+export function exportFb2(state){
+  const book = buildBook(state);
+  const sections = book.chapters.map(ch=>{
+    const title = ch.title ? `<title><p>${xesc(ch.title)}</p></title>` : '';
+    const body = ch.scenes.map(sc=>paraXhtml(sc.text)).join('\n');
+    return `<section>${title}\n${body}\n</section>`;
+  }).join('\n');
+  const fb2 = `<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<description>
+<title-info><book-title>${xesc(book.title)}</book-title></title-info>
+</description>
+<body>
+${sections}
+</body>
+</FictionBook>`;
+  download(new Blob([fb2],{type:'application/xml'}), book.title+'.fb2');
 }

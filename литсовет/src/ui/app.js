@@ -6,6 +6,7 @@ import { renderConcept, renderVoice, renderStructure, renderWrite, renderEdit } 
 import { renderDiagnostics } from './diagnostics.js';
 import { renderIllustrations } from './illustrations.js';
 import { renderWorld } from './world.js';
+import { renderPublish } from './publish.js';
 import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
@@ -38,6 +39,7 @@ const STAGES = [
   { id:'write',     label:'Написание' },
   { id:'illustrations', label:'Иллюстрации' },
   { id:'edit',      label:'Редактура' },
+  { id:'publish',   label:'Публикация' },
 ];
 
 const els = {
@@ -92,6 +94,7 @@ function renderStage(){
   else if(stage==='write'){ renderWrite(els); }
   else if(stage==='edit'){ renderEdit(els); }
   else if(stage==='illustrations'){ renderIllustrations(els); }
+  else if(stage==='publish'){ renderPublish(els); }
   else { els.left.innerHTML=''; els.center.innerHTML=''; els.right.innerHTML=''; }
 }
 
