@@ -157,9 +157,14 @@ export function mapPromptFor(state){
   const facts = geoFacts.map(f=>f.text).join(' ').slice(0, 900);
   const style = `${p.genre||'роман'}${p.era?', '+p.era:''}`;
   const flavor = MAP_STYLE_FLAVORS[Math.floor(Math.random()*MAP_STYLE_FLAVORS.length)];
+  // Карта обычно требует МНОГО подписей (по факту на место) — а именно плотный
+  // мелкий текст (много коротких надписей на одной картинке) сильнее всего
+  // подвержен артефактам у любых image-моделей. Просим подписать не всё подряд,
+  // а 2-3 САМЫХ важных места крупно — остальную географию показываем визуально,
+  // без подписи, а не пытаемся уместить десяток мелких названий.
   const geoLine = ic.noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear, labeled${ic.ruText ? ' — labels in Russian (Cyrillic script), not English' : ''}): ${facts}`;
+    : `Geography (must appear as visual features — ${facts}). Label ONLY the 2-3 most important named places, in LARGE, bold, hand-lettered text${ic.ruText ? ' (Russian, Cyrillic script, not English)' : ''} styled as part of the map's decoration (not a printed caption) — small or numerous labels reliably render as illegible garbage, so leave the rest of the geography unlabeled rather than cramming in more small text.`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${ic.noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,

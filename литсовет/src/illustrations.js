@@ -89,9 +89,14 @@ export async function suggestIllustrations(state){
 // suggestOneIllustration, перегенерация промпта, перегенерация только картинки) —
 // вставлять инструкцию в промпт LLM-подсказчика пришлось бы дублировать в
 // нескольких местах и она бы не действовала на промпт, отредактированный автором вручную.
+// Мелкий/плотный текст на картинках рисуют с артефактами (нечитаемые буквы,
+// «кракозябры») ВСЕ современные image-модели без исключения — это ограничение
+// самих диффузионных моделей, не промпта конкретного провайдера. Единственное,
+// что реально снижает частоту брака — просить КРУПНЫЙ, немногословный текст;
+// полностью убрать риск нельзя, только уменьшить (или выключить текст совсем — noText).
 export function textInstruction(ic){
   if(ic?.noText) return 'Do not include any readable text, letters, numbers or writing anywhere in the image.';
-  if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English.';
+  if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English — and rendered LARGE, bold and sparse: a few big, clear words, not small or dense text. Small/dense text reliably comes out garbled — prefer omitting a label entirely over rendering it small.';
   return '';
 }
 // Портретные пропорции обложки (для площадок вроде ЛитРес/Author.Today) — часть
