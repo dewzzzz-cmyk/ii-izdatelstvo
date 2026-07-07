@@ -73,6 +73,9 @@ let _topTab = 'analysis';  // analysis | process
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
 let _autoChapter = false;   // автопилот главы: пишем оставшиеся сцены подряд
 let _autoStopReq = false;   // запрошена остановка автопилота (после текущей сцены)
+let _autoBusyLabel = '';    // текст на кнопке-«Стоп», пока автопилот работает — в т.ч. на фазе
+                             // «закрываю главу» (summarizeChapter/runChekhovCheck — реальные вызовы
+                             // ИИ, могут идти долго), где раньше кнопка не менялась и выглядела зависшей
 let _runLog = [];           // лента шагов текущего/последнего прогона
 let _selMenuHide = null;    // ссылки на document-слушатели initSelectionMenu (снимаем перед повторным навешиванием)
 let _selMenuScroll = null;  // scroll-listener на panel-center для скрытия меню при прокрутке
@@ -1194,25 +1197,26 @@ export function renderWrite(els){
       <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
       ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
     </div>
-    ${(()=>{ // автопилот: дописать оставшиеся сцены главы подряд (в «Фабрике» — и дальше по книге)
+    ${(()=>{ // автопилот: две независимые кнопки — глава целиком / книга целиком,
+      // не завязаны на «Режиссёр»/«Фабрика» (та настройка по-прежнему решает
+      // другое — авто-закрытие главы на редакторском стопе и требование
+      // «руки автора» для ручного закрытия).
       if(!ch) return '';
       const remInChapter = scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
-      const isFactoryMode = s.project.mode==='factory';
-      // В «Фабрике» кнопка продолжает писать ЧЕРЕЗ ВСЮ КНИГУ, не только текущую
-      // главу — скрывать её нужно, только когда во всей книге не осталось
-      // недописанных сцен, а не когда закончена именно текущая глава (иначе
-      // кнопка «Написать книгу подряд» пропадала на последней сцене готовой
-      // главы, даже если дальше в книге есть ненаписанные главы).
-      const rem = isFactoryMode ? (s.structure||[]).filter(n=>n.type==='scene' && n.status!=='done').length : remInChapter;
-      if(!rem && !_autoChapter) return '';
+      const remBook = (s.structure||[]).filter(n=>n.type==='scene' && n.status!=='done').length;
+      if(!remInChapter && !remBook && !_autoChapter) return '';
       if(locked) return `<div class="run-row" style="margin-top:6px"><button class="btn" style="flex:1" disabled data-tip="Заблокировано: закройте предыдущую главу, прежде чем писать здесь.">🔒 Заблокировано</button></div>`;
-      const label = _autoChapter ? '■ Стоп (после текущей сцены)'
-        : isFactoryMode ? '▶▶ Написать книгу подряд ('+rem+' сц.)'
-        : '▶▶ Дописать главу подряд ('+rem+' сц.)';
-      const tip = isFactoryMode
-        ? 'Автопилот «Фабрика»: пишет все сцены, сам закрывает главу и переходит к следующей — без остановок до конца книги или ошибки.'
-        : 'Автопилот: написать все оставшиеся сцены главы подряд, каждая — через полный цикл агентов. Остановится при ошибке или по кнопке. Ручные подтверждения агентов работают как обычно.';
-      return `<div class="run-row" style="margin-top:6px"><button class="btn" id="autoChapter" style="flex:1" data-tip="${tip}">${label}</button></div>`;
+      if(_autoChapter){
+        return `<div class="run-row" style="margin-top:6px"><button class="btn" id="autoStop" style="flex:1">${esc(_autoBusyLabel || '■ Стоп (после текущей сцены)')}</button></div>`;
+      }
+      const chBtn = remInChapter
+        ? `<button class="btn" id="autoChapterOnly" style="flex:1" data-tip="Пишет все оставшиеся сцены ТЕКУЩЕЙ главы подряд, каждая — через полный цикл агентов. Дальше не идёт, главу не закрывает.">✏ Написать главу целиком (${remInChapter} сц.)</button>`
+        : '';
+      const bookBtn = remBook
+        ? `<button class="btn" id="autoBookAll" style="flex:1" data-tip="Пишет все сцены книги подряд, сама закрывает главы и переходит к следующей — без остановок до конца книги или ошибки.">📖 Написать книгу целиком (${remBook} сц.)</button>`
+        : '';
+      if(!chBtn && !bookBtn) return '';
+      return `<div class="run-row" style="margin-top:6px;gap:8px">${chBtn}${bookBtn}</div>`;
     })()}
     ${(()=>{ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nx=idx>=0&&idx<scenes.length-1?scenes[idx+1]:null; return nx?`<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="btn" id="nextScene">→ ${esc(nx.title)}</button></div>`:''; })()}`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
@@ -1313,27 +1317,32 @@ export function renderWrite(els){
 
   bindEditorButton(els, s, scene);
 
-  // Автопилот главы
-  const ac=document.getElementById('autoChapter');
-  if(ac) ac.onclick = ()=>{
-    if(_autoChapter){ _autoStopReq=true; ac.disabled=true; ac.textContent='…остановлюсь после этой сцены'; return; }
+  // Автопилот: глава целиком / книга целиком — два независимых запуска
+  const startAutopilot = (crossChapters)=>{
     if(_busy) return;
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     if(ch && isChapterLocked(s, ch.id)){ alert('Глава заблокирована: закройте предыдущую главу, прежде чем писать здесь.'); return; }
-    runChapterAutopilot(els, s, ch);
+    runChapterAutopilot(els, s, ch, crossChapters);
   };
+  const acOnly = document.getElementById('autoChapterOnly');
+  if(acOnly) acOnly.onclick = ()=>startAutopilot(false);
+  const acBook = document.getElementById('autoBookAll');
+  if(acBook) acBook.onclick = ()=>startAutopilot(true);
+  const acStop = document.getElementById('autoStop');
+  if(acStop) acStop.onclick = ()=>{ _autoStopReq=true; acStop.disabled=true; acStop.textContent='…остановлюсь после этой сцены'; };
 
   renderRightPanel(els);
 }
 
-// Автопилот главы: последовательно прогоняет через полный цикл агентов все
-// оставшиеся (не готовые) сцены текущей главы. Останавливается по кнопке
-// (после текущей сцены) или при первой ошибке прогона. Ручные гейты агентов
-// (approvalGate) срабатывают как обычно — автопилот просто ждёт ответа.
-async function runChapterAutopilot(els, s, startCh){
+// Автопилот: crossChapters=false — только текущая глава (останавливается,
+// не закрывает главу — решение автора). crossChapters=true — вся книга
+// подряд, сама закрывает главу и переходит к следующей. Останавливается по
+// кнопке (после текущей сцены) или при первой ошибке прогона. Ручные гейты
+// агентов (approvalGate) срабатывают как обычно — автопилот просто ждёт ответа.
+async function runChapterAutopilot(els, s, startCh, crossChapters){
   if(_autoChapter || !startCh) return;
-  _autoChapter = true; _autoStopReq = false;
-  const isFactoryMode = s.project.mode==='factory';
+  _autoChapter = true; _autoStopReq = false; _autoBusyLabel = '';
+  renderWrite(els); // сразу показать «Стоп» — не ждать первого save() из цикла, иначе кнопка выглядит зависшей
   try{
     let ch = startCh, guard = 0;
     while(ch && guard++ < 200){
@@ -1348,16 +1357,21 @@ async function runChapterAutopilot(els, s, startCh){
         if(next.status!=='done' || !next.text) break;  // прогон упал — не идём дальше
         continue;                                  // в главе могут остаться ещё сцены
       }
-      // Глава дописана. В «Режиссёре» закрытие — дело автора, останавливаемся.
-      if(!isFactoryMode || _autoStopReq) break;
+      // Глава дописана. «Глава целиком» — останавливаемся, закрытие остаётся за автором.
+      if(!crossChapters || _autoStopReq) break;
       // Пустая глава (сцен вообще нет) — писать нечего, дальше молча не идём.
       if(!chScenes.length) break;
+      // summarizeChapter/runChekhovCheck внутри closeChapter — реальные вызовы
+      // ИИ, не мгновенные — без этого текста кнопка молча не менялась несколько
+      // секунд между главами и выглядела так, будто клик не сработал.
+      _autoBusyLabel = '■ Закрываю главу…'; renderWrite(els);
       await closeChapter(s, ch.id);
+      _autoBusyLabel = '';
       const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
       ch = chapters[chapters.findIndex(c=>c.id===ch.id)+1] || null;
     }
   } finally {
-    _autoChapter = false; _autoStopReq = false;
+    _autoChapter = false; _autoStopReq = false; _autoBusyLabel = '';
     save();                                      // финальный ре-рендер возвращает кнопку
   }
 }
@@ -1924,7 +1938,7 @@ function renderEditorialStop(s, ch, isFactoryMode){
 }
 
 // Глава заблокирована: предыдущая ещё не закрыта (не пройден редакторский стоп).
-// Прозаик/автопилот здесь не работают (гейт — в doRun и обработчике autoChapter),
+// Прозаик/автопилот здесь не работают (гейт — в doRun и startAutopilot),
 // это только объяснение и переход к тому, что нужно закрыть.
 function renderChapterLockedBanner(s, ch){
   const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
