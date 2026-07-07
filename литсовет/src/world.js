@@ -140,10 +140,16 @@ const MAP_STYLE_FLAVORS = [
 // ── Карта мира — НЕ через suggestIllustrations()/illustrationSuggestMessages()
 // (те требуют doneScenesOrdered(state), а на стадии «Мир» сцен ещё нет, спека §9).
 // Переиспользуется только низкоуровневый generateImage() из imagegen.js.
+// noText/ruText (state.illustrations) читаются здесь и определяют формулировку
+// "labeled"/"no text" в самом промпте — раньше карта ВСЕГДА просила и "no text
+// artifacts", и "labeled" геообъекты в одном промпте (прямое противоречие
+// самому себе), и никогда не учитывала язык подписей, хотя карта — ровно то
+// место, где надписи (названия мест) есть чаще всего.
 export function mapPromptFor(state){
   const geoFacts = (state.bible||[]).filter(b=>b.source==='world' && b.category==='география');
   if(!geoFacts.length) throw new Error('Нужно хотя бы несколько фактов категории «География» в каноне.');
   const p = state.project;
+  const ic = state.illustrations || {};
   // Бюджет символов — у фактов ОТДЕЛЬНЫЙ кап, а не общий с шаблоном: при
   // насыщенном каноне (10+ фактов географии) общий .slice() в конце срезал
   // промпт прямо на середине списка фактов, тихо теряя половину из них —
@@ -151,12 +157,15 @@ export function mapPromptFor(state){
   const facts = geoFacts.map(f=>f.text).join(' ').slice(0, 900);
   const style = `${p.genre||'роман'}${p.era?', '+p.era:''}`;
   const flavor = MAP_STYLE_FLAVORS[Math.floor(Math.random()*MAP_STYLE_FLAVORS.length)];
+  const geoLine = ic.noText
+    ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
+    : `Geography (must appear, labeled${ic.ruText ? ' — labels in Russian (Cyrillic script), not English' : ''}): ${facts}`;
   return [
-    `Fantasy-style map, top-down bird's-eye view, cartography illustration, no text artifacts.`,
+    `Fantasy-style map, top-down bird's-eye view, cartography illustration${ic.noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
     `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — compass rose, sea monsters or ships in unmapped waters, decorative border, scale bar, weathered texture, subtle terrain shading. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
     `Setting: ${style}.`,
-    `Geography (must appear, labeled): ${facts}`,
+    geoLine,
   ].join(' ');
 }
 
@@ -173,7 +182,7 @@ export async function generateWorldMap(state){
     quality: ic.quality,
     proxyToken: state.global?.proxyToken,
   });
-  return dataUrl;
+  return { dataUrl, prompt };
 }
 
 // ── Архитектор сверяет скелет с каноном (спека §7 — канал остаётся открытым,

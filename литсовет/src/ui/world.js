@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, rerollWorldFact, categoriesFor, CATEGORY_HINTS } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -19,6 +19,7 @@ let _busyCategory = null;    // категория, для которой сей
 let _bulkBusy = false;       // «Предложить весь мир» — идёт последовательный обход категорий
 let _bulkProgress = '';      // текст прогресса булк-генерации, напр. "2 из 4"
 let _mapBusy = false;
+let _mapError = '';  // инлайн вместо блокирующего alert() — тот же подход, что в ui/illustrations.js
 
 function factsOfCategory(worldFacts, cat){ return worldFacts.filter(f=>f.category===cat); }
 function candidatesOfCategory(cat){ return _candidates.filter(c=>c.category===cat); }
@@ -85,10 +86,18 @@ function renderMapBlock(s, geoCount){
   const map = items.find(it=>it.type==='map');
   const canGenerate = geoCount >= 2;
   const cost = estimateImageCost(s.illustrations?.provider||'gemini', s.illustrations?.quality||'standard', 1);
+  // Промпт ДО генерации (что будет отправлено) — mapPromptFor может бросить,
+  // если canGenerate почему-то true, а фактов всё равно не хватает (гонка
+  // между geoCount и реальным списком не ожидается, но try на всякий случай).
+  let previewPrompt = '';
+  if(canGenerate){ try{ previewPrompt = mapPromptFor(s); }catch(e){ /* покажется как обычно при клике */ } }
   return `<div class="ph">Карта мира (референс)</div>
     <div class="pad">
       ${map ? `<img src="${map.dataUrl}" style="max-width:280px;border-radius:var(--radius);display:block;margin-bottom:8px">
-        <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>` : ''}
+        <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>
+        ${map.prompt ? `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-2)">Промпт, которым сгенерирована текущая карта</summary><div style="font-size:12px;color:var(--text-2);margin-top:4px;font-style:italic">${esc(map.prompt)}</div></details>` : ''}` : ''}
+      ${previewPrompt ? `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-2)">Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно)</summary><div style="font-size:12px;color:var(--text-2);margin-top:4px;font-style:italic">${esc(previewPrompt)}</div></details>` : ''}
+      ${_mapError?`<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ Карта: ${esc(_mapError)}</div>`:''}
       ${canGenerate
         ? `<button class="btn" id="wMap">${_mapBusy?'<span class="spinner"></span> …':(map?'🔄 Перегенерировать':'🗺 Сгенерировать карту')} — ~$${cost}</button>`
         : `<div class="muted" style="font-size:12px">Нужно хотя бы 2-3 факта категории «География», чтобы предложить карту.</div>`}
@@ -255,12 +264,12 @@ function bindHandlers(els, s){
   if(wm) wm.onclick = async ()=>{
     if(!s.illustrations?.apiKey){ alert('Задайте ключ для генерации картинок в настройках (⚙).'); return; }
     if(_mapBusy) return;
-    _mapBusy = true; renderWorld(els);
+    _mapBusy = true; _mapError=''; renderWorld(els);
     try{
-      const dataUrl = await generateWorldMap(s);
-      saveMapItem(s, dataUrl);
+      const { dataUrl, prompt } = await generateWorldMap(s);
+      saveMapItem(s, dataUrl, prompt);
       save();
-    }catch(e){ alert('Карта: '+e.message); }
+    }catch(e){ _mapError = e.message; }
     finally{ _mapBusy = false; renderWorld(els); }
   };
 

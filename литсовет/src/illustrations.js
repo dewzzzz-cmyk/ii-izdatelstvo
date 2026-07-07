@@ -89,7 +89,7 @@ export async function suggestIllustrations(state){
 // suggestOneIllustration, перегенерация промпта, перегенерация только картинки) —
 // вставлять инструкцию в промпт LLM-подсказчика пришлось бы дублировать в
 // нескольких местах и она бы не действовала на промпт, отредактированный автором вручную.
-function textInstruction(ic){
+export function textInstruction(ic){
   if(ic?.noText) return 'Do not include any readable text, letters, numbers or writing anywhere in the image.';
   if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English.';
   return '';
@@ -211,10 +211,24 @@ export function chapterTitleForScene(state, sceneId){
 // напрямую, минуя suggestIllustrations()/doneScenesOrdered (на стадии «Мир»
 // сцен ещё нет). Одна карта на проект — повторная генерация заменяет старую,
 // не копит версии (в отличие от сцен/обложки).
-export function saveMapItem(state, dataUrl){
+export function saveMapItem(state, dataUrl, prompt=''){
   state.illustrations = state.illustrations || {};
   state.illustrations.items = (state.illustrations.items||[]).filter(it=>it.type!=='map');
-  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt:'', dataUrl, createdAt:Date.now() };
+  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, createdAt:Date.now() };
   state.illustrations.items.push(item);
+  return item;
+}
+
+// Своя картинка автора (не через провайдера) — вместо генерации. uploaded:true
+// отличает такие элементы в галерее: у них нет промпта, поэтому «другой
+// промпт»/«перегенерировать картинку» для них не показываются (см. ui/illustrations.js).
+// Карта — как и у generateWorldMap: одна на проект, повторная загрузка заменяет старую.
+export function saveUploadedItem(state, dataUrl, { type, sceneId=null, sceneTitle='' }){
+  state.illustrations = state.illustrations || {};
+  state.illustrations.items = state.illustrations.items || [];
+  if(type==='map') state.illustrations.items = state.illustrations.items.filter(it=>it.type!=='map');
+  const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true };
+  state.illustrations.items.push(item);
+  if(type==='cover') state.project.coverDataUrl = dataUrl;
   return item;
 }
