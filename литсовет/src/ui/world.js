@@ -86,17 +86,26 @@ function renderMapBlock(s, geoCount){
   const map = items.find(it=>it.type==='map');
   const canGenerate = geoCount >= 2;
   const cost = estimateImageCost(s.illustrations?.provider||'gemini', s.illustrations?.quality||'standard', 1);
+  const ic = s.illustrations || {};
   // Промпт ДО генерации (что будет отправлено) — mapPromptFor может бросить,
   // если canGenerate почему-то true, а фактов всё равно не хватает (гонка
   // между geoCount и реальным списком не ожидается, но try на всякий случай).
   let previewPrompt = '';
   if(canGenerate){ try{ previewPrompt = mapPromptFor(s); }catch(e){ /* покажется как обычно при клике */ } }
+  // Промпт — всегда развёрнутый текст, не <details>: автор должен видеть, что
+  // реально уйдёт в генератор, не кликая лишний раз, прежде чем платить за картинку.
+  const promptBlock = (label, text)=> text ? `<div class="muted" style="font-size:11px;margin-bottom:2px">${label}</div>
+    <div style="font-size:12px;color:var(--text-2);margin-bottom:8px;font-style:italic;padding:6px 8px;background:var(--surface-2);border-radius:6px;white-space:pre-wrap">${esc(text)}</div>` : '';
   return `<div class="ph">Карта мира (референс)</div>
     <div class="pad">
       ${map ? `<img src="${map.dataUrl}" style="max-width:280px;border-radius:var(--radius);display:block;margin-bottom:8px">
-        <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>
-        ${map.prompt ? `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-2)">Промпт, которым сгенерирована текущая карта</summary><div style="font-size:12px;color:var(--text-2);margin-top:4px;font-style:italic">${esc(map.prompt)}</div></details>` : ''}` : ''}
-      ${previewPrompt ? `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-2)">Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно)</summary><div style="font-size:12px;color:var(--text-2);margin-top:4px;font-style:italic">${esc(previewPrompt)}</div></details>` : ''}
+        <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>` : ''}
+      <div class="row" style="gap:14px;margin-bottom:8px;flex-wrap:wrap">
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Общая настройка для всех картинок проекта — то же самое, что в разделе «Иллюстрации»"><input type="checkbox" id="wMapRuText" ${ic.ruText?'checked':''} ${ic.noText?'disabled':''}> Подписи на русском</label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="wMapNoText" ${ic.noText?'checked':''}> Совсем без текста</label>
+      </div>
+      ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
+      ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
       ${_mapError?`<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ Карта: ${esc(_mapError)}</div>`:''}
       ${canGenerate
         ? `<button class="btn" id="wMap">${_mapBusy?'<span class="spinner"></span> …':(map?'🔄 Перегенерировать':'🗺 Сгенерировать карту')} — ~$${cost}</button>`
@@ -259,6 +268,12 @@ function bindHandlers(els, s){
       save(); renderWorld(els);
     });
   });
+
+  s.illustrations = s.illustrations || {};
+  const wMapRuText = document.getElementById('wMapRuText');
+  if(wMapRuText) wMapRuText.onchange = ()=>{ s.illustrations.ruText = wMapRuText.checked; save(); renderWorld(els); };
+  const wMapNoText = document.getElementById('wMapNoText');
+  if(wMapNoText) wMapNoText.onchange = ()=>{ s.illustrations.noText = wMapNoText.checked; save(); renderWorld(els); };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
