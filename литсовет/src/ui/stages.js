@@ -25,6 +25,7 @@ import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, sugges
          hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck } from '../bookreview.js';
 import { GENRES, ERAS } from '../genres.js';
 import { suggestMissingWorldFacts } from '../world.js';
+import { saveUploadedItem, removeCover } from '../illustrations.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -311,7 +312,12 @@ export function renderConcept(els){
   };
   bind('pAuthor', e=>{ p.author=e.target.value; });
   bind('synopsis', e=>{ p.synopsis=e.target.value; });
-  // Обложка: файл → dataURL в состоянии проекта (уходит в EPUB при экспорте)
+  // Обложка: файл → dataURL, через тот же saveUploadedItem()/removeCover(), что
+  // и раздел «Иллюстрации» — раньше эта кнопка писала ПРЯМО в project.coverDataUrl
+  // мимо illustrations.items, и «✕ Убрать обложку» чистила только его же: если
+  // обложка была сгенерирована через ИИ в «Иллюстрациях», её картинка оставалась
+  // висеть в галерее, но никуда больше не попадала — выглядело как рассинхрон
+  // между вкладками. Теперь один источник правды на обе.
   const coverInput = document.getElementById('pCover');
   const coverBtn = document.getElementById('pCoverBtn');
   if(coverBtn) coverBtn.onclick = ()=>coverInput && coverInput.click();
@@ -320,11 +326,11 @@ export function renderConcept(els){
     if(!f) return;
     if(f.size > 3*1024*1024){ alert('Файл больше 3 МБ — сожмите изображение.'); coverInput.value=''; return; }
     const rd = new FileReader();
-    rd.onload = ()=>{ p.coverDataUrl = rd.result; save(); };
+    rd.onload = ()=>{ saveUploadedItem(s, rd.result, {type:'cover'}); save(); renderConcept(els); };
     rd.readAsDataURL(f);
   };
   const coverDel = document.getElementById('pCoverDel');
-  if(coverDel) coverDel.onclick = ()=>{ p.coverDataUrl=''; save(); };
+  if(coverDel) coverDel.onclick = ()=>{ removeCover(s); save(); renderConcept(els); };
   const eraSel = document.getElementById('era');
   const eraCustom = document.getElementById('eraCustom');
   if(eraSel){
@@ -1594,7 +1600,14 @@ function exportPdf(s){
     if(n.type==='chapter') body+=`<h2>${esc(n.title)}</h2>`;
     else if(n.type==='scene'&&n.text){
       const illust = illustrationForScene(s, n.id);
-      body+=`<div class="scene">${illust?`<div class="pdf-img"><img src="${illust}"></div>`:''}<h3>${esc(n.title)}</h3><div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
+      // .scene-head группирует картинку+заголовок сцены — только эта пара защищена
+      // от разрыва (page-break-inside:avoid), не вся .scene целиком: сама проза
+      // сцены обычно длиннее страницы, и «не рвать» весь блок дало бы либо гигантский
+      // пустой хвост страницы, либо игнор правила браузером на слишком высоком блоке.
+      const head = illust
+        ? `<div class="scene-head"><div class="pdf-img"><img src="${illust}"></div><h3>${esc(n.title)}</h3></div>`
+        : `<h3>${esc(n.title)}</h3>`;
+      body+=`<div class="scene">${head}<div class="prose">${n.text.split('\n\n').map(p=>`<p>${esc(p.trim())}</p>`).filter(p=>p!=='<p></p>').join('')}</div></div>`;
     }
   });
   const html=`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title><style>
@@ -1602,6 +1615,7 @@ function exportPdf(s){
     h1{font-size:22pt;text-align:center;margin:3cm 0 1cm}h2{font-size:16pt;margin:2cm 0 .5cm;border-bottom:1px solid #ccc;padding-bottom:.3cm}
     h3{font-size:12pt;font-weight:normal;font-style:italic;color:#555;margin:.8cm 0 .2cm}.prose p{text-indent:1.5em;margin:.15em 0}
     .prose p:first-child{text-indent:0}.pdf-img{text-align:center;margin:.5cm 0}.pdf-img img{max-width:100%;max-height:22cm}
+    .pdf-img,.scene-head{page-break-inside:avoid;break-inside:avoid}
     @media print{h2{page-break-before:always}}
   </style></head><body><h1>${title}</h1>
   ${s.project.coverDataUrl?`<div class="pdf-img" style="margin:0 0 1.5cm">\n<img src="${s.project.coverDataUrl}" style="max-height:26cm"></div>`:''}

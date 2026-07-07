@@ -304,6 +304,9 @@ function bindHandlers(els, s){
       _busyText = `Генерирую ${i+1}/${toGen.length}…`; renderIllustrations(els);
       try{
         const dataUrl = await generateIllustrationFor(s, c);
+        // Обложка — одна на проект (как карта мира): предыдущая заменяется, не
+        // копится в галерее осиротевшей картинкой, которая никуда не попадает.
+        if(c.type==='cover') s.illustrations.items = s.illustrations.items.filter(it=>it.type!=='cover');
         s.illustrations.items.push({ id:c.id, type:c.type, sceneId:c.sceneId, sceneTitle:c.sceneTitle, prompt:c.prompt, dataUrl, createdAt:Date.now() });
         if(c.type==='cover') s.project.coverDataUrl = dataUrl;
         succeeded.add(c.id);

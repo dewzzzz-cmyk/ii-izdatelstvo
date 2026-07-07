@@ -419,6 +419,16 @@ function migrate(s){
   s.memory  = Object.assign({}, d.memory, s.memory);
   s.illustrations = Object.assign({}, d.illustrations, s.illustrations);
   s.illustrations.items = s.illustrations.items || [];
+  // Самовосстановление обложки: старая кнопка «✕ Убрать обложку» в Концепции
+  // чистила только project.coverDataUrl, не трогая illustrations.items — в
+  // проектах, где обложка когда-то была сгенерирована/загружена через раздел
+  // «Иллюстрации», а потом убрана оттуда, картинка обложки оставалась висеть в
+  // галерее, но не попадала ни в экспорт, ни в чтение книги. Если поле пустое,
+  // а осиротевшая обложка в галерее есть — подтягиваем её обратно как официальную.
+  if(!s.project.coverDataUrl){
+    const coverItem = s.illustrations.items.filter(it=>it.type==='cover').pop();
+    if(coverItem) s.project.coverDataUrl = coverItem.dataUrl;
+  }
   s.diagnostics = s.diagnostics || { runs: [] };
   s.structureStale = s.structureStale || false;
   // Мердж агентов по id: сохраняем пользовательские enabled/temp и ПОРЯДОК, до-добавляем новых из дефолтов.

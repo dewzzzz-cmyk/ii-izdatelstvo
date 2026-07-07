@@ -222,13 +222,25 @@ export function saveMapItem(state, dataUrl, prompt=''){
 // Своя картинка автора (не через провайдера) — вместо генерации. uploaded:true
 // отличает такие элементы в галерее: у них нет промпта, поэтому «другой
 // промпт»/«перегенерировать картинку» для них не показываются (см. ui/illustrations.js).
-// Карта — как и у generateWorldMap: одна на проект, повторная загрузка заменяет старую.
+// Карта и обложка — как saveMapItem: одна на проект, повторная загрузка заменяет старую,
+// не копит версии (иначе в галерее остаются осиротевшие обложки, которые никуда не попадают).
 export function saveUploadedItem(state, dataUrl, { type, sceneId=null, sceneTitle='' }){
   state.illustrations = state.illustrations || {};
   state.illustrations.items = state.illustrations.items || [];
-  if(type==='map') state.illustrations.items = state.illustrations.items.filter(it=>it.type!=='map');
+  if(type==='map' || type==='cover') state.illustrations.items = state.illustrations.items.filter(it=>it.type!==type);
   const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true };
   state.illustrations.items.push(item);
   if(type==='cover') state.project.coverDataUrl = dataUrl;
   return item;
+}
+
+// Убрать обложку целиком — используется и стадией «Концепция» (ручная загрузка/
+// удаление), и разделом «Иллюстрации», чтобы обе вкладки видели одно и то же:
+// раньше «✕ Убрать обложку» в Концепции чистила только project.coverDataUrl, не
+// трогая illustrations.items — в галерее оставалась картинка, которая больше
+// никуда не попадала (не в экспорт, не в чтение), выглядя как рассинхрон.
+export function removeCover(state){
+  state.illustrations = state.illustrations || {};
+  state.illustrations.items = (state.illustrations.items||[]).filter(it=>it.type!=='cover');
+  state.project.coverDataUrl = '';
 }
