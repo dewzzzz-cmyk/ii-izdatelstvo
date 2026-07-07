@@ -1196,12 +1196,18 @@ export function renderWrite(els){
     </div>
     ${(()=>{ // автопилот: дописать оставшиеся сцены главы подряд (в «Фабрике» — и дальше по книге)
       if(!ch) return '';
-      const rem = scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
+      const remInChapter = scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
+      const isFactoryMode = s.project.mode==='factory';
+      // В «Фабрике» кнопка продолжает писать ЧЕРЕЗ ВСЮ КНИГУ, не только текущую
+      // главу — скрывать её нужно, только когда во всей книге не осталось
+      // недописанных сцен, а не когда закончена именно текущая глава (иначе
+      // кнопка «Написать книгу подряд» пропадала на последней сцене готовой
+      // главы, даже если дальше в книге есть ненаписанные главы).
+      const rem = isFactoryMode ? (s.structure||[]).filter(n=>n.type==='scene' && n.status!=='done').length : remInChapter;
       if(!rem && !_autoChapter) return '';
       if(locked) return `<div class="run-row" style="margin-top:6px"><button class="btn" style="flex:1" disabled data-tip="Заблокировано: закройте предыдущую главу, прежде чем писать здесь.">🔒 Заблокировано</button></div>`;
-      const isFactoryMode = s.project.mode==='factory';
       const label = _autoChapter ? '■ Стоп (после текущей сцены)'
-        : isFactoryMode ? '▶▶ Написать книгу подряд ('+rem+'+ сц.)'
+        : isFactoryMode ? '▶▶ Написать книгу подряд ('+rem+' сц.)'
         : '▶▶ Дописать главу подряд ('+rem+' сц.)';
       const tip = isFactoryMode
         ? 'Автопилот «Фабрика»: пишет все сцены, сам закрывает главу и переходит к следующей — без остановок до конца книги или ошибки.'
