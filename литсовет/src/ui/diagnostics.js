@@ -603,12 +603,13 @@ function renderResultBody(r){
     const axes=RUBRIC_AXES.map(a=>{ const val=v.scores[a.key]; const col=val>=7?'var(--ok)':val>=5?'var(--warn)':'var(--err)';
       return `<div class="ares-axis"><span>${a.label}</span><b style="color:${col}">${val}</b></div>`; }).join('');
     const cl=(v.cliches||[]).length?`<div class="ares-h">Клише в тексте</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}» <button class="ares-rule" data-rule="${esc('избегай штампа «'+c+'» и подобных шаблонных оборотов')}" data-tip="Сделать правилом — впредь избегать">⊕ В правило</button></div>`).join('')}`:'';
+    const rp=(v.repetition||[]).length?`<div class="ares-h">Повтор имени вместо местоимения</div>${v.repetition.map(c=>`<div class="ares-cl">«${esc(c)}» <button class="ares-rule" data-rule="${esc('не повторяй имя персонажа подряд — через предложение-два заменяй на местоимение или эпитет')}" data-tip="Сделать правилом — впредь избегать">⊕ В правило</button></div>`).join('')}`:'';
     const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span>${fixActions(n)}</div>`).join('')}`:'';
     const all=((v.notes||[]).length||(v.cliches||[]).length)
       ? `<button class="btn btn-primary ares-all" style="margin-top:12px;width:100%">Все замечания → переписать сцену</button>`
       : `<div class="muted" style="margin-top:8px">Серьёзных замечаний нет — можно принимать.</div>`;
     return `<div class="ares-score ${v.pass?'pass':'revise'}">${v.weighted}/10 · ${v.pass?'принято':'на доработку'}<span class="muted"> · мин. ось ${v.minAxis}</span></div>
-      <div class="ares-axes">${axes}</div>${cl}${nt}${all}`;
+      <div class="ares-axes">${axes}</div>${cl}${rp}${nt}${all}`;
   }
   if(r.kind==='guard'){
     const flags=(r.flags||[]).filter(Boolean);
