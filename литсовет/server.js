@@ -24,6 +24,13 @@ const CHECKPOINT_DIR = path.join(ROOT, 'checkpoints');
 const SYNC_DIR = path.join(ROOT, 'data', 'projects');
 ensureDir(SYNC_DIR);
 
+// Страховка: без этого необработанная ошибка в любом асинхронном обработчике
+// (оборванное клиентом стриминг-соединение, гонка res.writeHead/res.end и т.п.)
+// по умолчанию в Node роняет весь процесс целиком — все проекты всех вкладок,
+// не только один запрос. Логируем и продолжаем жить.
+process.on('unhandledRejection', (err)=>{ console.error('unhandledRejection:', err); });
+process.on('uncaughtException', (err)=>{ console.error('uncaughtException:', err); });
+
 const MIME = { '.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8',
   '.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml',
   '.png':'image/png','.ico':'image/x-icon' };
