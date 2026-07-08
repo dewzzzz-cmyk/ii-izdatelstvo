@@ -96,7 +96,7 @@ function renderCalibration(s){
   return `<div class="mem-h">Калибровка вкуса</div>
     <div class="mem-card">
       <div class="muted" style="font-size:11px;margin-bottom:6px">Оцените прозу вслепую — порог Оценщика подстроится под ваш вкус (а не висит на «7/10»).</div>
-      <div style="font-size:12px;margin-bottom:6px">Оценок: <b>${cal.ratings.length}</b>${adj?` · порог сейчас <b>${adj.threshold}</b> (вы ${adj.authorAvg} / ИИ ${adj.evalAvg})`:` · порог <b>${s.global.evaluatorThreshold??7}</b>`}</div>
+      <div style="font-size:12px;margin-bottom:6px">Оценок: <b>${cal.ratings.length}</b>${adj?` · порог сейчас <b>${adj.threshold}</b> (вы ${adj.authorAvg} / ИИ ${adj.evalAvg})`:` · порог <b>${s.global.evaluatorThreshold??7.5}</b>`}</div>
       <button class="btn ${pending?'btn-primary':''}" id="calBtn" ${pending?'':'disabled'}>${pending?`Оценить сцену вслепую (${pending})`:'Нет новых сцен'}</button>
     </div>`;
 }

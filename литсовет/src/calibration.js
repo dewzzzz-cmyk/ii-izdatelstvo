@@ -32,8 +32,10 @@ export function recordRating(sceneId, authorScore){
     const aAvg = paired.reduce((a,r)=>a+r.authorScore,0)/paired.length;
     const eAvg = paired.reduce((a,r)=>a+r.evalScore,0)/paired.length;
     const diff = eAvg - aAvg; // >0: Оценщик добрее автора → поднять порог
-    let t = s.global.evaluatorThreshold ?? 7;
-    t = Math.max(5, Math.min(9, t + Math.sign(diff)*Math.min(1, Math.abs(diff)*0.5)));
+    let t = s.global.evaluatorThreshold ?? 7.5;
+    // Пол 7.5, а не 5 — калибровка не должна тихо опускать порог качества ниже
+    // установленного минимума, даже если автор регулярно оценивает сцены мягче Оценщика.
+    t = Math.max(7.5, Math.min(9, t + Math.sign(diff)*Math.min(1, Math.abs(diff)*0.5)));
     s.global.evaluatorThreshold = Math.round(t*10)/10;
     cal.lastAdjust = { authorAvg:Math.round(aAvg*10)/10, evalAvg:Math.round(eAvg*10)/10, threshold:s.global.evaluatorThreshold };
   }

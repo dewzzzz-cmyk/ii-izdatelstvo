@@ -31,8 +31,8 @@ function paramSpecs(a){
     specs.push({ key:'maxTokens', label:'Макс. токенов', hint:'потолок длины ответа — Прозаику нужно ≥2400 для 700-слов. сцены (реальный потолок при авто-повторе на обрыв — до 8000)', min:200, max:8000, step:100, target:'agent', def:700, fmt:v=>Math.round(v) });
   }
   if(a.role==='evaluator'){
-    specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля', min:5, max:9, step:0.5, target:'global', def:7, fmt:v=>v.toFixed(1) });
-    specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать', min:1, max:5, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
+    specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля; ниже 7.5 не опустить — качество текста важнее скорости', min:7.5, max:9, step:0.5, target:'global', def:7.5, fmt:v=>v.toFixed(1) });
+    specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать, прежде чем сдаться — при высоком пороге нужно больше попыток', min:1, max:8, step:1, target:'global', def:5, fmt:v=>Math.round(v) });
   }
   if(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere'].includes(a.role) || a.custom){
     specs.push({ key:'strictness', label:'Строгость', hint:'1 мягко · 3 придирчиво', min:1, max:3, step:1, target:'agent', def:2, fmt:v=>['','мягко','обычно','строго'][Math.round(v)]||v });
@@ -562,9 +562,15 @@ function renderStep(st){
 function renderScores(v){
   return `<div class="score-bars">
     ${RUBRIC_AXES.map(a=>{
-      const val=Number(v.scores[a.key])||0;
+      // scene.lastEval сохраняется в проекте надолго — если ось добавили/переименовали
+      // ПОСЛЕ того как эту сцену оценили (так и было с «Темп», добавленным позже,
+      // и со старым ключом «fresh» вместо «freshness» в проектах-долгожителях),
+      // v.scores[a.key] будет undefined. Раньше это тихо превращалось в 0 —
+      // шкала выглядела пустой/незакрашенной, неотличимо от реальной низкой оценки.
+      const has = v.scores[a.key] !== undefined;
+      const val = has ? Number(v.scores[a.key]) : 0;
       const col = val>=7?'var(--ok)':val>=5?'var(--warn)':'var(--err)';
-      return `<div class="score-row"><span class="sl">${a.label}</span><span class="score-bar"><span class="score-fill" style="width:${val*10}%;background:${col}"></span></span><span class="score-val">${val}</span></div>`;
+      return `<div class="score-row"><span class="sl">${a.label}</span><span class="score-bar">${has?`<span class="score-fill" style="width:${val*10}%;background:${col}"></span>`:''}</span><span class="score-val">${has?val:'—'}</span></div>`;
     }).join('')}
     <div class="verdict ${v.pass?'pass':'revise'}">${v.pass?'✓ принято':'↻ доработка'} · ${v.weighted}/10</div>
   </div>`;

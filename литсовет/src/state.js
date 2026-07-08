@@ -83,8 +83,8 @@ export function defaultState(){
       apiKey: '',              // ТОЛЬКО в памяти, не сериализуется
       budgetTokens: 32000,     // бюджет сборки контекста
       retries: 2,
-      evaluatorThreshold: 7,
-      evaluatorMaxIter: 3,
+      evaluatorThreshold: 7.5,  // порог принятия сцены Оценщиком — минимум 7.5 (не ниже, качество важнее скорости)
+      evaluatorMaxIter: 5,      // сколько раз дорабатывать сцену, прежде чем сдаться — увеличено вместе с порогом
     },
     log: [],
     ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false, editorAuto: false },
@@ -435,6 +435,13 @@ function migrate(s){
   }
   s.diagnostics = s.diagnostics || { runs: [] };
   s.structureStale = s.structureStale || false;
+  // Порог принятия сцены — теперь минимум 7.5 (жёсткий пол, не «дефолт по
+  // умолчанию»): даже если автор раньше сам поставил ниже, качество текста
+  // важнее скорости прохождения. Макс. итераций подтягиваем со старого
+  // дефолта (3) на новый (5) — раз порог строже, доработке нужно больше попыток,
+  // прежде чем сдаваться; ручную настройку выше дефолта не трогаем.
+  s.global.evaluatorThreshold = Math.max(7.5, s.global.evaluatorThreshold ?? 7.5);
+  if(s.global.evaluatorMaxIter === 3) s.global.evaluatorMaxIter = 5;
   // Мердж агентов по id: сохраняем пользовательские enabled/temp и ПОРЯДОК, до-добавляем новых из дефолтов.
   if(!s.agents || !s.agents.length){ s.agents = d.agents; }
   else {
@@ -467,6 +474,14 @@ function migrate(s){
   s.ui = Object.assign({}, d.ui, s.ui);
   s.characters = s.characters || [];
   s.series = s.series || [];
+  // Старые сохранённые оценки сцен (scene.lastEval.scores) в проектах-долгожителях
+  // используют ключ «fresh» вместо текущего «freshness» — RUBRIC_AXES читает
+  // freshness, находит undefined и рисует шкалу «Свежесть образа» пустой,
+  // будто оценка 0, хотя реальный балл сохранён под старым именем.
+  (s.structure||[]).forEach(n=>{
+    const sc = n.lastEval?.scores;
+    if(sc && sc.fresh!==undefined && sc.freshness===undefined){ sc.freshness = sc.fresh; delete sc.fresh; }
+  });
   // Bible-векторы не сериализуются — восстанавливаем после загрузки
   if(s.bible && s.bible.length) rebuildBibleVecs(s.bible);
   return s;

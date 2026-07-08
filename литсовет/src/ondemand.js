@@ -28,7 +28,7 @@ export async function runAgentOnDemand(state, scene, agent){
   if(role==='evaluator'){
     const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
     const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
-    return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7) };
+    return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7.5) };
   }
   if(role==='architect'){
     const msgs = architectMessages(state, scene);

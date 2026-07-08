@@ -138,8 +138,8 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Прозаик получает объединённую директиву (оценщик + стражи вместе) и разбирает всё в [РАЗБОР].
     // Консенсус = Оценщик принял И Стражи молчат.
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
-    const threshold = g.evaluatorThreshold ?? 7;
-    const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
+    const threshold = g.evaluatorThreshold ?? 7.5;
+    const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 5) : 1;
     const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
       agentEnabled('reader') || agentEnabled('imagery') || agentEnabled('pov') || agentEnabled('dialogue') ||
       agentEnabled('resolution') || agentEnabled('atmosphere') ||
