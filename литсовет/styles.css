@@ -307,6 +307,16 @@ textarea{resize:vertical;min-height:60px}
 .sk-ch-regen{font-size:10px;padding:2px 7px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text-3);flex-shrink:0}
 .sk-ch-regen:hover:not(:disabled){background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)}
 
+/* ── Иллюстрации: табличный вид (кандидаты + галерея) ── */
+.ill-table-wrap{overflow-x:auto;margin-bottom:16px}
+.ill-table{width:100%;border-collapse:collapse;font-size:13px}
+.ill-table th{text-align:left;font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+.ill-table td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
+.ill-table tbody tr:last-child td{border-bottom:none}
+.ill-table tbody tr:hover td{background:var(--surface-2)}
+.ill-thumb{width:56px;height:56px;object-fit:cover;border-radius:var(--radius);display:block;cursor:zoom-in}
+.ill-text-cell{white-space:nowrap}
+
 /* ── Roadmap / edit stage ── */
 .rm-section{margin-bottom:18px}
 .rm-h{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}

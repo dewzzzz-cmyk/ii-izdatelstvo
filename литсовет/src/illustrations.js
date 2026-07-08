@@ -71,6 +71,7 @@ export async function suggestIllustrations(state){
       prompt: String(c.prompt||'').slice(0,600),
       reason: String(c.reason||'').slice(0,300),
       importance: (n=>Math.max(1, Math.min(10, Math.round(Number.isFinite(n)?n:5))))(Number(c.importance)),
+      textOn: !state.illustrations?.noText,
     };
   });
 }
@@ -99,6 +100,13 @@ export function textInstruction(ic){
   if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English — and rendered LARGE, bold and sparse: a few big, clear words, not small or dense text. Small/dense text reliably comes out garbled — prefer omitting a label entirely over rendering it small.';
   return '';
 }
+// Эффективное «текст на картинке» для конкретного кандидата/элемента галереи:
+// undefined (старые элементы до этой фичи) — берём общий проектный тумблер;
+// иначе — точечное переопределение автора для этой конкретной картинки
+// (строка в таблице «Кандидаты»/«Сгенерированные»), которое имеет приоритет.
+export function effectiveTextOn(entity, ic){
+  return entity?.textOn !== undefined ? !!entity.textOn : !ic?.noText;
+}
 // Портретные пропорции обложки (для площадок вроде ЛитРес/Author.Today) — часть
 // провайдеров (OpenAI/Qwen) реально уважает size, часть (Gemini/Recraft, см.
 // server.js handleGenerateImage) size игнорирует и рисует по промпту — поэтому
@@ -116,7 +124,8 @@ export async function generateIllustrationFor(state, candidate){
   const artStyle = ART_STYLES.find(s=>s.id===state.style?.artStyleId);
   if(artStyle) parts.push(artStyle.promptFragment);
   if(state.style?.colorMode==='bw') parts.push('black and white, monochrome, no color');
-  const txtInstr = textInstruction(ic); if(txtInstr) parts.push(txtInstr);
+  const noText = !effectiveTextOn(candidate, ic);
+  const txtInstr = textInstruction({ noText, ruText: ic.ruText }); if(txtInstr) parts.push(txtInstr);
   const portraitInstr = portraitInstruction(ic, candidate.type); if(portraitInstr) parts.push(portraitInstr);
   const prompt = parts.length ? `${candidate.prompt}\n\n${parts.join('. ')}` : candidate.prompt;
   const size = (candidate.type==='cover' && ic.portraitCover) ? PORTRAIT_SIZE : ic.size;
@@ -195,6 +204,7 @@ export async function suggestOneIllustration(state, target){
     prompt: String(j.prompt).slice(0,600),
     reason: String(j.reason||'').slice(0,300),
     importance: 5,
+    textOn: !state.illustrations?.noText,
   };
 }
 

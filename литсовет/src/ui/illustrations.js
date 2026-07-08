@@ -3,7 +3,7 @@
 // Деньги тратятся ТОЛЬКО по явному клику «Сгенерировать выбранные».
 
 import { getState, save } from '../state.js';
-import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene, suggestOneIllustration, saveUploadedItem } from '../illustrations.js';
+import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene, suggestOneIllustration, saveUploadedItem, effectiveTextOn } from '../illustrations.js';
 import { doneScenesOrdered } from '../bookreview.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -108,33 +108,43 @@ function renderCandidates(s){
   const provider = s.illustrations?.provider||'gemini';
   const quality = s.illustrations?.quality||'standard';
   const cost = estimateImageCost(provider, quality, _selected.size);
+  const ic = s.illustrations||{};
   return `<div class="ph">Кандидаты от арт-директора</div>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+    <div class="ill-table-wrap">
+    <table class="ill-table">
+      <thead><tr>
+        <th style="width:26px"></th>
+        <th>Что иллюстрируем</th>
+        <th style="width:56px">Важн.</th>
+        <th style="width:130px">Текст на картинке</th>
+      </tr></thead>
+      <tbody>
       ${_candidates.map(c=>{
         const chapter = c.type==='scene' ? chapterTitleForScene(s, c.sceneId) : null;
         const label = c.type==='cover' ? '📕 Обложка' : `🖼 ${chapter?esc(chapter)+' · ':''}«${esc(c.sceneTitle||'')}»`;
         const err = _errors.get(c.id);
-        // Ниже label — только чекбокс+заголовок (короткое accessible-name чекбокса,
-        // + явный aria-label на случай, если браузер всё равно взял бы текст label
-        // целиком). Причина/промпт/ошибка — вне label, иначе вложенный <details>
-        // конфликтовал бы с click-делегированием label на чекбокс.
-        return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
-        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-          <input type="checkbox" class="ill-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} aria-label="Выбрать: ${esc(label)}" style="margin-top:3px">
-          <div style="flex:1">
-            <b>${label}</b>
-            <span class="muted" style="font-size:11px;margin-left:6px">★ ${c.importance||5}/10</span>
-          </div>
-        </label>
-        <div style="margin-left:24px">
-          <div class="muted" style="font-size:12px">${esc(c.reason||'')}</div>
+        const on = effectiveTextOn(c, ic);
+        return `<tr class="ill-row">
+        <td><input type="checkbox" class="ill-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} aria-label="Выбрать: ${esc(label)}"></td>
+        <td>
+          <b>${label}</b>
+          <div class="muted" style="font-size:12px;margin-top:2px">${esc(c.reason||'')}</div>
           <details style="margin-top:2px">
-            <summary style="cursor:pointer;font-size:11px;color:var(--text-2)">Промпт для генератора</summary>
-            <div style="font-size:12px;color:var(--text-2);margin-top:4px;font-style:italic">${esc(c.prompt)}</div>
+            <summary style="cursor:pointer;font-size:11px;color:var(--text-3)">Промпт для генератора</summary>
+            <div style="font-size:12px;color:var(--text-3);margin-top:4px;font-style:italic">${esc(c.prompt)}</div>
           </details>
           ${err?`<div style="font-size:12px;color:var(--err);margin-top:4px">⚠ Не удалось сгенерировать: ${esc(err)}</div>`:''}
-        </div>
-      </div>`;}).join('')}
+        </td>
+        <td>★ ${c.importance||5}/10</td>
+        <td class="ill-text-cell">
+          <div class="row" style="gap:6px;align-items:center">
+            <div class="toggle ill-text-toggle ${on?'on':''}" data-id="${c.id}" role="switch" aria-checked="${on}" aria-label="Текст на картинке: ${esc(label)}" data-tip="Переопределяет общую настройку справа только для этой картинки."></div>
+            <span class="muted" style="font-size:11px">${on?'с текстом':'без текста'}</span>
+          </div>
+        </td>
+      </tr>`;}).join('')}
+      </tbody>
+    </table>
     </div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-bottom:18px">
       <button class="btn" id="illClearCand">Отменить</button>
@@ -146,24 +156,46 @@ function renderCandidates(s){
 
 function renderGallery(items, s){
   if(!items.length) return '';
+  const ic = s.illustrations||{};
   return `<div class="ph">Сгенерированные</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
+    <div class="ill-table-wrap">
+    <table class="ill-table">
+      <thead><tr>
+        <th style="width:70px"></th>
+        <th>Название</th>
+        <th style="width:130px">Текст</th>
+        <th style="width:170px">Действия</th>
+      </tr></thead>
+      <tbody>
       ${items.slice().reverse().map(it=>{
         const chapter = it.type==='scene' ? chapterTitleForScene(s, it.sceneId) : null;
         const label = it.type==='cover'?'Обложка':it.type==='map'?'Карта мира':(chapter?`${chapter} · ${it.sceneTitle||'Иллюстрация'}`:(it.sceneTitle||'Иллюстрация'));
         // Своя загруженная картинка — без промпта, «другой промпт»/«перегенерировать» для неё бессмысленны.
         const canReroll = !it.uploaded && (it.type==='cover' || it.type==='scene');
         const rerollErr = _rerollErrors.get(it.id);
-        return `<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px">
-        <img src="${it.dataUrl}" class="ill-thumb" data-id="${it.id}" style="width:100%;border-radius:var(--radius);display:block;cursor:zoom-in" alt="${esc(label)}" title="Открыть в полном размере">
-        <div style="font-size:11px" class="muted">${it.type==='map'?'🗺 ':''}${it.uploaded?'⬆ ':''}${esc(label)}</div>
-        ${rerollErr?`<div style="font-size:11px;color:var(--err)">⚠ ${esc(rerollErr)}</div>`:''}
-        <div class="row" style="gap:6px;flex-wrap:wrap">
-          ${canReroll?`<button class="btn ill-reroll-prompt" data-id="${it.id}" title="Предложить другой промпт (текстовый вызов, бесплатно) — картинку это не трогает">🔄 Другой промпт</button>`:''}
-          ${canReroll?`<button class="btn ill-regen-img" data-id="${it.id}" title="Перегенерировать картинку по текущему промпту — платно">🖼 Другая картинка</button>`:''}
-          <button class="btn ill-del" data-id="${it.id}" data-label="${esc(label)}">🗑 Удалить</button>
-        </div>
-      </div>`;}).join('')}
+        const on = effectiveTextOn(it, ic);
+        return `<tr class="ill-row">
+        <td><img src="${it.dataUrl}" class="ill-thumb" data-id="${it.id}" alt="${esc(label)}" title="Открыть в полном размере"></td>
+        <td>
+          <div style="font-size:13px">${it.type==='map'?'🗺 ':''}${it.uploaded?'⬆ ':''}${esc(label)}</div>
+          ${rerollErr?`<div style="font-size:11px;color:var(--err);margin-top:2px">⚠ ${esc(rerollErr)}</div>`:''}
+        </td>
+        <td class="ill-text-cell">
+          ${canReroll?`<div class="row" style="gap:6px;align-items:center">
+            <div class="toggle ill-item-text-toggle ${on?'on':''}" data-id="${it.id}" role="switch" aria-checked="${on}" aria-label="Текст на картинке: ${esc(label)}" data-tip="Действует при следующей «Другой картинке» — уже сгенерированную картинку не меняет."></div>
+            <span class="muted" style="font-size:11px">${on?'с текстом':'без текста'}</span>
+          </div>`:'<span class="muted" style="font-size:11px">—</span>'}
+        </td>
+        <td>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            ${canReroll?`<button class="btn ill-reroll-prompt" data-id="${it.id}" title="Предложить другой промпт (текстовый вызов, бесплатно) — картинку это не трогает">🔄 Промпт</button>`:''}
+            ${canReroll?`<button class="btn ill-regen-img" data-id="${it.id}" title="Перегенерировать картинку по текущему промпту — платно">🖼 Картинка</button>`:''}
+            <button class="btn ill-del" data-id="${it.id}" data-label="${esc(label)}" title="Удалить">🗑</button>
+          </div>
+        </td>
+      </tr>`;}).join('')}
+      </tbody>
+    </table>
     </div>`;
 }
 
@@ -288,6 +320,20 @@ function bindHandlers(els, s){
     renderIllustrations(els);
   });
 
+  document.querySelectorAll('.ill-text-toggle').forEach(t=>t.onclick=()=>{
+    const c = _candidates.find(x=>x.id===t.dataset.id);
+    if(!c) return;
+    c.textOn = !effectiveTextOn(c, s.illustrations||{});
+    renderIllustrations(els);
+  });
+  document.querySelectorAll('.ill-item-text-toggle').forEach(t=>t.onclick=()=>{
+    const it = (s.illustrations.items||[]).find(x=>x.id===t.dataset.id);
+    if(!it) return;
+    it.textOn = !effectiveTextOn(it, s.illustrations||{});
+    save();
+    renderIllustrations(els);
+  });
+
   const cc = document.getElementById('illClearCand');
   if(cc) cc.onclick = ()=>{ _candidates=[]; _selected=new Set(); _errors=new Map(); _suggestError=''; renderIllustrations(els); };
 
@@ -307,7 +353,7 @@ function bindHandlers(els, s){
         // Обложка — одна на проект (как карта мира): предыдущая заменяется, не
         // копится в галерее осиротевшей картинкой, которая никуда не попадает.
         if(c.type==='cover') s.illustrations.items = s.illustrations.items.filter(it=>it.type!=='cover');
-        s.illustrations.items.push({ id:c.id, type:c.type, sceneId:c.sceneId, sceneTitle:c.sceneTitle, prompt:c.prompt, dataUrl, createdAt:Date.now() });
+        s.illustrations.items.push({ id:c.id, type:c.type, sceneId:c.sceneId, sceneTitle:c.sceneTitle, prompt:c.prompt, textOn:c.textOn, dataUrl, createdAt:Date.now() });
         if(c.type==='cover') s.project.coverDataUrl = dataUrl;
         succeeded.add(c.id);
         _errors.delete(c.id);
