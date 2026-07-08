@@ -421,6 +421,13 @@ export function renderConcept(els){
 }
 
 // ─────────────────────────────── ГОЛОС ───────────────────────────────
+// Итог импорта книги серии — save() внутри #importBook.onclick запускает общий
+// rerender(), который пересоздаёт #vstatus ДО того, как обработчик успевает
+// записать в него текст (закэшированная ссылка на узел остаётся отсоединённой
+// от страницы). Тот же приём «отложенной записки», что и _pendingDirective ниже:
+// кладём текст сюда, save()/rerender() пересоздают разметку, а сразу после
+// рендера читаем и один раз показываем — вместо мгновенно исчезающего сообщения.
+let _voiceImportStatus = '';
 export function renderVoice(els){
   const s = getState(); const v = s.voice;
   const mode = s.ui.voiceMode || 'sample';
@@ -462,6 +469,12 @@ export function renderVoice(els){
         <button class="btn" id="toStruct">Дальше — Структура →</button>
       </div>
     </div>`;
+
+  if(_voiceImportStatus){
+    const st = document.getElementById('vstatus');
+    if(st) st.textContent = _voiceImportStatus;
+    _voiceImportStatus = '';
+  }
 
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
   bindModeSwitchKeyboard(document.getElementById('vmode'));
@@ -516,8 +529,11 @@ export function renderVoice(els){
       st.innerHTML='<span class="spinner"></span> Извлекаю голос, персонажей, канон…';
       const title = file.name.replace(/\.[^.]+$/,'');
       const report = await importSeriesBook(s, title, text);
+      // save() ниже перерисовывает всю стадию — st ссылался бы на уже
+      // отсоединённый узел, поэтому текст идёт через _voiceImportStatus (см. её
+      // объявление выше) и подставляется renderVoice() уже в новую разметку.
+      _voiceImportStatus = `Готово: ${report.charactersAdded} персонажей, ${report.factsAdded} фактов, голос (${report.voiceExamples} примеров).`;
       save();
-      st.textContent = `Готово: ${report.charactersAdded} персонажей, ${report.factsAdded} фактов, голос (${report.voiceExamples} примеров).`;
     }catch(e){ st.textContent='Ошибка: '+e.message; }
     finally{ imp.disabled=false; }
   };
