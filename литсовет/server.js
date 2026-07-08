@@ -31,6 +31,26 @@ const MIME = { '.html':'text/html; charset=utf-8','.js':'text/javascript; charse
 function send(res, code, body, type='text/plain; charset=utf-8'){ res.writeHead(code,{'Content-Type':type}); res.end(body); }
 function ensureDir(dir){ try{ fs.mkdirSync(dir,{recursive:true}); }catch{} }
 
+// Копит тело запроса как Buffer-чанки и декодирует в UTF-8 ОДИН РАЗ в конце.
+// Раньше каждый обработчик делал `raw += c` (c — Buffer) — неявный c.toString()
+// на КАЖДОМ чанке по отдельности; если многобайтовый UTF-8 символ (любая
+// кириллица — 2 байта) попадал ровно на границу двух TCP-чанков, обе половинки
+// декодировались как невалидные и превращались в отдельные «�» — необратимая
+// порча текста прямо в теле запроса (промпт с текстом рукописи, sync/checkpoint
+// с всем проектом). Проявлялось только на достаточно длинных телах, где HTTP
+// успевает разбить запрос на несколько чанков — отсюда «иногда» и «в середине
+// текста», а не всегда и не в одном месте.
+function readBody(req, maxBytes, cb){
+  const chunks = []; let total = 0; let stopped = false;
+  req.on('data', c=>{
+    if(stopped) return;
+    total += c.length;
+    if(total > maxBytes){ stopped = true; req.destroy(); return; }
+    chunks.push(c);
+  });
+  req.on('end', ()=>{ if(!stopped) cb(Buffer.concat(chunks).toString('utf8')); });
+}
+
 function serveStatic(req, res){
   let rel = decodeURIComponent(req.url.split('?')[0]);
   if (rel === '/' || rel === '') rel = '/index.html';
@@ -44,8 +64,7 @@ function serveStatic(req, res){
 }
 
 async function handleGenerate(req, res){
-  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>5e5) req.destroy(); });
-  req.on('end', async ()=>{
+  readBody(req, 5e5, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{}
     const wantStream = b.stream !== false;
     if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
@@ -97,8 +116,7 @@ async function handleGenerate(req, res){
 }
 
 async function handleWiki(req, res){
-  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>5e3) req.destroy(); });
-  req.on('end', async ()=>{
+  readBody(req, 5e3, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
     const query=(b.query||'').trim().slice(0,200);
     const lang=/^[a-z]{2}$/.test(b.lang||'ru')?(b.lang||'ru'):'ru';
@@ -131,8 +149,7 @@ async function handleWiki(req, res){
 // сервер ничего не хранит, только проксирует к нужному upstream и возвращает
 // картинку как data URL (не стримит, ответ маленький и разовый).
 async function handleGenerateImage(req, res){
-  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>5e5) req.destroy(); });
-  req.on('end', async ()=>{
+  readBody(req, 5e5, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
     if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
     const apiKey = (b.apiKey||'').trim();
@@ -251,8 +268,7 @@ function handleSyncGet(req, res, id){
 }
 
 function handleSyncSave(req, res, id){
-  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>50e6) req.destroy(); });
-  req.on('end',()=>{
+  readBody(req, 50e6, (raw)=>{
     try{
       const parsed = JSON.parse(raw);
       if(!parsed.id) return send(res,400,'NO_ID');
@@ -271,8 +287,7 @@ function handleSyncDelete(req, res, id){
 }
 
 function handleCheckpointSave(req,res){
-  let raw=''; req.on('data',c=>{ raw+=c; if(raw.length>30e6) req.destroy(); });
-  req.on('end',()=>{
+  readBody(req, 30e6, (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
     ensureDir(CHECKPOINT_DIR);
     const title=safeFile(b.title||'project').slice(0,60);
