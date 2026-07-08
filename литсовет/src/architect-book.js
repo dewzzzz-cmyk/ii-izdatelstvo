@@ -418,6 +418,20 @@ export async function regenerateChapter(state, chapter, hint){
       for(let i=0;i<Math.min(arr.length,scenes.length);i++){
         const sc=scenes[i], fr=arr[i];
         pushSceneVersion(sc);
+        // pushSceneVersion бэкапит только бриф/план (SCENE_FIELDS), НЕ прозу —
+        // раньше эта функция меняла план сцены, но status/text не трогала: уже
+        // написанная сцена оставалась «готово» со СТАРЫМ текстом, не подходящим
+        // под новый бриф, и ничего не предлагало её переписать, хотя модалка
+        // прямо обещает «все сцены будут переписаны». Сбрасываем в 'todo' —
+        // старый текст уходит в proseVersions (тот же откат, что и в doRun),
+        // не пропадает, а кнопки автопилота в «Написании» теперь реально видят
+        // главу как недописанную и предложат переписать по новому брифу.
+        if(sc.status==='done' && sc.text){
+          sc.proseVersions = sc.proseVersions || [];
+          sc.proseVersions.unshift(sc.text);
+          if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+          sc.status = 'todo';
+        }
         sc.title=(fr.title||sc.title).trim(); sc.brief=fr.brief.trim(); sc.emotion=(fr.emotion||sc.emotion||'').trim();
         if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
         sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';

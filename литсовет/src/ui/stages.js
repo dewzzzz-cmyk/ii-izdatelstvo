@@ -1068,9 +1068,9 @@ function bindSkeleton(s){
     if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
     openInputModal({
       title:'↻ Перегенерировать главу',
-      hint:'Все сцены главы «'+ch.title+'» будут переписаны. В каком направлении? (пусто — просто усилить)',
+      hint:'Планы всех сцен главы «'+ch.title+'» будут переписаны, уже написанные — помечены недописанными (старый текст не теряется, доступен через «↶» в Написании). Саму прозу нужно будет сгенерировать заново там же — кнопкой «Написать главу целиком». В каком направлении менять план? (пусто — просто усилить)',
       placeholder:'напр.: больше напряжения между героями',
-      okLabel:'Перегенерировать',
+      okLabel:'Перегенерировать план',
       onOk: async (hint)=>{
         b.disabled=true; const orig=b.textContent; b.innerHTML='<span class="spinner"></span>';
         try{ await regenerateChapter(s, ch, hint); clearMissingFacts(); save(); }
