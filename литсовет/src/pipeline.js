@@ -9,7 +9,8 @@ import { architectMessages, parseArchitect, architectToText,
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          parseDebateRevision, styleGuardMessages, readerGuardMessages, imageryGuardMessages,
-         povGuardMessages, dialogueGuardMessages, findDuplicatePhrases } from './guards.js';
+         povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
+         findDuplicatePhrases } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag } from './state.js';
@@ -29,7 +30,7 @@ function isFactualGuard(state, role){
   return !!(a.custom && a.factual);
 }
 
-const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', repeat:'Проверка повторов'};
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', repeat:'Проверка повторов'};
 function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
@@ -141,6 +142,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
       agentEnabled('reader') || agentEnabled('imagery') || agentEnabled('pov') || agentEnabled('dialogue') ||
+      agentEnabled('resolution') || agentEnabled('atmosphere') ||
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
     let best = null, bestEval = null, bestClean = false, bestFlags = {};
@@ -306,6 +308,10 @@ export async function runScene(state, scene, opts={}, onProgress){
             guardJobs.push(guardJob(state,'pov', llmBase, povGuardMessages(pRes.text, ag(state,'pov').strictness), flags, onProgress));
           if(agentEnabled('dialogue'))
             guardJobs.push(guardJob(state,'dialogue', llmBase, dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags, onProgress));
+          if(agentEnabled('resolution'))
+            guardJobs.push(guardJob(state,'resolution', llmBase, resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness), flags, onProgress));
+          if(agentEnabled('atmosphere'))
+            guardJobs.push(guardJob(state,'atmosphere', llmBase, atmosphereGuardMessages(pRes.text, ag(state,'atmosphere').strictness, state.project?.genre), flags, onProgress));
           (state.agents||[]).filter(a=>a.custom && a.enabled!==false && !a.factual).forEach(a=>{
             guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
           });
@@ -359,7 +365,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // agentEnabled() матчит только по role — для кастомных стражей (все с role:'custom')
         // это находит не того агента, поэтому здесь читаем enabled/manual напрямую через ag().
         if(hasGuards){
-          const guardCandidates = ['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue',
+          const guardCandidates = ['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere',
             ...(state.agents||[]).filter(a=>a.custom).map(a=>a.id)];
           const manualGuard = guardCandidates.find(r=>{ const a=ag(state,r); return a.enabled!==false && a.manual===true; });
           if(manualGuard && (evalAccepted || iter >= maxIter)){
