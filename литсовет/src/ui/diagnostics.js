@@ -34,6 +34,9 @@ function paramSpecs(a){
     specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля; ниже 7.5 не опустить — качество текста важнее скорости', min:7.5, max:9, step:0.5, target:'global', def:7.5, fmt:v=>v.toFixed(1) });
     specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать, прежде чем сдаться — при высоком пороге нужно больше попыток', min:1, max:8, step:1, target:'global', def:5, fmt:v=>Math.round(v) });
   }
+  if(a.role==='bookArchitect'){
+    specs.push({ key:'structureMaxIter', label:'Прогонов структуры', hint:'сколько раз архитектор сам перерабатывает скелет по замечаниям Оценщика структуры, прежде чем остановиться (или раньше, если оценка ≥8/10)', min:1, max:6, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
+  }
   if(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere'].includes(a.role) || a.custom){
     specs.push({ key:'strictness', label:'Строгость', hint:'1 мягко · 3 придирчиво', min:1, max:3, step:1, target:'agent', def:2, fmt:v=>['','мягко','обычно','строго'][Math.round(v)]||v });
   }

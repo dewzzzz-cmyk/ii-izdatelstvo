@@ -87,6 +87,8 @@ export function defaultState(){
       retries: 2,
       evaluatorThreshold: 7.5,  // порог принятия сцены Оценщиком — минимум 7.5 (не ниже, качество важнее скорости)
       evaluatorMaxIter: 5,      // сколько раз дорабатывать сцену, прежде чем сдаться — увеличено вместе с порогом
+      structureMaxIter: 3,      // сколько раз архитектор сам перерабатывает скелет книги по замечаниям
+                                // Оценщика структуры, прежде чем остановиться (раньше — если оценка ≥8/10)
     },
     log: [],
     ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false, editorAuto: false },

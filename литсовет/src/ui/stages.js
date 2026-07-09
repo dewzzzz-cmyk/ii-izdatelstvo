@@ -836,6 +836,75 @@ function renderStructureEval(ev){
     </div>`;
 }
 
+// Архитектор⇄Оценщик — авто-цикл для скелета книги (аналог Прозаик⇄Оценщик в
+// pipeline.js, но для структуры целиком, не одной сцены). Раньше «Улучшить
+// структуру по замечаниям» было целиком ручной кнопкой — автор жал её сам
+// столько раз, сколько хотел, оценка вообще не проверялась автоматически.
+// Теперь генерация/переработка идёт до s.global.structureMaxIter раз (по
+// умолчанию 3, настраивается в карточке «Книжный архитектор»), останавливаясь
+// раньше, если оценка достигла 8/10 — тот же порог, что уже решал, показывать
+// ли кнопку «Улучшить» в renderStructureEval выше.
+const AXIS_NAMES_STRUCT = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
+function hintFromStructureEval(ev){
+  if(!ev) return '';
+  const axisScores = ev.axes
+    ? 'ОЦЕНКИ ПО ОСЯМ:\n' + Object.entries(AXIS_NAMES_STRUCT).map(([k,label])=>`${label}: ${(ev.axes[k]??ev.score).toFixed(0)}/10`).join(', ')
+    : '';
+  const suggestions = (ev.suggestions||[]).join('\n');
+  const issues = (ev.issues||[]).join('\n');
+  return [axisScores, issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
+}
+function currentSkeletonAsPrevious(s){
+  const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+  return chapters.length ? {
+    chapters: chapters.map(ch=>({
+      title: ch.title, arc: ch.arc,
+      scenes: (s.structure||[]).filter(n=>n.type==='scene' && n.chapterId===ch.id)
+        .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, targetWords:sc.targetWords }))
+    }))
+  } : null;
+}
+async function runIterativeArchitect(s, { chCount, seedEval }){
+  const maxIter = Math.max(1, s.global.structureMaxIter ?? 3);
+  let prevEval = seedEval || null;
+  let prevScore = prevEval ? prevEval.score : null;
+  let skeleton = null, evalResult = null;
+  // save() пересобирает DOM на каждой итерации — переприменяем busy-состояние
+  // и текст статуса к свежим элементам, а не к ссылкам, взятым до первого save().
+  const setBusy = (busy)=>{ ['genSkeleton','regenWithEval'].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=busy; }); };
+  const setStatus = (html)=>{ const st=document.getElementById('genStatus'); if(st) st.innerHTML=html; };
+  setBusy(true);
+  try{
+    for(let iter=1; iter<=maxIter; iter++){
+      const label = maxIter>1 ? `Прогон ${iter}/${maxIter}: ` : '';
+      setStatus(`<span class="spinner"></span> ${label}Архитектор ${prevEval?'перерабатывает':'проектирует'} структуру…`);
+      const hint = prevEval ? hintFromStructureEval(prevEval) : '';
+      const previousSkeleton = prevEval ? currentSkeletonAsPrevious(s) : null;
+      skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
+      applySkeleton(s, skeleton, uid);
+      s.structureEval = null;
+      clearMissingFacts();
+      save();
+      setBusy(true);
+      setStatus(`<span class="spinner"></span> ${label}Оценщик проверяет структуру…`);
+      evalResult = await runStructureEval(s, skeleton, prevEval);
+      if(evalResult && prevScore!=null) evalResult.prevScore = prevScore;
+      s.structureEval = evalResult;
+      save();
+      setBusy(true);
+      if(!evalResult || evalResult.score >= 8) break;
+      prevEval = evalResult; prevScore = evalResult.score;
+    }
+    if(skeleton) await refreshMissingFacts(s, skeleton);
+  }catch(e){
+    setStatus('');
+    const stE = document.getElementById('genStatus');
+    if(stE) stE.textContent = 'Ошибка: '+e.message;
+  }finally{
+    setBusy(false);
+  }
+}
+
 // ─────────────────────────────── СТРУКТУРА (мин.) ───────────────────────────────
 export function renderStructure(els){
   const s = getState();
@@ -904,31 +973,10 @@ export function renderStructure(els){
       }
       delete btn.dataset.confirmed; btn.style.cssText='';
     }
-    const btn=ev.target; btn.disabled=true;
-    document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор проектирует…';
-    try{
-      const chCount = parseInt(document.getElementById('chCount').value)||0;
-      const skeleton = await runBookArchitect(s, chCount?{chapters:chCount}:{});
-      applySkeleton(s, skeleton, uid);
-      s.structureEval = null; // сбрасываем старую оценку
-      s.structureStale = false;
-      clearMissingFacts(); // старые карточки относились к прежнему скелету — не давать им мелькнуть до пересчёта
-      save();
-      // После save() DOM пересобирается — берём свежие ссылки на элементы
-      const st2 = document.getElementById('genStatus');
-      const btn2 = document.getElementById('genSkeleton');
-      if(st2) st2.innerHTML='<span class="spinner"></span> Оценщик проверяет структуру…';
-      if(btn2) btn2.disabled=true;
-      const evalResult = await runStructureEval(s, skeleton);
-      s.structureEval = evalResult;
-      save();
-      await refreshMissingFacts(s, skeleton);
-    }catch(e){
-      const stE = document.getElementById('genStatus');
-      const btnE = document.getElementById('genSkeleton');
-      if(stE) stE.textContent='Ошибка: '+e.message;
-      if(btnE) btnE.disabled=false;
-    }
+    const chCount = parseInt(document.getElementById('chCount').value)||0;
+    s.structureEval = null; // сбрасываем старую оценку
+    s.structureStale = false;
+    await runIterativeArchitect(s, { chCount, seedEval:null, btnId:'genSkeleton' });
   };
 
   const rs=document.getElementById('revertSkeleton');
@@ -950,51 +998,8 @@ export function renderStructure(els){
   const regenWithEval = document.getElementById('regenWithEval');
   if(regenWithEval) regenWithEval.onclick = async ()=>{
     if(!s.structureEval) return;
-    const prevEval = s.structureEval; // держим до перегенерации — Оценщик должен видеть, что проверяли в прошлый раз
-    const prevScore = s.structureEval.score;
-    const axisNames = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
-    const axisScores = s.structureEval.axes
-      ? 'ОЦЕНКИ ПО ОСЯМ:\n' + Object.entries(axisNames).map(([k,label])=>`${label}: ${(s.structureEval.axes[k]??prevScore).toFixed(0)}/10`).join(', ')
-      : '';
-    const suggestions = (s.structureEval.suggestions||[]).join('\n');
-    const issues = (s.structureEval.issues||[]).join('\n');
-    const hint = [axisScores, issues && 'ПРОБЛЕМЫ:\n'+issues, suggestions && 'РЕКОМЕНДАЦИИ:\n'+suggestions].filter(Boolean).join('\n\n');
-    if(!hint) return;
-    // Строим previousSkeleton из текущего state.structure для передачи архитектору
-    const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
-    const previousSkeleton = chapters.length ? {
-      chapters: chapters.map(ch=>({
-        title: ch.title, arc: ch.arc,
-        scenes: (s.structure||[]).filter(n=>n.type==='scene' && n.chapterId===ch.id)
-          .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, targetWords:sc.targetWords }))
-      }))
-    } : null;
-    regenWithEval.disabled=true;
-    document.getElementById('genStatus').innerHTML='<span class="spinner"></span> Архитектор перерабатывает структуру…';
-    try{
-      const chCount = parseInt(document.getElementById('chCount')?.value)||0;
-      const skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
-      applySkeleton(s, skeleton, uid);
-      s.structureEval = null;
-      clearMissingFacts(); // новый скелет — старые карточки недостающих фактов больше не относятся к делу
-      save();
-      // DOM пересобран — берём свежие ссылки
-      const st2 = document.getElementById('genStatus');
-      const btn2 = document.getElementById('genSkeleton');
-      if(st2) st2.innerHTML='<span class="spinner"></span> Оценщик проверяет новую структуру…';
-      if(btn2) btn2.disabled=true;
-      const evalResult = await runStructureEval(s, skeleton, prevEval);
-      // Сохраняем предыдущий счёт для сравнения в UI
-      if(evalResult) evalResult.prevScore = prevScore;
-      s.structureEval = evalResult;
-      save();
-      await refreshMissingFacts(s, skeleton);
-    }catch(e){
-      const stE = document.getElementById('genStatus');
-      if(stE) stE.textContent='Ошибка: '+e.message;
-      const btnE = document.getElementById('genSkeleton');
-      if(btnE) btnE.disabled=false;
-    }
+    const chCount = parseInt(document.getElementById('chCount')?.value)||0;
+    await runIterativeArchitect(s, { chCount, seedEval:s.structureEval, btnId:'regenWithEval' });
   };
 
   const add=document.getElementById('addScene');
