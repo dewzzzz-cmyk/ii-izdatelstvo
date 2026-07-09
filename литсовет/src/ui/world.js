@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -87,6 +87,7 @@ function renderMapBlock(s, geoCount){
   const canGenerate = geoCount >= 2;
   const cost = estimateImageCost(s.illustrations?.provider||'gemini', s.illustrations?.quality||'standard', 1);
   const ic = s.illustrations || {};
+  const mapLang = MAP_LANGUAGES[ic.mapLanguage] ? ic.mapLanguage : 'ru';
   // Промпт ДО генерации (что будет отправлено) — mapPromptFor может бросить,
   // если canGenerate почему-то true, а фактов всё равно не хватает (гонка
   // между geoCount и реальным списком не ожидается, но try на всякий случай).
@@ -101,8 +102,11 @@ function renderMapBlock(s, geoCount){
       ${map ? `<img src="${map.dataUrl}" style="max-width:280px;border-radius:var(--radius);display:block;margin-bottom:8px">
         <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>` : ''}
       <div class="row" style="gap:14px;margin-bottom:8px;flex-wrap:wrap">
-        <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Общая настройка для всех картинок проекта — то же самое, что в разделе «Иллюстрации»"><input type="checkbox" id="wMapRuText" ${ic.ruText?'checked':''} ${ic.noText?'disabled':''}> Подписи на русском</label>
-        <label class="row" style="gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="wMapNoText" ${ic.noText?'checked':''}> Совсем без текста</label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" for="wMapLang" data-tip="Свой язык подписей именно для карты — не связан с языком обложки/иллюстраций сцен в «Иллюстрациях». Для выдуманных языков модель рисует стилизацию под дух письменности, не настоящий перевод.">Язык подписей карты
+          <select id="wMapLang" style="font-size:12px;width:auto">
+            ${Object.entries(MAP_LANGUAGES).map(([id,l])=>`<option value="${id}" ${mapLang===id?'selected':''}>${esc(l.label)}</option>`).join('')}
+          </select>
+        </label>
       </div>
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
@@ -270,10 +274,8 @@ function bindHandlers(els, s){
   });
 
   s.illustrations = s.illustrations || {};
-  const wMapRuText = document.getElementById('wMapRuText');
-  if(wMapRuText) wMapRuText.onchange = ()=>{ s.illustrations.ruText = wMapRuText.checked; save(); renderWorld(els); };
-  const wMapNoText = document.getElementById('wMapNoText');
-  if(wMapNoText) wMapNoText.onchange = ()=>{ s.illustrations.noText = wMapNoText.checked; save(); renderWorld(els); };
+  const wMapLang = document.getElementById('wMapLang');
+  if(wMapLang) wMapLang.onchange = ()=>{ s.illustrations.mapLanguage = wMapLang.value; save(); renderWorld(els); };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{

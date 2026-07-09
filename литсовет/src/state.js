@@ -73,9 +73,10 @@ export function defaultState(){
       items: [],                // {id, type, sceneId, sceneTitle, prompt, dataUrl, createdAt}
       suggestCount: 7,          // сколько кандидатов предлагать (включая обложку), 1-15
       mode: 'auto',             // auto (арт-директор сам предлагает) | manual (автор выбирает главы/обложку галочкой)
-      ruText: true,             // если на картинке есть надписи (обложка/карта) — они на русском
+      ruText: true,             // если на картинке есть надписи (обложка/сцены) — они на русском
       noText: false,            // вообще без текста на картинке — приоритет над ruText
       portraitCover: false,     // обложка в портретных пропорциях (под требования площадок публикации)
+      mapLanguage: 'ru',        // язык подписей КАРТЫ отдельно от ruText/noText — см. MAP_LANGUAGES в world.js (эльфийский/дроу/дварфийский и т.п.)
     },
     global: {
       baseURL: 'https://api.deepseek.com',
@@ -421,7 +422,12 @@ function migrate(s){
   s.voice   = Object.assign({}, d.voice, s.voice);
   s.global  = Object.assign({}, d.global, s.global);
   s.memory  = Object.assign({}, d.memory, s.memory);
+  // mapLanguage — новое поле; в проектах, где карта уже настраивалась через
+  // общий ruText/noText (единственный вариант до этой фичи), переносим их
+  // выбор один раз, а не тихо сбрасываем всем на дефолтный «Русский».
+  const hadMapLanguage = !!(s.illustrations && 'mapLanguage' in s.illustrations);
   s.illustrations = Object.assign({}, d.illustrations, s.illustrations);
+  if(!hadMapLanguage) s.illustrations.mapLanguage = s.illustrations.noText ? 'none' : (s.illustrations.ruText ? 'ru' : 'en');
   s.illustrations.items = s.illustrations.items || [];
   // Самовосстановление обложки: старая кнопка «✕ Убрать обложку» в Концепции
   // чистила только project.coverDataUrl, не трогая illustrations.items — в

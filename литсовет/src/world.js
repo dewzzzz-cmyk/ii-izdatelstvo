@@ -137,10 +137,26 @@ const MAP_STYLE_FLAVORS = [
   "richly illustrated tabletop-RPG atlas, saturated color, ornate cartouche title banner",
 ];
 
+// Язык подписей КАРТЫ — отдельная настройка от общего ruText/noText в
+// «Иллюстрациях» (те остаются для обложки/сцен, где нужен настоящий читаемый
+// текст на языке книги). Карта — почти всегда фэнтези-объект, и родной шрифт
+// расы куда уместнее кириллицы. Для придуманных языков (эльфийский/дроу/
+// дварфийский) у модели нет реальной письменности — просим ДЕКОРАТИВНУЮ
+// стилизацию под дух языка, не перевод: она всё равно нарисует нечитаемые
+// знаки, но хотя бы в правильном стиле, а не случайную кириллицу/латиницу.
+export const MAP_LANGUAGES = {
+  ru:       { label: 'Русский',     instr: 'Russian, Cyrillic script, not English' },
+  en:       { label: 'Английский',  instr: 'English' },
+  elvish:   { label: 'Эльфийский',  instr: 'an elegant flowing elvish fantasy script (Tolkien-inspired decorative letterforms) — invented calligraphy, NOT real English or Cyrillic letters; it does not need to be legible as any real language, only to look consistently elvish' },
+  drow:     { label: 'Дроу',        instr: 'a dark, angular drow (dark-elf) runic script — sharp jagged fantasy glyphs, NOT real English or Cyrillic letters; it does not need to be legible as any real language, only to look consistently like drow runes' },
+  dwarvish: { label: 'Дварфийский', instr: 'a blocky, geometric dwarvish runic script — angular carved-stone-style glyphs, NOT real English or Cyrillic letters; it does not need to be legible as any real language, only to look consistently dwarvish' },
+  none:     { label: 'Без текста',  instr: '' },
+};
+
 // ── Карта мира — НЕ через suggestIllustrations()/illustrationSuggestMessages()
 // (те требуют doneScenesOrdered(state), а на стадии «Мир» сцен ещё нет, спека §9).
 // Переиспользуется только низкоуровневый generateImage() из imagegen.js.
-// noText/ruText (state.illustrations) читаются здесь и определяют формулировку
+// mapLanguage (state.illustrations) читается здесь и определяет формулировку
 // "labeled"/"no text" в самом промпте — раньше карта ВСЕГДА просила и "no text
 // artifacts", и "labeled" геообъекты в одном промпте (прямое противоречие
 // самому себе), и никогда не учитывала язык подписей, хотя карта — ровно то
@@ -150,6 +166,8 @@ export function mapPromptFor(state){
   if(!geoFacts.length) throw new Error('Нужно хотя бы несколько фактов категории «География» в каноне.');
   const p = state.project;
   const ic = state.illustrations || {};
+  const lang = MAP_LANGUAGES[ic.mapLanguage] ? ic.mapLanguage : 'ru';
+  const noText = lang === 'none';
   // Бюджет символов — у фактов ОТДЕЛЬНЫЙ кап, а не общий с шаблоном: при
   // насыщенном каноне (10+ фактов географии) общий .slice() в конце срезал
   // промпт прямо на середине списка фактов, тихо теряя половину из них —
@@ -162,11 +180,11 @@ export function mapPromptFor(state){
   // подвержен артефактам у любых image-моделей. Просим подписать не всё подряд,
   // а 2-3 САМЫХ важных места крупно — остальную географию показываем визуально,
   // без подписи, а не пытаемся уместить десяток мелких названий.
-  const geoLine = ic.noText
+  const geoLine = noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear as visual features — ${facts}). Label ONLY the 2-3 most important named places, in LARGE, bold, hand-lettered text${ic.ruText ? ' (Russian, Cyrillic script, not English)' : ''} styled as part of the map's decoration (not a printed caption) — small or numerous labels reliably render as illegible garbage, so leave the rest of the geography unlabeled rather than cramming in more small text.`;
+    : `Geography (must appear as visual features — ${facts}). Label ONLY the 2-3 most important named places, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption) — small or numerous labels reliably render as illegible garbage, so leave the rest of the geography unlabeled rather than cramming in more small text.`;
   return [
-    `Fantasy-style map, top-down bird's-eye view, cartography illustration${ic.noText ? ', no text artifacts' : ''}.`,
+    `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
     `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — compass rose, sea monsters or ships in unmapped waters, decorative border, scale bar, weathered texture, subtle terrain shading. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
     `Setting: ${style}.`,
