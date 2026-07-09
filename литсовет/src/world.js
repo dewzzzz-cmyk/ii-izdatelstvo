@@ -52,14 +52,21 @@ function altHistoryNote(genre){
   return 'ЭТОТ ЖАНР ТРЕБУЕТ явной точки развилки в категории «история»: конкретное историческое событие + год + что пошло иначе + 2-3 конкретных следствия (технологические/политические/культурные), логически из неё вытекающих. Без точки развилки жанр не работает — обязательно включи такой факт.';
 }
 
+// existing (уже одобренные факты ЭТОЙ категории) передаётся в промпт, иначе
+// повторный клик «✨ Предложить» после того как автор уже одобрил часть
+// фактов, не видит их вообще — модель придумывает категорию заново с нуля,
+// и результат может противоречить уже установленному вместо того, чтобы его
+// расширять (найдено live-тестом: география «меняется», а не дополняется).
 export function worldSuggestMessages(state, category, opts={}){
   const p = state.project;
   const hint = (opts.hint||'').trim();
   const ideaSeed = (opts.ideaSeed||'').trim();
+  const existing = (state.bible||[]).filter(b=>b.source==='world' && b.category===category);
   const sys = [
     'Ты — соавтор по мироустройству (worldbuilding). Ты предлагаешь конкретные факты мира книги — НЕ пишешь прозу и не строишь сюжет.',
     'Каждый факт — конкретное, проверяемое утверждение (не «в этом мире есть магия», а «боевая магия истощает год жизни за каждое применение») — расплывчатые факты хуже работают с системой поиска канона и не помогают стражам ловить противоречия.',
     `Сейчас нужны факты ТОЛЬКО категории «${category}»: ${CATEGORY_HINTS[category]||''}`,
+    existing.length ? 'В каноне УЖЕ ЕСТЬ факты этой категории (см. ниже) — твоя задача РАСШИРИТЬ мир, а не начать заново. Новые факты должны логически сочетаться с уже установленным: не повторяй их другими словами и не противоречь им, добавляй ДРУГИЕ грани категории (если уже есть факт про столицу — предложи не другую версию столицы, а что-то ещё: соседний регион, торговый путь, географическую особенность).' : '',
     altHistoryNote(p.genre),
   ].filter(Boolean).join('\n');
   const user = [
@@ -68,8 +75,9 @@ export function worldSuggestMessages(state, category, opts={}){
     (p.synopsis||p.idea) ? `Синопсис: ${p.synopsis||p.idea}` : '',
     ideaSeed ? `Идея мира от автора: ${ideaSeed}` : '',
     hint ? `Подсказка автора для категории «${category}»: ${hint}` : '',
+    existing.length ? `\nУЖЕ В КАНОНЕ (категория «${category}») — не повторяй и не противоречь, расширяй:\n${existing.map(f=>'— '+f.text).join('\n')}` : '',
     '',
-    `Предложи 3-6 фактов категории «${category}».`,
+    `Предложи 3-6 ${existing.length ? 'НОВЫХ, дополняющих' : ''} фактов категории «${category}».`,
     `Верни JSON: { "facts": [ { "keys": "2-4 ключевых слова через запятую", "text": "сам факт, 1-2 предложения" } ] }`,
     'Только JSON.',
   ].filter(Boolean).join('\n');
@@ -90,6 +98,52 @@ export async function suggestWorldFacts(state, category, opts={}){
     keys: String(f.keys||'').slice(0,120),
     text: String(f.text||'').trim().slice(0,500),
   })).filter(f=>f.text);
+}
+
+// ── Оценка глубины уже собранного канона мира — по фактам, БЕЗ прозы ──
+// Отличается от runWorldDepthCheck в bookreview.js: тот читает уже написанные
+// сцены (bookOverview) и смотрит только категорию «магия/технология»/«система»
+// (клише жанровых систем) — требует минимум 2 написанные сцены, недоступен на
+// стадии «Мир», где сцен ещё физически нет. Эта проверка — по ВСЕМ категориям
+// сразу и только по фактам канона: «насколько подробно и конкретно проработан
+// мир», а не «насколько система магии оригинальна относительно текста».
+export function worldOverviewMessages(state){
+  const p = state.project;
+  const facts = (state.bible||[]).filter(b=>b.source==='world');
+  const byCategory = {};
+  facts.forEach(f=>{ const cat=f.category||'без категории'; (byCategory[cat]=byCategory[cat]||[]).push(f.text); });
+  const catText = Object.entries(byCategory).map(([cat,texts])=>`${cat} (${texts.length}):\n${texts.map(t=>'  — '+t).join('\n')}`).join('\n\n');
+  const sys = [
+    'Ты — редактор-worldbuilder. Оцени, насколько ГЛУБОКО и КОНКРЕТНО проработан мир книги — по уже собранным фактам канона, прозы может ещё не быть вообще.',
+    'Глубина — это конкретные, проверяемые правила и ограничения, а не общие слова («в этом мире есть магия» — плохо, «маг стареет на год за каждое серьёзное заклинание» — хорошо). Разнообразие категорий важно не меньше числа фактов в одной: 10 фактов только про географию при пустой истории/фракциях/культуре — тоже поверхностно, даже если каждый факт хорош.',
+    'Штрафуй за: пустые или почти пустые категории, расплывчатые факты без конкретики, отсутствие ограничений/цены там, где они уместны (магия/технология/система — что система НЕ может, чего стоит), факты-клише жанра (то, что можно вставить в любую книгу этого жанра без изменений).',
+  ].join('\n');
+  const user = [
+    `Жанр: ${p.genre||'роман'}${p.era?', '+p.era:''}.`,
+    '',
+    facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА ПО КАТЕГОРИЯМ:\n${catText}` : 'Фактов канона пока нет вообще.',
+    '',
+    'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"] }',
+    'Если мир уже хорош — скажи это в suggestions, issues и thinCategories могут быть пустыми. Только JSON.',
+  ].filter(Boolean).join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export async function runWorldOverview(state){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  const facts = (state.bible||[]).filter(b=>b.source==='world');
+  if(facts.length < 3) throw new Error('Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
+  const msgs = worldOverviewMessages(state);
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:900, retries:g.retries });
+  const j = extractJSON(res.text);
+  if(!j || typeof j.depth !== 'number') throw new Error('Не удалось разобрать ответ.');
+  return {
+    depth: Math.max(0, Math.min(10, Math.round(j.depth))),
+    thinCategories: Array.isArray(j.thinCategories) ? j.thinCategories.slice(0,3) : [],
+    issues: Array.isArray(j.issues) ? j.issues.slice(0,4) : [],
+    suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4) : [],
+  };
 }
 
 // Перегенерация ОДНОГО уже одобренного факта — «эта формулировка не устроила»,

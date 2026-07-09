@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -20,6 +20,8 @@ let _bulkBusy = false;       // «Предложить весь мир» — и�
 let _bulkProgress = '';      // текст прогресса булк-генерации, напр. "2 из 4"
 let _mapBusy = false;
 let _mapError = '';  // инлайн вместо блокирующего alert() — тот же подход, что в ui/illustrations.js
+let _depthBusy = false;
+let _depthResult = null; // {depth, thinCategories, issues, suggestions} — последний прогон runWorldOverview, держится до следующего клика
 
 function factsOfCategory(worldFacts, cat){ return worldFacts.filter(f=>f.category===cat); }
 function candidatesOfCategory(cat){ return _candidates.filter(c=>c.category===cat); }
@@ -63,13 +65,16 @@ function renderCategoryCard(s, worldFacts, cat, busyAny){
     ${cands.length ? `<div class="world-cat-cands">
       ${cands.map(c=>`
         <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:4px">
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-            <input type="checkbox" class="w-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} style="margin-top:3px">
-            <div style="flex:1">
-              <input type="text" class="w-keys" data-id="${c.id}" value="${esc(c.keys)}" style="font-size:11px;color:var(--text-2);border:none;background:transparent;width:100%;padding:0;margin-bottom:2px">
-              <textarea class="w-text" data-id="${c.id}" rows="2" style="width:100%;font-size:13px">${esc(c.text)}</textarea>
-            </div>
-          </label>
+          <div style="display:flex;align-items:flex-start;gap:8px">
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;flex:1;min-width:0">
+              <input type="checkbox" class="w-cb" data-id="${c.id}" ${_selected.has(c.id)?'checked':''} style="margin-top:3px">
+              <div style="flex:1;min-width:0">
+                <input type="text" class="w-keys" data-id="${c.id}" value="${esc(c.keys)}" style="font-size:11px;color:var(--text-2);border:none;background:transparent;width:100%;padding:0;margin-bottom:2px">
+                <textarea class="w-text" data-id="${c.id}" rows="2" style="width:100%;font-size:13px">${esc(c.text)}</textarea>
+              </div>
+            </label>
+            <button class="w-cand-del" data-id="${c.id}" title="Убрать этот вариант из списка" style="flex-shrink:0;border:none;background:none;color:var(--text-3);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px">✕</button>
+          </div>
         </div>`).join('')}
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:6px">
         <button class="btn world-cat-clear" data-cat="${esc(cat)}">Отменить</button>
@@ -126,6 +131,26 @@ function renderMapBlock(s, geoCount){
     </div>`;
 }
 
+function openWorldDepthModal(r){
+  const root = document.getElementById('modalRoot'); if(!root) return;
+  const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
+  root.innerHTML = `<div class="modal-bg" id="wdBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>📊 Глубина мира</h2>
+    <div class="apv-row" style="flex-direction:column;align-items:flex-start;gap:2px;background:var(--accent-bg);padding:10px 12px;margin-bottom:6px">
+      <b style="font-size:24px;color:${col}">${r.depth}/10</b>
+    </div>
+    ${r.thinCategories.length ? `<div class="ares-h">Тонкие категории</div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">${r.thinCategories.map(c=>`<span class="tag">${esc(c)}</span>`).join('')}</div>` : ''}
+    ${r.issues.length ? `<div class="ares-h">Проблемы</div>${r.issues.map(i=>`<div class="ares-note"><span>${esc(i)}</span></div>`).join('')}` : ''}
+    ${r.suggestions.length ? `<div class="ares-h">Куда копать</div>${r.suggestions.map(x=>`<div class="ares-note"><span>${esc(x)}</span></div>`).join('')}` : ''}
+    ${(!r.issues.length && !r.suggestions.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — мир уже неплохо проработан.</div>` : ''}
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="wdClose">Закрыть</button></div>
+  </div></div>`;
+  const close = ()=>{ root.innerHTML=''; };
+  document.getElementById('wdBg').onclick = close;
+  document.getElementById('wdClose').onclick = close;
+}
+
 export function renderWorld(els){
   const s = getState();
   const p = s.project;
@@ -147,6 +172,7 @@ export function renderWorld(els){
     <div class="read-bar">
       <span class="read-title">Мир</span>
       <span style="flex:1"></span>
+      <button class="btn" id="wDepthCheck" ${busyAny||_depthBusy?'disabled':''} data-tip="Оценивает насколько подробно и конкретно проработан мир по уже собранным фактам канона — не по прозе, писать сцены ещё не нужно.">${_depthBusy?'<span class="spinner"></span> …':'📊 Оценить глубину мира'}</button>
       <button class="btn btn-primary" id="wSuggestAll" ${busyAny?'disabled':''}>${_bulkBusy?'<span class="spinner"></span> '+esc(_bulkProgress):'✨ Предложить весь мир'}</button>
     </div>
     <div class="read-body" id="wBody">
@@ -187,6 +213,18 @@ function bindHandlers(els, s){
     finally{ _busyCategory = null; renderWorld(els); }
   });
 
+  const wdc = document.getElementById('wDepthCheck');
+  if(wdc) wdc.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+    if(_depthBusy || _busyCategory || _bulkBusy) return;
+    _depthBusy = true; renderWorld(els);
+    try{
+      _depthResult = await runWorldOverview(s);
+      openWorldDepthModal(_depthResult);
+    }catch(e){ alert('Глубина мира: '+e.message); }
+    finally{ _depthBusy = false; renderWorld(els); }
+  };
+
   // «Предложить весь мир» — последовательно, категория за категорией (не
   // Promise.all — все категории пишут в общий _candidates, параллельные
   // резолвы гонялись бы за одним и тем же состоянием; спек-ревью явно
@@ -222,6 +260,14 @@ function bindHandlers(els, s){
   document.querySelectorAll('.w-keys').forEach(t=>t.addEventListener('change',()=>{
     const c = _candidates.find(x=>x.id===t.dataset.id); if(c) c.keys = t.value.trim();
   }));
+  // Убрать ОДИН вариант из списка — отдельно от чекбокса (снять галочку не
+  // убирает карточку, она просто остаётся висеть невыбранной среди хороших
+  // вариантов) и отдельно от «Отменить» (то стирает вообще все кандидаты категории).
+  document.querySelectorAll('.w-cand-del').forEach(b=>b.onclick=()=>{
+    _candidates = _candidates.filter(c=>c.id!==b.dataset.id);
+    _selected.delete(b.dataset.id);
+    renderWorld(els);
+  });
 
   // Отменить/сохранить в канон — теперь на уровне одной категории.
   document.querySelectorAll('.world-cat-clear').forEach(btn=>btn.onclick=()=>{
