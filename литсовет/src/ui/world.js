@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates } from '../world.js';
 import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -220,6 +220,47 @@ async function fillOneCategory(els, s, cat, r){
   finally{ _busyCategory = null; renderWorld(els); }
 }
 
+// Проверка дублей — локальная (TF-IDF-косинус, findWorldDuplicates), без LLM,
+// поэтому не завязана на API-ключ и не блокирует остальные действия. Список
+// пересчитывается заново после каждого удаления — так пользователь может
+// разобрать сразу несколько пар подряд, не переоткрывая модалку.
+function renderDuplicatesModal(els){
+  const s = getState();
+  const root = document.getElementById('modalRoot'); if(!root) return;
+  const pairs = findWorldDuplicates(s);
+  const body = pairs.length ? pairs.map(p=>{
+    const ia = s.bible.indexOf(p.a), ib = s.bible.indexOf(p.b);
+    const pct = Math.round(p.sim*100);
+    return `<div class="dup-pair" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">
+      <div class="muted" style="font-size:12px;margin-bottom:4px">${esc(p.a.category)} · сходство ${pct}%</div>
+      <div class="row" style="align-items:flex-start;gap:6px;margin-bottom:4px">
+        <div style="flex:1;font-size:13px">${esc(p.a.text)}</div>
+        <button class="btn dup-del" data-bi="${ia}" title="Удалить этот факт">✕</button>
+      </div>
+      <div class="row" style="align-items:flex-start;gap:6px">
+        <div style="flex:1;font-size:13px">${esc(p.b.text)}</div>
+        <button class="btn dup-del" data-bi="${ib}" title="Удалить этот факт">✕</button>
+      </div>
+    </div>`;
+  }).join('') : `<div class="muted" style="margin-top:8px">Похожих фактов не найдено.</div>`;
+  root.innerHTML = `<div class="modal-bg" id="dupBg"><div class="modal" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>🔍 Возможные дубли${pairs.length?` (${pairs.length})`:''}</h2>
+    ${body}
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="dupClose">Закрыть</button></div>
+  </div></div>`;
+  const close = ()=>{ root.innerHTML=''; };
+  document.getElementById('dupBg').onclick = close;
+  document.getElementById('dupClose').onclick = close;
+  document.querySelectorAll('.dup-del').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const i = +b.dataset.bi;
+    const fact = s.bible[i]; if(!fact) return;
+    const preview = fact.text.length>60 ? fact.text.slice(0,60)+'…' : fact.text;
+    if(!confirm(`Удалить факт «${preview}»? Отменить нельзя.`)) return;
+    if(deleteBibleFactAt(s.bible, i)){ rebuildBibleVecs(s.bible); save(); renderWorld(els); renderDuplicatesModal(els); }
+  });
+}
+
 export function renderWorld(els){
   const s = getState();
   const p = s.project;
@@ -242,6 +283,7 @@ export function renderWorld(els){
     <div class="read-bar">
       <span class="read-title">Мир</span>
       <span style="flex:1"></span>
+      <button class="btn" id="wDupCheck" ${busyAny||depthBusyAny?'disabled':''} data-tip="Ищет похожие/повторяющиеся факты канона мира (без LLM, мгновенно) — риск дублей растёт с каждой добавленной пачкой фактов.">🔍 Проверить дубли</button>
       <button class="btn" id="wDepthCheck" ${busyAny||depthBusyAny?'disabled':''} data-tip="Оценивает насколько подробно и конкретно проработан мир СРАЗУ ПО ВСЕМ категориям — не по прозе, писать сцены ещё не нужно.">${_depthBusy?'<span class="spinner"></span> …':'📊 Оценить глубину мира'}</button>
       <button class="btn btn-primary" id="wSuggestAll" ${busyAny?'disabled':''}>${_bulkBusy?'<span class="spinner"></span> '+esc(_bulkProgress):'✨ Предложить весь мир'}</button>
     </div>
@@ -282,6 +324,9 @@ function bindHandlers(els, s){
     }catch(e){ alert('Мир: '+e.message); }
     finally{ _busyCategory = null; renderWorld(els); }
   });
+
+  const wdup = document.getElementById('wDupCheck');
+  if(wdup) wdup.onclick = ()=>renderDuplicatesModal(els);
 
   const wdc = document.getElementById('wDepthCheck');
   if(wdc) wdc.onclick = async ()=>{

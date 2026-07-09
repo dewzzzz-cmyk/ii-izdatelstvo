@@ -6,6 +6,7 @@
 
 import { callLLM, extractJSON } from './llm.js';
 import { generateImage } from './imagegen.js';
+import { tokensOf, tfvec, cosine } from './bible.js';
 
 // Жанры с придуманным сеттингом — добавляют категорию магии/технологии/системы
 // (см. categoriesFor ниже). Стадия «Мир» видна всегда (как «Иллюстрации»),
@@ -150,6 +151,30 @@ export async function runWorldOverview(state, category=null){
     issues: Array.isArray(j.issues) ? j.issues.slice(0,4) : [],
     suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4) : [],
   };
+}
+
+// Поиск возможных дублей канона мира — локально, БЕЗ обращения к LLM: риск
+// дублирования растёт с каждой добавленной пачкой фактов (та же деталь
+// формулируется по-разному в разных категориях/заходах), а гонять это через
+// API на каждый чих незачем — переиспользуем ту же TF-IDF-косинус-систему,
+// что и bibleMatches() в bible.js, просто попарно между самими фактами мира.
+// Порог 0.45 откалиброван на реальных парафразах/неродственных фактах:
+// перефразировки одного и того же факта дают cosine ~0.5-0.56, а факты на
+// одну тему, но про разное — ~0.13 и ниже.
+const DUPLICATE_THRESHOLD = 0.45;
+
+export function findWorldDuplicates(state, threshold=DUPLICATE_THRESHOLD){
+  const facts = (state.bible||[]).filter(b=>b.source==='world');
+  const vecs = facts.map(f=>tfvec(tokensOf((f.keys||'')+' '+(f.text||''))));
+  const pairs = [];
+  for(let i=0;i<facts.length;i++){
+    for(let j=i+1;j<facts.length;j++){
+      const sim = cosine(vecs[i], vecs[j]);
+      if(sim >= threshold) pairs.push({ a: facts[i], b: facts[j], sim });
+    }
+  }
+  pairs.sort((x,y)=>y.sim-x.sim);
+  return pairs;
 }
 
 // Перегенерация ОДНОГО уже одобренного факта — «эта формулировка не устроила»,
