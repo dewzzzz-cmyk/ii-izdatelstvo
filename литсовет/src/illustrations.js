@@ -221,15 +221,54 @@ export function chapterTitleForScene(state, sceneId){
   return null;
 }
 
+// ── Версии картинки — история ПРОШЛЫХ dataUrl/prompt элемента галереи ──
+// Картинки платные и тяжёлые (base64 в IndexedDB + весь state уходит на сервер
+// при каждом save()) — поэтому cap ниже, чем у текстового promptHistory (20):
+// 3 прошлых версии (плюс текущая — до 4 суммарно) достаточно, чтобы откатиться
+// после неудачной перегенерации, не раздувая хранилище бесконечно.
+const MAX_IMAGE_VERSIONS = 3;
+
+// Прошлое состояние item'а (для переноса при замене одного «синглтона» другим —
+// карта/обложка при повторной генерации/загрузке ЗАМЕНЯЮТ элемент массива
+// целиком, а не мутируют dataUrl на месте, поэтому историю нужно переносить
+// вручную в новый item, иначе она потеряется вместе со старым объектом).
+export function carryVersions(oldItem){
+  if(!oldItem) return [];
+  return [{ dataUrl: oldItem.dataUrl, prompt: oldItem.prompt, createdAt: oldItem.createdAt }, ...(oldItem.versions||[])].slice(0, MAX_IMAGE_VERSIONS);
+}
+
+// Перед перегенерацией картинки ПО ТОМУ ЖЕ item (мутация dataUrl на месте,
+// см. .ill-regen-img в ui/illustrations.js) — сохранить прежнее состояние в историю.
+export function pushImageVersion(item){
+  item.versions = item.versions || [];
+  item.versions.unshift({ dataUrl: item.dataUrl, prompt: item.prompt, createdAt: item.createdAt });
+  if(item.versions.length > MAX_IMAGE_VERSIONS) item.versions.length = MAX_IMAGE_VERSIONS;
+}
+
+// Откатиться к прошлой версии — текущее состояние НЕ теряется, уходит в
+// историю на место восстановленной (симметрично: вперёд-назад без потерь).
+export function restoreImageVersion(item, verIdx){
+  const chosen = item.versions?.[verIdx]; if(!chosen) return false;
+  const current = { dataUrl: item.dataUrl, prompt: item.prompt, createdAt: item.createdAt };
+  item.versions.splice(verIdx, 1);
+  item.dataUrl = chosen.dataUrl; item.prompt = chosen.prompt; item.createdAt = chosen.createdAt;
+  item.versions.unshift(current);
+  if(item.versions.length > MAX_IMAGE_VERSIONS) item.versions.length = MAX_IMAGE_VERSIONS;
+  return true;
+}
+
 // Сохранить сгенерированную карту мира в общую галерею (единый источник
 // правды — state.illustrations.items, спека §9). Вызывается из world.js
 // напрямую, минуя suggestIllustrations()/doneScenesOrdered (на стадии «Мир»
-// сцен ещё нет). Одна карта на проект — повторная генерация заменяет старую,
-// не копит версии (в отличие от сцен/обложки).
+// сцен ещё нет). Одна карта на проект — повторная генерация заменяет старую
+// запись массива, но её dataUrl/prompt переносится в versions[] новой (см.
+// carryVersions выше) — старая карта не пропадает, доступна через историю.
 export function saveMapItem(state, dataUrl, prompt=''){
   state.illustrations = state.illustrations || {};
+  const old = (state.illustrations.items||[]).find(it=>it.type==='map');
+  const versions = carryVersions(old);
   state.illustrations.items = (state.illustrations.items||[]).filter(it=>it.type!=='map');
-  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, createdAt:Date.now() };
+  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, createdAt:Date.now(), versions };
   state.illustrations.items.push(item);
   return item;
 }
@@ -237,13 +276,17 @@ export function saveMapItem(state, dataUrl, prompt=''){
 // Своя картинка автора (не через провайдера) — вместо генерации. uploaded:true
 // отличает такие элементы в галерее: у них нет промпта, поэтому «другой
 // промпт»/«перегенерировать картинку» для них не показываются (см. ui/illustrations.js).
-// Карта и обложка — как saveMapItem: одна на проект, повторная загрузка заменяет старую,
-// не копит версии (иначе в галерее остаются осиротевшие обложки, которые никуда не попадают).
+// Карта и обложка — как saveMapItem: одна на проект, повторная загрузка заменяет
+// запись массива, старая версия переносится в versions[] (carryVersions), не теряется.
 export function saveUploadedItem(state, dataUrl, { type, sceneId=null, sceneTitle='' }){
   state.illustrations = state.illustrations || {};
   state.illustrations.items = state.illustrations.items || [];
-  if(type==='map' || type==='cover') state.illustrations.items = state.illustrations.items.filter(it=>it.type!==type);
-  const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true };
+  let versions = [];
+  if(type==='map' || type==='cover'){
+    versions = carryVersions(state.illustrations.items.find(it=>it.type===type));
+    state.illustrations.items = state.illustrations.items.filter(it=>it.type!==type);
+  }
+  const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true, versions };
   state.illustrations.items.push(item);
   if(type==='cover') state.project.coverDataUrl = dataUrl;
   return item;

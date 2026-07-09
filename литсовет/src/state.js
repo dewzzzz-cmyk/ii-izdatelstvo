@@ -70,7 +70,7 @@ export function defaultState(){
       apiKey: '',              // отдельный ключ, НЕ текстовый — тоже только в памяти
       model: '',                // пусто → дефолт провайдера (gpt-image-1 / gemini-2.5-flash-image)
       quality: 'standard',     // standard | hd
-      items: [],                // {id, type, sceneId, sceneTitle, prompt, dataUrl, createdAt}
+      items: [],                // {id, type, sceneId, sceneTitle, prompt, dataUrl, createdAt, versions?} — versions[] хранит ПРОШЛЫЕ dataUrl/prompt/createdAt (см. illustrations.js pushImageVersion/restoreImageVersion), cap 3
       suggestCount: 7,          // сколько кандидатов предлагать (включая обложку), 1-15
       mode: 'auto',             // auto (арт-директор сам предлагает) | manual (автор выбирает главы/обложку галочкой)
       ruText: true,             // если на картинке есть надписи (обложка/сцены) — они на русском

@@ -3,7 +3,7 @@
 // Деньги тратятся ТОЛЬКО по явному клику «Сгенерировать выбранные».
 
 import { getState, save } from '../state.js';
-import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene, suggestOneIllustration, saveUploadedItem, effectiveTextOn } from '../illustrations.js';
+import { suggestIllustrations, generateIllustrationFor, chapterTitleForScene, suggestOneIllustration, saveUploadedItem, effectiveTextOn, carryVersions, pushImageVersion, restoreImageVersion } from '../illustrations.js';
 import { doneScenesOrdered } from '../bookreview.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -190,6 +190,7 @@ function renderGallery(items, s){
           <div class="row" style="gap:6px;flex-wrap:wrap">
             ${canReroll?`<button class="btn ill-reroll-prompt" data-id="${it.id}" title="Предложить другой промпт (текстовый вызов, бесплатно) — картинку это не трогает">🔄 Промпт</button>`:''}
             ${canReroll?`<button class="btn ill-regen-img" data-id="${it.id}" title="Перегенерировать картинку по текущему промпту — платно">🖼 Картинка</button>`:''}
+            ${it.versions&&it.versions.length?`<button class="btn ill-history" data-id="${it.id}" title="История версий (${it.versions.length}) — можно вернуться к прошлой картинке">🕐 ${it.versions.length}</button>`:''}
             <button class="btn ill-del" data-id="${it.id}" data-label="${esc(label)}" title="Удалить">🗑</button>
           </div>
         </td>
@@ -220,6 +221,44 @@ function openImagePreview(dataUrl, label){
   const close=()=>root.innerHTML='';
   document.getElementById('imgPvBg').onclick=close;
   document.getElementById('imgPvClose').onclick=close;
+}
+
+// История версий одного элемента галереи — экспортирована, т.к. переиспользуется
+// из ui/world.js для карты мира (та же state.illustrations.items, тот же versions[]).
+// «Восстановить» меняет местами текущую и выбранную версию (restoreImageVersion) —
+// ничего не теряется в любую сторону, просто перекладывается между dataUrl и versions[].
+export function openVersionHistoryModal(it, s, rerender){
+  const root = document.getElementById('modalRoot'); if(!root) return;
+  const versions = it.versions||[];
+  const label = it.type==='cover'?'Обложка':it.type==='map'?'Карта мира':(it.sceneTitle||'Иллюстрация');
+  const row = (v, idx, isCurrent)=>`<div class="row" style="gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+    <img src="${v.dataUrl}" class="vh-thumb" data-idx="${idx}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:pointer" title="Открыть в полном размере">
+    <div class="muted" style="flex:1;font-size:12px">${isCurrent?'Текущая':(v.createdAt?new Date(v.createdAt).toLocaleString('ru-RU'):'')}</div>
+    ${isCurrent?'':`<button class="btn vh-restore" data-idx="${idx}">↩ Восстановить</button>`}
+  </div>`;
+  root.innerHTML = `<div class="modal-bg" id="vhBg"><div class="modal" style="width:440px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>🕐 История: ${esc(label)}</h2>
+    ${row(it, -1, true)}
+    ${versions.map((v,idx)=>row(v, idx, false)).join('')}
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="vhClose">Закрыть</button></div>
+  </div></div>`;
+  const close=()=>{ root.innerHTML=''; };
+  document.getElementById('vhBg').onclick=close;
+  document.getElementById('vhClose').onclick=close;
+  root.querySelectorAll('.vh-thumb').forEach(img=>img.onclick=()=>{
+    const idx = +img.dataset.idx;
+    openImagePreview(idx===-1 ? it.dataUrl : versions[idx].dataUrl, label);
+  });
+  root.querySelectorAll('.vh-restore').forEach(b=>b.onclick=()=>{
+    const idx = +b.dataset.idx;
+    if(!confirm('Восстановить эту версию картинки? Текущая версия не теряется — станет доступна в истории.')) return;
+    if(restoreImageVersion(it, idx)){
+      if(it.type==='cover') s.project.coverDataUrl = it.dataUrl;
+      save();
+      close();
+      rerender();
+    }
+  });
 }
 
 function bindHandlers(els, s){
@@ -350,10 +389,14 @@ function bindHandlers(els, s){
       _busyText = `Генерирую ${i+1}/${toGen.length}…`; renderIllustrations(els);
       try{
         const dataUrl = await generateIllustrationFor(s, c);
-        // Обложка — одна на проект (как карта мира): предыдущая заменяется, не
-        // копится в галерее осиротевшей картинкой, которая никуда не попадает.
-        if(c.type==='cover') s.illustrations.items = s.illustrations.items.filter(it=>it.type!=='cover');
-        s.illustrations.items.push({ id:c.id, type:c.type, sceneId:c.sceneId, sceneTitle:c.sceneTitle, prompt:c.prompt, textOn:c.textOn, dataUrl, createdAt:Date.now() });
+        // Обложка — одна на проект (как карта мира): предыдущая запись заменяется,
+        // но её dataUrl переносится в versions[] новой (carryVersions) — не пропадает.
+        let versions = [];
+        if(c.type==='cover'){
+          versions = carryVersions(s.illustrations.items.find(it=>it.type==='cover'));
+          s.illustrations.items = s.illustrations.items.filter(it=>it.type!=='cover');
+        }
+        s.illustrations.items.push({ id:c.id, type:c.type, sceneId:c.sceneId, sceneTitle:c.sceneTitle, prompt:c.prompt, textOn:c.textOn, dataUrl, createdAt:Date.now(), versions });
         if(c.type==='cover') s.project.coverDataUrl = dataUrl;
         succeeded.add(c.id);
         _errors.delete(c.id);
@@ -385,6 +428,11 @@ function bindHandlers(els, s){
   document.querySelectorAll('.ill-thumb').forEach(img=>img.onclick=()=>{
     const it = (s.illustrations.items||[]).find(x=>x.id===img.dataset.id);
     if(it) openImagePreview(it.dataUrl, img.alt);
+  });
+
+  document.querySelectorAll('.ill-history').forEach(b=>b.onclick=()=>{
+    const it = (s.illustrations.items||[]).find(x=>x.id===b.dataset.id);
+    if(it) openVersionHistoryModal(it, s, ()=>renderIllustrations(els));
   });
 
   // Реконструирует «цель» под существующий элемент галереи — для повторного
@@ -425,11 +473,12 @@ function bindHandlers(els, s){
     _busy = true; _busyText='Генерирую картинку…'; renderIllustrations(els);
     try{
       const dataUrl = await generateIllustrationFor(s, it);
+      pushImageVersion(it);
       it.dataUrl = dataUrl;
       if(it.type==='cover') s.project.coverDataUrl = dataUrl;
       _rerollErrors.delete(id);
       save();
-      announce('Картинка перегенерирована');
+      announce('Картинка перегенерирована — прошлая версия доступна в истории (🕐)');
     }catch(e){ _rerollErrors.set(id, e.message); }
     finally{ _busy=false; _busyText=''; renderIllustrations(els); }
   });

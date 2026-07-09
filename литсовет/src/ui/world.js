@@ -10,6 +10,7 @@ import { saveMapItem } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
 import { openFactModal } from './rule-modal.js';
+import { openVersionHistoryModal } from './illustrations.js';
 
 let _candidates = [];        // предложенные, ещё не одобренные факты (все категории вместе, у каждого своё .category)
 let _selected = new Set();   // id одобренных чекбоксом
@@ -110,6 +111,7 @@ function renderMapBlock(s, geoCount){
   return `<div class="ph">Карта мира (референс)</div>
     <div class="pad">
       ${map ? `<img src="${map.dataUrl}" style="max-width:280px;border-radius:var(--radius);display:block;margin-bottom:8px">
+        ${map.versions&&map.versions.length?`<button class="btn" id="wMapHistory" style="margin-bottom:8px" title="История версий карты (${map.versions.length}) — можно вернуться к прошлой">🕐 История (${map.versions.length})</button>`:''}
         <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>` : ''}
       <div class="row" style="gap:14px;margin-bottom:4px;flex-wrap:wrap">
         <label class="row" style="gap:6px;align-items:center;font-size:12px" for="wMapLang" data-tip="Свой язык подписей именно для карты — не связан с языком обложки/иллюстраций сцен в «Иллюстрациях». Для выдуманных языков модель рисует стилизацию под дух письменности, не настоящий перевод.">Язык подписей карты
@@ -476,6 +478,12 @@ function bindHandlers(els, s){
       save();
     }catch(e){ _mapError = e.message; }
     finally{ _mapBusy = false; renderWorld(els); }
+  };
+
+  const wmh = document.getElementById('wMapHistory');
+  if(wmh) wmh.onclick = ()=>{
+    const map = (s.illustrations?.items||[]).find(it=>it.type==='map');
+    if(map) openVersionHistoryModal(map, s, ()=>renderWorld(els));
   };
 
   const wn = document.getElementById('wNext');
