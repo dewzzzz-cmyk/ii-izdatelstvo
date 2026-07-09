@@ -131,7 +131,7 @@ function renderMapBlock(s, geoCount){
     </div>`;
 }
 
-function openWorldDepthModal(r){
+function openWorldDepthModal(r, onFillThin){
   const root = document.getElementById('modalRoot'); if(!root) return;
   const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
   root.innerHTML = `<div class="modal-bg" id="wdBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
@@ -144,11 +144,46 @@ function openWorldDepthModal(r){
     ${r.issues.length ? `<div class="ares-h">Проблемы</div>${r.issues.map(i=>`<div class="ares-note"><span>${esc(i)}</span></div>`).join('')}` : ''}
     ${r.suggestions.length ? `<div class="ares-h">Куда копать</div>${r.suggestions.map(x=>`<div class="ares-note"><span>${esc(x)}</span></div>`).join('')}` : ''}
     ${(!r.issues.length && !r.suggestions.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — мир уже неплохо проработан.</div>` : ''}
-    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="wdClose">Закрыть</button></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
+      ${r.thinCategories.length ? `<button class="btn btn-primary" id="wdFillThin">🔧 Дозаполнить тонкие категории (${r.thinCategories.length})</button>` : ''}
+      <button class="btn" id="wdClose">Закрыть</button>
+    </div>
   </div></div>`;
   const close = ()=>{ root.innerHTML=''; };
   document.getElementById('wdBg').onclick = close;
   document.getElementById('wdClose').onclick = close;
+  const fillBtn = document.getElementById('wdFillThin');
+  if(fillBtn) fillBtn.onclick = ()=>{ close(); onFillThin(r); };
+}
+
+// По клику «Дозаполнить тонкие категории» из модалки — та же генерация, что
+// у «✨ Предложить»/«Предложить весь мир» (кандидаты, не автозапись в канон),
+// но только по категориям из thinCategories и с доп. подсказкой из issues/
+// suggestions проверки глубины, чтобы модель целилась именно в названные пробелы.
+async function fillThinCategories(els, s, r){
+  if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+  if(_busyCategory || _bulkBusy) return;
+  const validCats = categoriesFor(s.project.genre);
+  const targets = r.thinCategories.filter(c=>validCats.includes(c));
+  if(!targets.length) return;
+  const note = [
+    r.issues.length ? `Проблемы из проверки глубины мира: ${r.issues.join('; ')}.` : '',
+    r.suggestions.length ? `Куда копать: ${r.suggestions.join('; ')}.` : '',
+  ].filter(Boolean).join(' ');
+  _bulkBusy = true;
+  for(let i=0;i<targets.length;i++){
+    const cat = targets[i];
+    _bulkProgress = `${i+1} из ${targets.length}`;
+    renderWorld(els);
+    const hint = [_hints[cat], note].filter(Boolean).join(' ');
+    try{
+      const fresh = await suggestWorldFacts(s, cat, { hint, ideaSeed:_ideaSeed });
+      _candidates = _candidates.filter(c=>c.category!==cat).concat(fresh);
+      fresh.forEach(c=>_selected.add(c.id));
+    }catch(e){ console.warn('Мир, дозаполнение '+cat+':', e.message); }
+  }
+  _bulkBusy = false; _bulkProgress = '';
+  renderWorld(els);
 }
 
 export function renderWorld(els){
@@ -220,7 +255,7 @@ function bindHandlers(els, s){
     _depthBusy = true; renderWorld(els);
     try{
       _depthResult = await runWorldOverview(s);
-      openWorldDepthModal(_depthResult);
+      openWorldDepthModal(_depthResult, (r)=>fillThinCategories(els, s, r));
     }catch(e){ alert('Глубина мира: '+e.message); }
     finally{ _depthBusy = false; renderWorld(els); }
   };
