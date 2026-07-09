@@ -104,43 +104,49 @@ export async function suggestWorldFacts(state, category, opts={}){
 // Отличается от runWorldDepthCheck в bookreview.js: тот читает уже написанные
 // сцены (bookOverview) и смотрит только категорию «магия/технология»/«система»
 // (клише жанровых систем) — требует минимум 2 написанные сцены, недоступен на
-// стадии «Мир», где сцен ещё физически нет. Эта проверка — по ВСЕМ категориям
-// сразу и только по фактам канона: «насколько подробно и конкретно проработан
-// мир», а не «насколько система магии оригинальна относительно текста».
-export function worldOverviewMessages(state){
+// стадии «Мир», где сцен ещё физически нет. Эта проверка по умолчанию — по
+// ВСЕМ категориям сразу (общий срез мира); необязательный параметр category
+// сужает её до ОДНОЙ категории — точечная проверка прямо с карточки категории,
+// без прогона остальных.
+export function worldOverviewMessages(state, category=null){
   const p = state.project;
-  const facts = (state.bible||[]).filter(b=>b.source==='world');
+  const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
   const byCategory = {};
   facts.forEach(f=>{ const cat=f.category||'без категории'; (byCategory[cat]=byCategory[cat]||[]).push(f.text); });
   const catText = Object.entries(byCategory).map(([cat,texts])=>`${cat} (${texts.length}):\n${texts.map(t=>'  — '+t).join('\n')}`).join('\n\n');
   const sys = [
-    'Ты — редактор-worldbuilder. Оцени, насколько ГЛУБОКО и КОНКРЕТНО проработан мир книги — по уже собранным фактам канона, прозы может ещё не быть вообще.',
-    'Глубина — это конкретные, проверяемые правила и ограничения, а не общие слова («в этом мире есть магия» — плохо, «маг стареет на год за каждое серьёзное заклинание» — хорошо). Разнообразие категорий важно не меньше числа фактов в одной: 10 фактов только про географию при пустой истории/фракциях/культуре — тоже поверхностно, даже если каждый факт хорош.',
-    'Штрафуй за: пустые или почти пустые категории, расплывчатые факты без конкретики, отсутствие ограничений/цены там, где они уместны (магия/технология/система — что система НЕ может, чего стоит), факты-клише жанра (то, что можно вставить в любую книгу этого жанра без изменений).',
+    category
+      ? `Ты — редактор-worldbuilder. Оцени, насколько ГЛУБОКО и КОНКРЕТНО проработана ТОЛЬКО категория «${category}» мира книги — по уже собранным фактам канона, прозы может ещё не быть вообще.`
+      : 'Ты — редактор-worldbuilder. Оцени, насколько ГЛУБОКО и КОНКРЕТНО проработан мир книги — по уже собранным фактам канона, прозы может ещё не быть вообще.',
+    'Глубина — это конкретные, проверяемые правила и ограничения, а не общие слова («в этом мире есть магия» — плохо, «маг стареет на год за каждое серьёзное заклинание» — хорошо).' + (category ? '' : ' Разнообразие категорий важно не меньше числа фактов в одной: 10 фактов только про географию при пустой истории/фракциях/культуре — тоже поверхностно, даже если каждый факт хорош.'),
+    'Штрафуй за: расплывчатые факты без конкретики, отсутствие ограничений/цены там, где они уместны (магия/технология/система — что система НЕ может, чего стоит), факты-клише жанра (то, что можно вставить в любую книгу этого жанра без изменений).' + (category ? '' : ' Также штрафуй за пустые или почти пустые категории.'),
   ].join('\n');
   const user = [
     `Жанр: ${p.genre||'роман'}${p.era?', '+p.era:''}.`,
     '',
-    facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА ПО КАТЕГОРИЯМ:\n${catText}` : 'Фактов канона пока нет вообще.',
+    facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА${category?` КАТЕГОРИИ «${category}»`:' ПО КАТЕГОРИЯМ'}:\n${catText}` : `Фактов канона${category?` категории «${category}»`:''} пока нет вообще.`,
     '',
-    'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"] }',
-    'Если мир уже хорош — скажи это в suggestions, issues и thinCategories могут быть пустыми. Только JSON.',
+    category
+      ? `Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатая, конкретная категория), "issues": ["до 4 конкретных проблем с привязкой к факту"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить именно в этой категории"] }`
+      : 'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"] }',
+    `Если ${category?'категория':'мир'} уже хорош${category?'а':''} — скажи это в suggestions, issues${category?'':' и thinCategories'} могут быть пустыми. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
-export async function runWorldOverview(state){
+export async function runWorldOverview(state, category=null){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
-  const facts = (state.bible||[]).filter(b=>b.source==='world');
-  if(facts.length < 3) throw new Error('Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
-  const msgs = worldOverviewMessages(state);
+  const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
+  const minFacts = category ? 2 : 3;
+  if(facts.length < minFacts) throw new Error(category ? `Нужно хотя бы ${minFacts} факта категории «${category}», чтобы оценить глубину.` : 'Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
+  const msgs = worldOverviewMessages(state, category);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:900, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || typeof j.depth !== 'number') throw new Error('Не удалось разобрать ответ.');
   return {
     depth: Math.max(0, Math.min(10, Math.round(j.depth))),
-    thinCategories: Array.isArray(j.thinCategories) ? j.thinCategories.slice(0,3) : [],
+    thinCategories: category ? [] : (Array.isArray(j.thinCategories) ? j.thinCategories.slice(0,3) : []),
     issues: Array.isArray(j.issues) ? j.issues.slice(0,4) : [],
     suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4) : [],
   };

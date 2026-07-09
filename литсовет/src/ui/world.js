@@ -22,6 +22,7 @@ let _mapBusy = false;
 let _mapError = '';  // инлайн вместо блокирующего alert() — тот же подход, что в ui/illustrations.js
 let _depthBusy = false;
 let _depthResult = null; // {depth, thinCategories, issues, suggestions} — последний прогон runWorldOverview, держится до следующего клика
+let _catDepthBusy = null; // категория, для которой сейчас идёт ТОЧЕЧНАЯ проверка глубины (кнопка «📊» на карточке, отдельно от общей кнопки вверху)
 
 function factsOfCategory(worldFacts, cat){ return worldFacts.filter(f=>f.category===cat); }
 function candidatesOfCategory(cat){ return _candidates.filter(c=>c.category===cat); }
@@ -33,10 +34,11 @@ function wordForm(n, one, few, many){
   return many;
 }
 
-function renderCategoryCard(s, worldFacts, cat, busyAny){
+function renderCategoryCard(s, worldFacts, cat, busyAny, depthBusyAny){
   const canon = factsOfCategory(worldFacts, cat);
   const cands = candidatesOfCategory(cat);
   const busy = _busyCategory===cat;
+  const catDepthBusy = _catDepthBusy===cat;
   const selCount = cands.filter(c=>_selected.has(c.id)).length;
   return `<div class="world-cat-card" data-cat="${esc(cat)}">
     <div class="world-cat-h">
@@ -44,7 +46,10 @@ function renderCategoryCard(s, worldFacts, cat, busyAny){
       <span class="muted">${canon.length ? `${canon.length} ${wordForm(canon.length,'факт','факта','фактов')}` : 'пусто'}</span>
     </div>
     <input type="text" class="world-cat-hint" data-cat="${esc(cat)}" value="${esc(_hints[cat]||'')}" placeholder="${esc(CATEGORY_HINTS[cat]||'подсказка (необязательно)')}">
-    <button class="btn world-cat-gen" data-cat="${esc(cat)}" ${busyAny?'disabled':''}>${busy?'<span class="spinner"></span> …':'✨ Предложить'}</button>
+    <div class="row" style="gap:6px">
+      <button class="btn world-cat-gen" data-cat="${esc(cat)}" ${busyAny||depthBusyAny?'disabled':''}>${busy?'<span class="spinner"></span> …':'✨ Предложить'}</button>
+      <button class="btn world-cat-depth" data-cat="${esc(cat)}" ${busyAny||depthBusyAny?'disabled':''} data-tip="Оценить глубину только этой категории">${catDepthBusy?'<span class="spinner"></span> …':'📊'}</button>
+    </div>
 
     ${canon.length ? `<div class="world-cat-facts">
       ${canon.map(f=>{
@@ -131,21 +136,28 @@ function renderMapBlock(s, geoCount){
     </div>`;
 }
 
-function openWorldDepthModal(r, onFillThin){
+// category=null — общая проверка (все категории сразу, кнопка вверху).
+// category='X' — точечная проверка ОДНОЙ категории (кнопка «📊» на карточке):
+// заголовок и текст кнопки дозаполнения меняются, блок «Тонкие категории» не
+// показывается (он не имеет смысла, когда r уже про одну категорию).
+function openWorldDepthModal(r, onFill, category=null){
   const root = document.getElementById('modalRoot'); if(!root) return;
   const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
+  const title = category ? `📊 Глубина категории «${esc(category)}»` : '📊 Глубина мира';
+  const fillLabel = category ? `🔧 Дозаполнить «${esc(category)}»` : `🔧 Дозаполнить тонкие категории (${r.thinCategories.length})`;
+  const showFill = category ? true : r.thinCategories.length>0;
   root.innerHTML = `<div class="modal-bg" id="wdBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
-    <h2>📊 Глубина мира</h2>
+    <h2>${title}</h2>
     <div class="apv-row" style="flex-direction:column;align-items:flex-start;gap:2px;background:var(--accent-bg);padding:10px 12px;margin-bottom:6px">
       <b style="font-size:24px;color:${col}">${r.depth}/10</b>
     </div>
-    ${r.thinCategories.length ? `<div class="ares-h">Тонкие категории</div>
+    ${(!category && r.thinCategories.length) ? `<div class="ares-h">Тонкие категории</div>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">${r.thinCategories.map(c=>`<span class="tag">${esc(c)}</span>`).join('')}</div>` : ''}
     ${r.issues.length ? `<div class="ares-h">Проблемы</div>${r.issues.map(i=>`<div class="ares-note"><span>${esc(i)}</span></div>`).join('')}` : ''}
     ${r.suggestions.length ? `<div class="ares-h">Куда копать</div>${r.suggestions.map(x=>`<div class="ares-note"><span>${esc(x)}</span></div>`).join('')}` : ''}
-    ${(!r.issues.length && !r.suggestions.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — мир уже неплохо проработан.</div>` : ''}
+    ${(!r.issues.length && !r.suggestions.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — ${category?'категория':'мир'} уже неплохо проработан${category?'а':''}.</div>` : ''}
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
-      ${r.thinCategories.length ? `<button class="btn btn-primary" id="wdFillThin">🔧 Дозаполнить тонкие категории (${r.thinCategories.length})</button>` : ''}
+      ${showFill ? `<button class="btn btn-primary" id="wdFillThin">${fillLabel}</button>` : ''}
       <button class="btn" id="wdClose">Закрыть</button>
     </div>
   </div></div>`;
@@ -153,7 +165,7 @@ function openWorldDepthModal(r, onFillThin){
   document.getElementById('wdBg').onclick = close;
   document.getElementById('wdClose').onclick = close;
   const fillBtn = document.getElementById('wdFillThin');
-  if(fillBtn) fillBtn.onclick = ()=>{ close(); onFillThin(r); };
+  if(fillBtn) fillBtn.onclick = ()=>{ close(); onFill(r); };
 }
 
 // По клику «Дозаполнить тонкие категории» из модалки — та же генерация, что
@@ -186,6 +198,28 @@ async function fillThinCategories(els, s, r){
   renderWorld(els);
 }
 
+// По клику «🔧 Дозаполнить «X»» из точечной модалки (кнопка «📊» на карточке
+// категории) — та же генерация, что у «✨ Предложить» этой же категории, просто
+// с доп. подсказкой из issues/suggestions ТОЧЕЧНОЙ проверки. Переиспользует
+// _busyCategory (не отдельный флаг) — с точки зрения UI это и есть «Предложить»
+// для этой карточки, просто предзаполненный контекстом из проверки глубины.
+async function fillOneCategory(els, s, cat, r){
+  if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+  if(_busyCategory || _bulkBusy) return;
+  const note = [
+    r.issues.length ? `Проблемы из проверки глубины: ${r.issues.join('; ')}.` : '',
+    r.suggestions.length ? `Куда копать: ${r.suggestions.join('; ')}.` : '',
+  ].filter(Boolean).join(' ');
+  _busyCategory = cat; renderWorld(els);
+  try{
+    const hint = [_hints[cat], note].filter(Boolean).join(' ');
+    const fresh = await suggestWorldFacts(s, cat, { hint, ideaSeed:_ideaSeed });
+    _candidates = _candidates.filter(c=>c.category!==cat).concat(fresh);
+    fresh.forEach(c=>_selected.add(c.id));
+  }catch(e){ alert('Мир: '+e.message); }
+  finally{ _busyCategory = null; renderWorld(els); }
+}
+
 export function renderWorld(els){
   const s = getState();
   const p = s.project;
@@ -194,6 +228,7 @@ export function renderWorld(els){
   const geoCount = worldFacts.filter(b=>b.category==='география').length;
   const podWarning = missingPOD(s);
   const busyAny = _bulkBusy || !!_busyCategory;
+  const depthBusyAny = _depthBusy || !!_catDepthBusy;
 
   els.left.innerHTML = `<div class="ph">Мир</div>
     <div class="pad muted" style="font-size:12px">${worldFacts.length ? `${worldFacts.length} фактов в каноне` : 'Пока нет фактов мира.'}</div>`;
@@ -207,14 +242,14 @@ export function renderWorld(els){
     <div class="read-bar">
       <span class="read-title">Мир</span>
       <span style="flex:1"></span>
-      <button class="btn" id="wDepthCheck" ${busyAny||_depthBusy?'disabled':''} data-tip="Оценивает насколько подробно и конкретно проработан мир по уже собранным фактам канона — не по прозе, писать сцены ещё не нужно.">${_depthBusy?'<span class="spinner"></span> …':'📊 Оценить глубину мира'}</button>
+      <button class="btn" id="wDepthCheck" ${busyAny||depthBusyAny?'disabled':''} data-tip="Оценивает насколько подробно и конкретно проработан мир СРАЗУ ПО ВСЕМ категориям — не по прозе, писать сцены ещё не нужно.">${_depthBusy?'<span class="spinner"></span> …':'📊 Оценить глубину мира'}</button>
       <button class="btn btn-primary" id="wSuggestAll" ${busyAny?'disabled':''}>${_bulkBusy?'<span class="spinner"></span> '+esc(_bulkProgress):'✨ Предложить весь мир'}</button>
     </div>
     <div class="read-body" id="wBody">
       ${podWarning ? `<div class="pad" style="border:1px solid var(--err);border-radius:8px;margin:0 0 14px;background:var(--surface-2)">
         <div style="font-size:12px;color:var(--err)">⚠ Для альтернативной истории точка развилки — основа жанра. Добавьте факт категории «История» с чёткой развилкой (событие + год + следствия), прежде чем продолжать.</div>
       </div>` : ''}
-      ${cats.map(cat=>renderCategoryCard(s, worldFacts, cat, busyAny)).join('')}
+      ${cats.map(cat=>renderCategoryCard(s, worldFacts, cat, busyAny, depthBusyAny)).join('')}
       ${renderMapBlock(s, geoCount)}
       <div class="row" style="margin-top:18px;justify-content:flex-end">
         <button class="btn btn-primary" id="wNext">Дальше — ${p.useVoice?'Голос':'Структура'} →</button>
@@ -251,7 +286,7 @@ function bindHandlers(els, s){
   const wdc = document.getElementById('wDepthCheck');
   if(wdc) wdc.onclick = async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
-    if(_depthBusy || _busyCategory || _bulkBusy) return;
+    if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
     _depthBusy = true; renderWorld(els);
     try{
       _depthResult = await runWorldOverview(s);
@@ -259,6 +294,20 @@ function bindHandlers(els, s){
     }catch(e){ alert('Глубина мира: '+e.message); }
     finally{ _depthBusy = false; renderWorld(els); }
   };
+
+  // Точечная проверка глубины ОДНОЙ категории (кнопка «📊» на карточке) —
+  // отдельно от общей кнопки вверху, которая всегда идёт по всем сразу.
+  document.querySelectorAll('.world-cat-depth').forEach(btn=>btn.onclick=async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+    const cat = btn.dataset.cat;
+    if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+    _catDepthBusy = cat; renderWorld(els);
+    try{
+      const r = await runWorldOverview(s, cat);
+      openWorldDepthModal(r, (rr)=>fillOneCategory(els, s, cat, rr), cat);
+    }catch(e){ alert('Глубина категории: '+e.message); }
+    finally{ _catDepthBusy = null; renderWorld(els); }
+  });
 
   // «Предложить весь мир» — последовательно, категория за категорией (не
   // Promise.all — все категории пишут в общий _candidates, параллельные
