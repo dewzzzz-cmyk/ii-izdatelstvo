@@ -77,6 +77,7 @@ export function defaultState(){
       noText: false,            // вообще без текста на картинке — приоритет над ruText
       portraitCover: false,     // обложка в портретных пропорциях (под требования площадок публикации)
       mapLanguage: 'ru',        // язык подписей КАРТЫ отдельно от ruText/noText — см. MAP_LANGUAGES в world.js (эльфийский/дроу/дварфийский и т.п.)
+      mapRichLabels: false,     // больше подписанных мест на карте (6-8 вместо 2-3) — осознанный риск нечитаемых артефактов текста
     },
     global: {
       baseURL: 'https://api.deepseek.com',

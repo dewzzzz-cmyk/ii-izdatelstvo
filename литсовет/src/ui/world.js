@@ -101,12 +101,21 @@ function renderMapBlock(s, geoCount){
     <div class="pad">
       ${map ? `<img src="${map.dataUrl}" style="max-width:280px;border-radius:var(--radius);display:block;margin-bottom:8px">
         <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>` : ''}
-      <div class="row" style="gap:14px;margin-bottom:8px;flex-wrap:wrap">
+      <div class="row" style="gap:14px;margin-bottom:4px;flex-wrap:wrap">
         <label class="row" style="gap:6px;align-items:center;font-size:12px" for="wMapLang" data-tip="Свой язык подписей именно для карты — не связан с языком обложки/иллюстраций сцен в «Иллюстрациях». Для выдуманных языков модель рисует стилизацию под дух письменности, не настоящий перевод.">Язык подписей карты
           <select id="wMapLang" style="font-size:12px;width:auto">
             ${Object.entries(MAP_LANGUAGES).map(([id,l])=>`<option value="${id}" ${mapLang===id?'selected':''}>${esc(l.label)}</option>`).join('')}
           </select>
         </label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" for="wMapQuality" data-tip="Общая настройка для всех картинок проекта (то же, что в разделе «Иллюстрации») — вынесена сюда для удобства, отдельного значения для карты нет.">Качество
+          <select id="wMapQuality" style="font-size:12px;width:auto">
+            <option value="standard" ${(ic.quality||'standard')==='standard'?'selected':''}>Стандарт</option>
+            <option value="hd" ${ic.quality==='hd'?'selected':''}>HD</option>
+          </select>
+        </label>
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="По умолчанию карта подписывает только 2-3 самых важных места крупным текстом — так надёжнее. Больше подписей означает больше текста на картинке, а мелкий/частый текст у любых image-моделей чаще выходит нечитаемой кашей из символов."><input type="checkbox" id="wMapRichLabels" ${ic.mapRichLabels?'checked':''}> Больше подписей на карте (риск нечитаемых артефактов текста)</label>
       </div>
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
@@ -276,6 +285,10 @@ function bindHandlers(els, s){
   s.illustrations = s.illustrations || {};
   const wMapLang = document.getElementById('wMapLang');
   if(wMapLang) wMapLang.onchange = ()=>{ s.illustrations.mapLanguage = wMapLang.value; save(); renderWorld(els); };
+  const wMapQuality = document.getElementById('wMapQuality');
+  if(wMapQuality) wMapQuality.onchange = ()=>{ s.illustrations.quality = wMapQuality.value; save(); renderWorld(els); };
+  const wMapRichLabels = document.getElementById('wMapRichLabels');
+  if(wMapRichLabels) wMapRichLabels.onchange = ()=>{ s.illustrations.mapRichLabels = wMapRichLabels.checked; save(); renderWorld(els); };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{

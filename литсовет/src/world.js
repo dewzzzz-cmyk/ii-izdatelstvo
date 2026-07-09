@@ -168,6 +168,7 @@ export function mapPromptFor(state){
   const ic = state.illustrations || {};
   const lang = MAP_LANGUAGES[ic.mapLanguage] ? ic.mapLanguage : 'ru';
   const noText = lang === 'none';
+  const richLabels = !!ic.mapRichLabels;
   // Бюджет символов — у фактов ОТДЕЛЬНЫЙ кап, а не общий с шаблоном: при
   // насыщенном каноне (10+ фактов географии) общий .slice() в конце срезал
   // промпт прямо на середине списка фактов, тихо теряя половину из них —
@@ -177,15 +178,17 @@ export function mapPromptFor(state){
   const flavor = MAP_STYLE_FLAVORS[Math.floor(Math.random()*MAP_STYLE_FLAVORS.length)];
   // Карта обычно требует МНОГО подписей (по факту на место) — а именно плотный
   // мелкий текст (много коротких надписей на одной картинке) сильнее всего
-  // подвержен артефактам у любых image-моделей. Просим подписать не всё подряд,
-  // а 2-3 САМЫХ важных места крупно — остальную географию показываем визуально,
-  // без подписи, а не пытаемся уместить десяток мелких названий.
+  // подвержен артефактам у любых image-моделей. По умолчанию просим подписать
+  // не всё подряд, а 2-3 САМЫХ важных места крупно; richLabels — осознанный
+  // авторский выбор пойти на больший риск нечитаемых надписей ради большего
+  // числа подписанных мест (см. чекбокс «Больше подписей» в ui/world.js).
   const geoLine = noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear as visual features — ${facts}). Label ONLY the 2-3 most important named places, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption) — small or numerous labels reliably render as illegible garbage, so leave the rest of the geography unlabeled rather than cramming in more small text.`;
+    : `Geography (must appear as visual features — ${facts}). Label ${richLabels ? 'up to 6-8 named places' : 'ONLY the 2-3 most important named places'}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption)${richLabels ? ' — keep each label short (one or two words), more labels means higher risk of garbled illegible letters, accept that trade-off' : ' — small or numerous labels reliably render as illegible garbage, so leave the rest of the geography unlabeled rather than cramming in more small text'}.`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
+    `Render the terrain richly and visibly, not as a bare outline: rivers winding to the sea or lakes, forests as clusters of tree symbols, mountain ranges with peak hatching, roads or trails connecting settlements, coastlines with texture — infer plausible terrain features even where the facts below don't specify every one, as long as they don't contradict the facts.`,
     `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — compass rose, sea monsters or ships in unmapped waters, decorative border, scale bar, weathered texture, subtle terrain shading. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
     `Setting: ${style}.`,
     geoLine,
