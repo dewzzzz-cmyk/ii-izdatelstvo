@@ -47,12 +47,17 @@ function ensureDir(dir){ try{ fs.mkdirSync(dir,{recursive:true}); }catch{} }
 // с всем проектом). Проявлялось только на достаточно длинных телах, где HTTP
 // успевает разбить запрос на несколько чанков — отсюда «иногда» и «в середине
 // текста», а не всегда и не в одном месте.
-function readBody(req, maxBytes, cb){
+// req.destroy() на превышении лимита обрывает сокет БЕЗ ответа — клиентский
+// fetch() в этом случае не получает ни успеха, ни ошибки, а просто виснет до
+// собственного таймаута (или навсегда, если таймаута нет) — снаружи это
+// неотличимо от «сервер не отвечает». Явный 413 до destroy() даёт клиенту
+// сразу понятную ошибку вместо зависания.
+function readBody(req, res, maxBytes, cb){
   const chunks = []; let total = 0; let stopped = false;
   req.on('data', c=>{
     if(stopped) return;
     total += c.length;
-    if(total > maxBytes){ stopped = true; req.destroy(); return; }
+    if(total > maxBytes){ stopped = true; send(res, 413, 'PAYLOAD_TOO_LARGE: тело запроса больше '+maxBytes+' байт.'); req.destroy(); return; }
     chunks.push(c);
   });
   req.on('end', ()=>{ if(!stopped) cb(Buffer.concat(chunks).toString('utf8')); });
@@ -71,7 +76,7 @@ function serveStatic(req, res){
 }
 
 async function handleGenerate(req, res){
-  readBody(req, 5e5, async (raw)=>{
+  readBody(req, res, 5e5, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{}
     const wantStream = b.stream !== false;
     if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
@@ -123,7 +128,7 @@ async function handleGenerate(req, res){
 }
 
 async function handleWiki(req, res){
-  readBody(req, 5e3, async (raw)=>{
+  readBody(req, res, 5e3, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
     const query=(b.query||'').trim().slice(0,200);
     const lang=/^[a-z]{2}$/.test(b.lang||'ru')?(b.lang||'ru'):'ru';
@@ -156,7 +161,7 @@ async function handleWiki(req, res){
 // сервер ничего не хранит, только проксирует к нужному upstream и возвращает
 // картинку как data URL (не стримит, ответ маленький и разовый).
 async function handleGenerateImage(req, res){
-  readBody(req, 5e5, async (raw)=>{
+  readBody(req, res, 5e5, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
     if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
     const apiKey = (b.apiKey||'').trim();
@@ -275,7 +280,7 @@ function handleSyncGet(req, res, id){
 }
 
 function handleSyncSave(req, res, id){
-  readBody(req, 50e6, (raw)=>{
+  readBody(req, res, 50e6, (raw)=>{
     try{
       const parsed = JSON.parse(raw);
       if(!parsed.id) return send(res,400,'NO_ID');
@@ -294,7 +299,7 @@ function handleSyncDelete(req, res, id){
 }
 
 function handleCheckpointSave(req,res){
-  readBody(req, 30e6, (raw)=>{
+  readBody(req, res, 30e6, (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
     ensureDir(CHECKPOINT_DIR);
     const title=safeFile(b.title||'project').slice(0,60);
