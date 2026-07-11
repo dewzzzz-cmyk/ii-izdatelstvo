@@ -220,7 +220,7 @@ export function renderSceneAnalysis(){
   const s = getState();
   const activeScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
   setTimeout(()=>{
-    bindFlagFix(); bindAskScene(activeScene);
+    bindFlagFix(); bindAskScene(activeScene); bindEvalDetails();
     const rc=document.getElementById('rnClear');
     if(rc) rc.onclick=()=>{ if(activeScene){ activeScene.rejectedNotes=[]; save(); } };
   }, 0);
@@ -243,9 +243,39 @@ export function renderSceneAnalysis(){
 // отдельное объясняющее сообщение, а не молчание.
 function renderSceneScores(scene){
   if(!scene) return '';
-  if(scene.lastEval?.ok) return `<div class="ph">Оценка Оценщика</div>${renderScores(scene.lastEval)}`;
+  if(scene.lastEval?.ok) return `<div class="ph">Оценка Оценщика</div>${renderScores(scene.lastEval)}${renderEvalDetails(scene.lastEval)}`;
   if(scene.status==='done') return `<div class="ph">Оценка Оценщика</div><div class="empty-state">Пока нет оценки для текущего текста — появится после прогона через агентов. Если сцена уже была оценена, но текст потом правили вручную (в редакторе, через Стража, через чат), прошлая оценка сброшена: она относилась к другой версии текста.</div>`;
   return '';
+}
+
+// Оценщик уже возвращает конкретные замечания (notes/cliches/repetition/
+// questions) при КАЖДОМ автоматическом прогоне — pipeline.js использует их,
+// чтобы строить директиву для следующей итерации Прозаика (см.
+// buildUnifiedDirective), но раньше рядом со шкалами показывался только
+// счёт: «↻ доработка · 6.6/10» без единого слова, ЧТО именно поправить —
+// то же самое объяснение существовало только в renderResultBody() модалки
+// ручного прогона (отдельный, повторный вызов LLM). Тут — тот же разбор
+// для УЖЕ полученной автоматической оценки, без нового вызова агента.
+// .flag-fix/.flag-rewrite — те же классы, что у карточек Стражей чуть ниже
+// на этой же панели: bindFlagFix() их уже слушает, отдельная привязка не нужна.
+function renderEvalDetails(v){
+  const nt = (v.notes||[]).length ? `<div class="ares-h">Как улучшить оценку</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span>
+    <div class="ares-acts">
+      <button class="flag-fix" data-fix="${esc(n)}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
+      <button class="flag-rewrite" data-fix="${esc(n)}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
+      <button class="ares-rule" data-rule="${esc(n)}" data-tip="Сделать постоянным правилом автора">⊕ В правило</button>
+    </div></div>`).join('')}` : '';
+  const cl = (v.cliches||[]).length ? `<div class="ares-h">Клише в тексте${v.clicheCategory?` — ${esc(v.clicheCategory)}`:''}</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}` : '';
+  const rp = (v.repetition||[]).length ? `<div class="ares-h">Повтор имени вместо местоимения</div>${v.repetition.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}` : '';
+  const q = (v.questions||[]).length ? `<div class="ares-h">На усмотрение автора</div>${v.questions.map(qq=>`<div class="ares-note"><span>${esc(qq)}</span></div>`).join('')}` : '';
+  if(!nt && !cl && !rp && !q) return '';
+  return `<div class="eval-details">${nt}${cl}${rp}${q}</div>`;
+}
+
+function bindEvalDetails(){
+  document.querySelectorAll('.eval-details .ares-rule').forEach(b=>b.onclick=()=>{
+    openRuleModal(b.dataset.rule, { onSave:()=>{ b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true; } });
+  });
 }
 
 function bindAskScene(scene){
