@@ -178,6 +178,7 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=fal
     : r.thinCategories.length ? `🔧 Дозаполнить тонкие категории (${r.thinCategories.length})` : '🔧 Учесть замечания по всем категориям';
   const showFill = category ? true : (r.thinCategories.length>0 || hasNotes);
   const conflicts = r.conflicts||[], mergeCandidates = r.mergeCandidates||[];
+  const fixAllCount = conflicts.length + mergeCandidates.length;
   root.innerHTML = `<div class="modal-bg" id="wdBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>${title}</h2>
     ${stale ? `<div style="border:1px solid var(--err);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:var(--err)">⚠ Канон изменился после этой проверки — оценка ниже может быть устаревшей. Нажмите «🔄 Переоценить», чтобы обновить.</div>` : ''}
@@ -200,6 +201,7 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=fal
     ${(!r.issues.length && !r.suggestions.length && !conflicts.length && !mergeCandidates.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — ${category?'категория':'мир'} уже неплохо проработан${category?'а':''}.</div>` : ''}
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
       ${onRecheck ? `<button class="btn ${stale?'btn-primary':''}" id="wdRecheck">🔄 Переоценить</button>` : ''}
+      ${(s && fixAllCount>0) ? `<button class="btn" id="wdFixAll">🔧 Исправить всё (${fixAllCount})</button>` : ''}
       ${showFill ? `<button class="btn btn-primary" id="wdFillThin">${fillLabel}</button>` : ''}
       <button class="btn" id="wdClose">Закрыть</button>
     </div>
@@ -207,6 +209,8 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=fal
   const close = ()=>{ root.innerHTML=''; };
   document.getElementById('wdBg').onclick = close;
   document.getElementById('wdClose').onclick = close;
+  const fixAllBtn = document.getElementById('wdFixAll');
+  if(fixAllBtn) fixAllBtn.onclick = ()=>{ close(); openBulkFixModal(s, els, conflicts, mergeCandidates); };
   const fillBtn = document.getElementById('wdFillThin');
   if(fillBtn) fillBtn.onclick = ()=>{ close(); onFill(r); };
   const recheckBtn = document.getElementById('wdRecheck');
@@ -307,6 +311,96 @@ function applyFix(s, kind, proposal, item){
   const first = sorted[0];
   applyFactEdit(s.bible, first, proposal.keys || s.bible[first].keys, proposal.text);
   sorted.slice(1).sort((a,b)=>b-a).forEach(i=>deleteBibleFactAt(s.bible, i));
+}
+
+// «Исправить всё» — репорт автора: чинишь одно противоречие, при следующей
+// проверке мир находит другое, и так по кругу, каждый раз через отдельную
+// модалку. Вместо этого генерируем предложения по ВСЕМ находкам сразу
+// (независимо и параллельно — на этом шаге ничего ещё не применяется, каждая
+// опирается на свой снимок фактов с момента проверки), показываем один общий
+// список с чекбоксами (снять — пропустить) и применяем отмеченные одним кликом.
+async function openBulkFixModal(s, els, conflicts, mergeCandidates){
+  const root = document.getElementById('modalRoot'); if(!root) return;
+  if(!s.global.apiKey){
+    root.innerHTML = `<div class="modal-bg" id="wfaBg"><div class="modal" style="width:480px;max-width:94vw" onclick="event.stopPropagation()">
+      <h2>🔧 Исправить всё</h2>
+      <div style="color:var(--err);font-size:12px">Задайте API-ключ текстовой модели в настройках (⚙).</div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="wfaClose">Закрыть</button></div>
+    </div></div>`;
+    const closeErr = ()=>{ root.innerHTML=''; };
+    document.getElementById('wfaBg').onclick = closeErr;
+    document.getElementById('wfaClose').onclick = closeErr;
+    return;
+  }
+  const entries = [
+    ...conflicts.map(item=>({ kind:'conflict', item, proposal:null, error:null, include:true })),
+    ...mergeCandidates.map(item=>({ kind:'merge', item, proposal:null, error:null, include:true })),
+  ];
+  root.innerHTML = `<div class="modal-bg" id="wfaBg"><div class="modal" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
+    <h2>🔧 Исправить всё</h2>
+    <div class="muted" style="font-size:12px"><span class="spinner"></span> Готовлю исправления (${entries.length})…</div>
+  </div></div>`;
+
+  await Promise.all(entries.map(async (e)=>{
+    // факт мог исчезнуть/измениться ещё ДО генерации — например, был отредактирован
+    // руками между открытием проверки глубины и этим кликом.
+    const missing = e.item.facts.some(f=>s.bible.findIndex(b=>b.category===f.category && b.text===f.text)===-1);
+    if(missing){ e.error = 'Факт уже изменился с момента проверки.'; return; }
+    try{
+      e.proposal = e.kind==='conflict' ? await proposeConflictFix(s, e.item) : await proposeMergeFix(s, e.item);
+    }catch(err){ e.error = err.message; }
+  }));
+  renderReview();
+
+  function renderReview(){
+    const ok = entries.filter(e=>e.proposal);
+    const failed = entries.filter(e=>!e.proposal);
+    root.innerHTML = `<div class="modal-bg" id="wfaBg"><div class="modal" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
+      <h2>🔧 Исправить всё</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">${ok.length ? `Готово ${ok.length} из ${entries.length}. Снимите галочку, чтобы пропустить конкретное исправление.` : 'Не удалось подготовить ни одного исправления.'}</div>
+      ${ok.map(e=>`<div class="ares-note" style="${e.kind==='conflict'?'border-color:var(--err)':''}">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="checkbox" class="wfa-cb" data-i="${entries.indexOf(e)}" ${e.include?'checked':''} style="margin-top:3px;flex-shrink:0">
+          <div style="flex:1;min-width:0">
+            <div class="muted" style="font-size:11px;margin-bottom:4px">${e.kind==='conflict'?'Противоречие':'Объединение'}: ${esc(e.item.text)}</div>
+            ${renderProposal(e.kind, e.proposal, e.item)}
+          </div>
+        </label>
+      </div>`).join('')}
+      ${failed.map(e=>`<div class="ares-note" style="opacity:0.65"><span class="muted" style="font-size:12px">⚠ Пропущено: ${esc(e.error||'не удалось разобрать ответ')}</span></div>`).join('')}
+      <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
+        <button class="btn" id="wfaClose">Закрыть</button>
+        ${ok.length ? `<button class="btn btn-primary" id="wfaApply">✓ Применить отмеченные</button>` : ''}
+      </div>
+    </div></div>`;
+    const close = ()=>{ root.innerHTML=''; };
+    document.getElementById('wfaBg').onclick = close;
+    document.getElementById('wfaClose').onclick = close;
+    document.querySelectorAll('.wfa-cb').forEach(cb=>cb.onchange=()=>{ entries[+cb.dataset.i].include = cb.checked; });
+    const applyBtn = document.getElementById('wfaApply');
+    if(applyBtn) applyBtn.onclick = ()=>{
+      let applied=0, skipped=0;
+      // Применяем В ТОМ ЖЕ ПОРЯДКЕ — если два отмеченных исправления делят
+      // общий факт (редкий, но возможный случай), второе увидит, что факт уже
+      // не совпадает с его снимком (см. проверку в applyFix через findIndex),
+      // и applyFix для него просто ничего не сделает — считаем это пропуском.
+      ok.filter(e=>e.include).forEach(e=>{
+        const stillPresent = e.item.facts.every(f=>s.bible.findIndex(b=>b.category===f.category && b.text===f.text)>=0);
+        if(!stillPresent){ skipped++; return; }
+        applyFix(s, e.kind, e.proposal, e.item);
+        applied++;
+      });
+      rebuildBibleVecs(s.bible); save();
+      root.innerHTML = `<div class="modal-bg" id="wfaBg2"><div class="modal" style="width:480px;max-width:94vw" onclick="event.stopPropagation()">
+        <h2>🔧 Исправить всё</h2>
+        <div style="font-size:13px">Применено: ${applied}.${skipped?` Пропущено (факт задет другим исправлением из этой же пачки): ${skipped}.`:''}</div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn btn-primary" id="wfaDone">Готово</button></div>
+      </div></div>`;
+      const done = ()=>{ root.innerHTML=''; renderWorld(els); };
+      document.getElementById('wfaBg2').onclick = done;
+      document.getElementById('wfaDone').onclick = done;
+    };
+  }
 }
 
 // Прогон глубины — платный текстовый вызов; раньше повторное открытие панели

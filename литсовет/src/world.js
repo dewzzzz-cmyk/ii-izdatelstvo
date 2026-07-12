@@ -141,9 +141,9 @@ export function worldOverviewMessages(state, category=null){
     facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА${category?` КАТЕГОРИИ «${category}»`:' ПО КАТЕГОРИЯМ'} (номер в [квадратных скобках] — используй его в factIndices ниже, а не переписывай текст):\n${catText}` : `Фактов канона${category?` категории «${category}»`:''} пока нет вообще.`,
     '',
     category
-      ? `Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатая, конкретная категория), "issues": ["до 4 конкретных проблем с привязкой к факту"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить именно в этой категории"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 3), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 3) }`
-      : 'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 3), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 3) }',
-    `factIndices — номера из [квадратных скобок] выше, минимум 2 на каждый элемент conflicts/mergeCandidates. Если ${category?'категория':'мир'} уже хорош${category?'а':''} и противоречий/дублей по смыслу нет — скажи это в suggestions, остальные списки могут быть пустыми. Только JSON.`,
+      ? `Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатая, конкретная категория), "issues": ["до 4 конкретных проблем с привязкой к факту"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить именно в этой категории"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 6, ищи ВСЕ, не только самые очевидные), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 6, ищи ВСЕ) }`
+      : 'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 6, ищи ВСЕ, не только самые очевидные), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 6, ищи ВСЕ) }',
+    `Автор правит канон точечно по одной находке за раз — если сейчас есть 5 противоречий, а ты вернёшь только 2 самых заметных, автор найдёт остальные только через несколько отдельных повторных проверок подряд. Перечисли ВСЕ, что нашёл, не только топ-2-3. factIndices — номера из [квадратных скобок] выше, минимум 2 на каждый элемент conflicts/mergeCandidates. Если ${category?'категория':'мир'} уже хорош${category?'а':''} и противоречий/дублей по смыслу нет — скажи это в suggestions, остальные списки могут быть пустыми. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
@@ -155,9 +155,13 @@ export async function runWorldOverview(state, category=null){
   const minFacts = category ? 2 : 3;
   if(facts.length < minFacts) throw new Error(category ? `Нужно хотя бы ${minFacts} факта категории «${category}», чтобы оценить глубину.` : 'Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
   const msgs = worldOverviewMessages(state, category);
-  // 900 → 1400: сверка фактов между собой (conflicts/mergeCandidates) — новые
-  // поля поверх прежних, тот же бюджет их обрезал бы посреди ответа.
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1400, retries:g.retries });
+  // 900 → 1400 → 2200: сверка фактов между собой (conflicts/mergeCandidates) —
+  // новые поля поверх прежних, тот же бюджет их обрезал бы посреди ответа;
+  // затем подняли лимит списков 3→6 на каждый (см. ниже) — при насыщенном
+  // каноне находок реально больше 3, а урезанный до "топ-3" список означает,
+  // что автор узнаёт про остальные только через несколько повторных проверок
+  // подряд (по одной новой находке за раз) — сообщено автором напрямую.
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:2200, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || typeof j.depth !== 'number') throw new Error('Не удалось разобрать ответ.');
   // Резолвим номера [N] из ответа модели в {category, text} — устойчивую
@@ -167,7 +171,7 @@ export async function runWorldOverview(state, category=null){
   const resolveFacts = (indices)=> (Array.isArray(indices)?indices:[])
     .map(n=>facts[n]).filter(Boolean)
     .map(f=>({ category: f.category, text: f.text }));
-  const parseFindings = (arr)=> (Array.isArray(arr)?arr:[]).slice(0,3)
+  const parseFindings = (arr)=> (Array.isArray(arr)?arr:[]).slice(0,6)
     .map(it=>({ text: String(it?.text||'').trim(), facts: resolveFacts(it?.factIndices) }))
     .filter(it=>it.text && it.facts.length>=2);
   return {
