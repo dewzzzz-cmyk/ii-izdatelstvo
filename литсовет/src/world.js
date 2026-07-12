@@ -214,12 +214,18 @@ export function missingPOD(state){
 // там выбор ЕДИНСТВЕННЫЙ и ручной (автор выбирает и это сохраняется в state).
 // Для карты пока нет своего UI-слота под выбор стиля — авто-рандом здесь
 // временное решение, не постоянный архитектурный паттерн для будущих списков.
+// Ни один из вариантов не должен просить отдельный текстовый элемент
+// (заголовок, картуш с названием и т.п.) — это прямо противоречит запрету
+// на любой текст сверх заданных подписей мест ниже (geoLine). Раньше
+// последний вариант просил "ornate cartouche title banner" — модель
+// послушно рисовала декоративный титульный баннер с надписью «Атлас Мира»,
+// которого никто не просил, поверх и без того ограниченного бюджета текста.
 const MAP_STYLE_FLAVORS = [
   "weathered antique parchment, sepia ink linework, hand-lettered typography",
   "painterly illuminated atlas page, muted watercolor washes, gilded border ornaments",
   "woodcut-engraving style, cross-hatched shading, Renaissance-explorer aesthetic",
   "hand-drawn adventurer's field map, ink-and-wash, coffee-stained edges, sketchy compass rose",
-  "richly illustrated tabletop-RPG atlas, saturated color, ornate cartouche title banner",
+  "richly illustrated tabletop-RPG atlas, saturated color, ornate decorative border",
 ];
 
 // Язык подписей КАРТЫ — отдельная настройка от общего ruText/noText в
@@ -289,17 +295,20 @@ export function mapPromptFor(state){
   // 3) явный запрет на тонкие/рукописные засечки — они гарантированно
   //    рассыпаются на мелких деталях сильнее, чем толстая простая обводка.
   const fontNote = 'Use thick, simple, blocky lettering (like carved stone or a woodcut stamp) — thin serif or flowing cursive strokes reliably break apart into illegible marks at this level of detail.';
-  const riskNote = labelCount > 5
-    ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off.'
+  // Порог поднят с ">5" на ">3" по живому тесту: на 5 подписях 2 из 5 вышли
+  // с побитыми буквами (реальный прогон, не гипотеза) — риск начинается
+  // раньше, чем предыдущая формулировка признавала.
+  const riskNote = labelCount > 3
+    ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off, and take extra care to spell each one correctly.'
     : ' Leave the rest of the geography unlabeled rather than cramming in more text — fewer, larger labels stay legible far more reliably than many small ones.';
   const geoLine = noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Where a place's nature is obvious from a small icon (mountain, tree, skull, tower, wave), draw the icon INSTEAD of spelling it out, and reserve actual lettering only for proper names that need it. Do not add a title, banner, caption, or any other text or label anywhere on the map beyond these ${labelCount} — no exceptions, even decorative ones. ${fontNote}${riskNote}`;
+    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Where a place's nature is obvious from a small icon (mountain, tree, skull, tower, wave), draw the icon INSTEAD of spelling it out, and reserve actual lettering only for proper names that need it. Do not add a title, banner, caption, scale bar, or any other text or label anywhere on the map beyond these ${labelCount} — the ONLY exception is a compass rose's single-letter N/S/E/W marks, nothing else. ${fontNote}${riskNote}`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
     `Render the terrain richly and visibly, not as a bare outline: rivers winding to the sea or lakes, forests as clusters of tree symbols, mountain ranges with peak hatching, roads or trails connecting settlements, coastlines with texture — infer plausible terrain features even where the facts below don't specify every one, as long as they don't contradict the facts. Where a fact names a terrain TYPE (desert, swamp, forest, mountains, sea), draw that actual terrain there, not a generic or unrelated feature — a desert fact means visible dunes/sand, not open water.`,
-    `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — compass rose, sea monsters or ships in unmapped waters, decorative border, scale bar, weathered texture, subtle terrain shading. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
+    `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — a compass rose (single-letter N/S/E/W marks only, no other wording), sea monsters or ships in unmapped waters, decorative border, weathered texture, subtle terrain shading. Do NOT add a numbered scale bar — the small numerals on a scale bar are exactly the kind of tiny, dense text that reliably garbles; a decorative border or texture reads as authentic without it. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
     `Setting: ${style}.`,
     geoLine,
   ].join(' ');
