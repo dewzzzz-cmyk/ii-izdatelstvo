@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix } from '../world.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -161,7 +161,7 @@ function renderMapBlock(s, geoCount){
 // category='X' — точечная проверка ОДНОЙ категории (кнопка «📊» на карточке):
 // заголовок и текст кнопки дозаполнения меняются, блок «Тонкие категории» не
 // показывается (он не имеет смысла, когда r уже про одну категорию).
-function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=false){
+function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=false, s=null, els=null){
   const root = document.getElementById('modalRoot'); if(!root) return;
   const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
   const title = category ? `📊 Глубина категории «${esc(category)}»` : '📊 Глубина мира';
@@ -188,8 +188,14 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=fal
     ${(!category && r.thinCategories.length) ? `<div class="ares-h">Тонкие категории</div>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">${r.thinCategories.map(c=>`<span class="tag">${esc(c)}</span>`).join('')}</div>` : ''}
     ${r.issues.length ? `<div class="ares-h">Проблемы</div>${r.issues.map(i=>`<div class="ares-note"><span>${esc(i)}</span></div>`).join('')}` : ''}
-    ${conflicts.length ? `<div class="ares-h">⚠ Противоречия между фактами</div>${conflicts.map(c=>`<div class="ares-note" style="border-color:var(--err)"><span>${esc(c)}</span></div>`).join('')}` : ''}
-    ${mergeCandidates.length ? `<div class="ares-h">Стоит объединить</div>${mergeCandidates.map(c=>`<div class="ares-note"><span>${esc(c)}</span></div>`).join('')}` : ''}
+    ${conflicts.length ? `<div class="ares-h">⚠ Противоречия между фактами</div>${conflicts.map((c,i)=>`<div class="ares-note" style="border-color:var(--err)">
+      <span>${esc(c.text)}</span>
+      ${s ? `<div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn wd-fix" data-kind="conflict" data-idx="${i}">🔧 Исправить</button></div>` : ''}
+    </div>`).join('')}` : ''}
+    ${mergeCandidates.length ? `<div class="ares-h">Стоит объединить</div>${mergeCandidates.map((c,i)=>`<div class="ares-note">
+      <span>${esc(c.text)}</span>
+      ${s ? `<div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn wd-fix" data-kind="merge" data-idx="${i}">🔧 Объединить</button></div>` : ''}
+    </div>`).join('')}` : ''}
     ${r.suggestions.length ? `<div class="ares-h">Куда копать</div>${r.suggestions.map(x=>`<div class="ares-note"><span>${esc(x)}</span></div>`).join('')}` : ''}
     ${(!r.issues.length && !r.suggestions.length && !conflicts.length && !mergeCandidates.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — ${category?'категория':'мир'} уже неплохо проработан${category?'а':''}.</div>` : ''}
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
@@ -205,6 +211,102 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=fal
   if(fillBtn) fillBtn.onclick = ()=>{ close(); onFill(r); };
   const recheckBtn = document.getElementById('wdRecheck');
   if(recheckBtn) recheckBtn.onclick = ()=>{ close(); onRecheck(); };
+  document.querySelectorAll('.wd-fix').forEach(btn=>btn.onclick=(e)=>{
+    e.stopPropagation();
+    if(!s || !els) return;
+    const kind = btn.dataset.kind;
+    const idx = +btn.dataset.idx;
+    const item = kind==='conflict' ? conflicts[idx] : mergeCandidates[idx];
+    if(!item) return;
+    close();
+    openFixModal(s, els, kind, item);
+  });
+}
+
+// Точечное исправление ОДНОГО противоречия/кандидата на объединение из проверки
+// глубины (кнопка «🔧 Исправить»/«🔧 Объединить»). LLM предлагает новый текст,
+// автор видит diff (было → станет) и решает применить — НЕ автопатч канона
+// молча, правка задним числом без подтверждения слишком рискованна: LLM может
+// исказить нюанс, который автор туда закладывал.
+function openFixModal(s, els, kind, item){
+  const root = document.getElementById('modalRoot'); if(!root) return;
+  // Факты могли измениться/исчезнуть с момента проверки глубины — сверяем по
+  // {category, text}, не по индексу в state.bible (см. комментарий в
+  // runWorldOverview про то, почему индекс ненадёжен между проверкой и кликом).
+  const missing = item.facts.some(f=>s.bible.findIndex(b=>b.category===f.category && b.text===f.text)===-1);
+  let busy = false, proposal = null, error = '';
+
+  const render = ()=>{
+    const title = kind==='conflict' ? '🔧 Исправление противоречия' : '🔧 Объединение фактов';
+    root.innerHTML = `<div class="modal-bg" id="wfBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
+      <h2>${title}</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">${esc(item.text)}</div>
+      ${missing ? `<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ Один из фактов изменился или был удалён с момента проверки. Переоцените мир заново.</div>` : ''}
+      ${error ? `<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ ${esc(error)}</div>` : ''}
+      ${proposal ? renderProposal(kind, proposal, item) : ''}
+      <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
+        ${!proposal ? `<button class="btn" id="wfClose">Закрыть</button>` : `<button class="btn" id="wfCancel">Отмена</button>`}
+        ${!proposal && !missing ? `<button class="btn btn-primary" id="wfGen">${busy?'<span class="spinner"></span> …':(kind==='conflict'?'✨ Предложить исправление':'✨ Предложить объединение')}</button>` : ''}
+        ${proposal ? `<button class="btn btn-primary" id="wfApply">✓ Применить</button>` : ''}
+      </div>
+    </div></div>`;
+    const close = ()=>{ root.innerHTML=''; };
+    document.getElementById('wfBg').onclick = close;
+    const wfClose = document.getElementById('wfClose'); if(wfClose) wfClose.onclick = close;
+    const wfCancel = document.getElementById('wfCancel'); if(wfCancel) wfCancel.onclick = close;
+    const wfGen = document.getElementById('wfGen');
+    if(wfGen) wfGen.onclick = async ()=>{
+      if(busy) return;
+      if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+      busy = true; error=''; render();
+      try{
+        proposal = kind==='conflict' ? await proposeConflictFix(s, item) : await proposeMergeFix(s, item);
+      }catch(e){ error = e.message; }
+      finally{ busy = false; render(); }
+    };
+    const wfApply = document.getElementById('wfApply');
+    if(wfApply) wfApply.onclick = ()=>{
+      applyFix(s, kind, proposal, item);
+      rebuildBibleVecs(s.bible); save();
+      close(); renderWorld(els);
+    };
+  };
+  render();
+}
+
+function renderProposal(kind, proposal, item){
+  if(kind==='conflict'){
+    return proposal.map(f=>`<div style="margin-bottom:10px">
+      <div class="muted" style="font-size:11px;margin-bottom:2px">${esc(f.category)}</div>
+      <div class="ed-pop-orig">«${esc(f.oldText)}»</div>
+      <div class="ed-pop-arrow">→</div>
+      <div class="ed-pop-sugg">«${esc(f.newText)}»</div>
+    </div>`).join('');
+  }
+  return `<div style="margin-bottom:10px">
+    <div class="muted" style="font-size:11px;margin-bottom:2px">Заменит ${item.facts.length} факта категории «${esc(proposal.category)}» одним:</div>
+    <div class="ed-pop-sugg">«${esc(proposal.text)}»</div>
+  </div>`;
+}
+
+// Ищет факты ЗАНОВО в state.bible по {category, text} — не по сохранённому
+// индексу (он мог съехать из-за правок в других категориях между проверкой
+// и кликом «Применить», openFixModal проверяет отсутствие ДО генерации, но
+// не защищает от правок, сделанных ПОКА была открыта модалка с предложением).
+function applyFix(s, kind, proposal, item){
+  if(kind==='conflict'){
+    proposal.forEach(f=>{
+      const bi = s.bible.findIndex(b=>b.category===f.category && b.text===f.oldText);
+      if(bi>=0) applyFactEdit(s.bible, bi, s.bible[bi].keys, f.newText);
+    });
+    return;
+  }
+  const indices = item.facts.map(f=>s.bible.findIndex(b=>b.category===f.category && b.text===f.text)).filter(i=>i>=0);
+  if(!indices.length) return;
+  const sorted = [...indices].sort((a,b)=>a-b);
+  const first = sorted[0];
+  applyFactEdit(s.bible, first, proposal.keys || s.bible[first].keys, proposal.text);
+  sorted.slice(1).sort((a,b)=>b-a).forEach(i=>deleteBibleFactAt(s.bible, i));
 }
 
 // Прогон глубины — платный текстовый вызов; раньше повторное открытие панели
@@ -405,14 +507,14 @@ function bindHandlers(els, s){
       _depthBusy = true; renderWorld(els);
       try{
         _depthResult = await runAndCacheDepth(s, null);
-        openWorldDepthModal(_depthResult, (r)=>fillThinCategories(els, s, r), null, doRecheck);
+        openWorldDepthModal(_depthResult, (r)=>fillThinCategories(els, s, r), null, doRecheck, false, s, els);
       }catch(e){ alert('Глубина мира: '+e.message); }
       finally{ _depthBusy = false; renderWorld(els); }
     };
     // Кэш (см. runAndCacheDepth) показывается без ключа — на просмотр прошлого
     // результата ключ не нужен, только на «🔄 Переоценить» внутри модалки.
     const cached = s.worldDepthEvals?.__all__;
-    if(cached){ _depthResult = cached; openWorldDepthModal(cached, (r)=>fillThinCategories(els, s, r), null, doRecheck, isDepthStale(s, cached, null)); return; }
+    if(cached){ _depthResult = cached; openWorldDepthModal(cached, (r)=>fillThinCategories(els, s, r), null, doRecheck, isDepthStale(s, cached, null), s, els); return; }
     await doRecheck();
   };
 
@@ -428,12 +530,12 @@ function bindHandlers(els, s){
       _catDepthBusy = cat; renderWorld(els);
       try{
         const fresh = await runAndCacheDepth(s, cat);
-        openWorldDepthModal(fresh, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck);
+        openWorldDepthModal(fresh, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck, false, s, els);
       }catch(e){ alert('Глубина категории: '+e.message); }
       finally{ _catDepthBusy = null; renderWorld(els); }
     };
     const cached = s.worldDepthEvals?.[cat];
-    if(cached){ openWorldDepthModal(cached, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck, isDepthStale(s, cached, cat)); return; }
+    if(cached){ openWorldDepthModal(cached, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck, isDepthStale(s, cached, cat), s, els); return; }
     await doRecheck();
   });
 

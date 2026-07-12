@@ -112,9 +112,12 @@ export async function suggestWorldFacts(state, category, opts={}){
 export function worldOverviewMessages(state, category=null){
   const p = state.project;
   const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
+  // Индекс [N] = позиция в этом же массиве facts — runWorldOverview резолвит
+  // его обратно в конкретный факт, чтобы кнопка «Исправить» знала, какие
+  // именно 2+ факта редактировать/сливать, а не только текстовое описание.
   const byCategory = {};
-  facts.forEach(f=>{ const cat=f.category||'без категории'; (byCategory[cat]=byCategory[cat]||[]).push(f.text); });
-  const catText = Object.entries(byCategory).map(([cat,texts])=>`${cat} (${texts.length}):\n${texts.map(t=>'  — '+t).join('\n')}`).join('\n\n');
+  facts.forEach((f,i)=>{ const cat=f.category||'без категории'; (byCategory[cat]=byCategory[cat]||[]).push({i,text:f.text}); });
+  const catText = Object.entries(byCategory).map(([cat,items])=>`${cat} (${items.length}):\n${items.map(it=>`  [${it.i}] ${it.text}`).join('\n')}`).join('\n\n');
   const sys = [
     category
       ? `Ты — редактор-worldbuilder. Оцени, насколько ГЛУБОКО и КОНКРЕТНО проработана ТОЛЬКО категория «${category}» мира книги — по уже собранным фактам канона, прозы может ещё не быть вообще.`
@@ -129,18 +132,18 @@ export function worldOverviewMessages(state, category=null){
     // оставленный в «храме Разломного Утёса» за 210 лет до основания самого
     // Разломного Утёса — датировка и факт о существовании места разошлись.
     'Отдельно от глубины — сверь факты МЕЖДУ СОБОЙ (не каждый по отдельности):',
-    '1) ПРОТИВОРЕЧИЯ — даты/сроки, которые не сходятся при пересчёте (событие датировано раньше, чем возникло место/организация/технология, к которой оно привязано), причинно-следственные разрывы (кто-то пользуется тем, чего по хронологии ещё/уже не существует), один и тот же объект/событие описан по-разному в двух фактах.',
-    '2) КАНДИДАТЫ НА ОБЪЕДИНЕНИЕ — два и более факта, рассказывающие по сути ОДНО И ТО ЖЕ (то же место/событие/правило другими словами или с небольшим смещением акцента) — их лучше слить в один насыщенный факт, чем оставлять тонкими дублями. Это НЕ то же самое, что похожие по формулировке факты (для этого есть отдельная локальная проверка дублей) — здесь именно смысловое совпадение, даже если слова разные.',
+    '1) ПРОТИВОРЕЧИЯ — даты/сроки, которые не сходятся при пересчёте (событие датировано раньше, чем возникло место/организация/технология, к которой оно привязано), причинно-следственные разрывы (кто-то пользуется тем, чего по хронологии ещё/уже не существует), один и тот же объект/событие описан по-разному в двух фактах. Укажи номера [N] ВСЕХ затронутых фактов.',
+    '2) КАНДИДАТЫ НА ОБЪЕДИНЕНИЕ — два и более факта, рассказывающие по сути ОДНО И ТО ЖЕ (то же место/событие/правило другими словами или с небольшим смещением акцента) — их лучше слить в один насыщенный факт, чем оставлять тонкими дублями. Это НЕ то же самое, что похожие по формулировке факты (для этого есть отдельная локальная проверка дублей) — здесь именно смысловое совпадение, даже если слова разные. Укажи номера [N] всех фактов-кандидатов.',
   ].join('\n');
   const user = [
     `Жанр: ${p.genre||'роман'}${p.era?', '+p.era:''}.`,
     '',
-    facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА${category?` КАТЕГОРИИ «${category}»`:' ПО КАТЕГОРИЯМ'}:\n${catText}` : `Фактов канона${category?` категории «${category}»`:''} пока нет вообще.`,
+    facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА${category?` КАТЕГОРИИ «${category}»`:' ПО КАТЕГОРИЯМ'} (номер в [квадратных скобках] — используй его в factIndices ниже, а не переписывай текст):\n${catText}` : `Фактов канона${category?` категории «${category}»`:''} пока нет вообще.`,
     '',
     category
-      ? `Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатая, конкретная категория), "issues": ["до 4 конкретных проблем с привязкой к факту"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить именно в этой категории"], "conflicts": ["до 3 противоречий между фактами, с указанием ОБОИХ затронутых фактов по сути"], "mergeCandidates": ["до 3 подсказок, какие факты дублируют друг друга по смыслу и как их лучше объединить"] }`
-      : 'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"], "conflicts": ["до 3 противоречий между фактами (в любых категориях), с указанием ОБОИХ затронутых фактов по сути"], "mergeCandidates": ["до 3 подсказок, какие факты дублируют друг друга по смыслу и как их лучше объединить"] }',
-    `Если ${category?'категория':'мир'} уже хорош${category?'а':''} и противоречий/дублей по смыслу нет — скажи это в suggestions, остальные списки могут быть пустыми. Только JSON.`,
+      ? `Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатая, конкретная категория), "issues": ["до 4 конкретных проблем с привязкой к факту"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить именно в этой категории"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 3), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 3) }`
+      : 'Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатый, конкретный, разноплановый мир), "thinCategories": ["категории, где фактов мало или они расплывчаты, 0-3"], "issues": ["до 4 конкретных проблем с привязкой к факту или категории"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 3), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 3) }',
+    `factIndices — номера из [квадратных скобок] выше, минимум 2 на каждый элемент conflicts/mergeCandidates. Если ${category?'категория':'мир'} уже хорош${category?'а':''} и противоречий/дублей по смыслу нет — скажи это в suggestions, остальные списки могут быть пустыми. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
@@ -157,14 +160,69 @@ export async function runWorldOverview(state, category=null){
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1400, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || typeof j.depth !== 'number') throw new Error('Не удалось разобрать ответ.');
+  // Резолвим номера [N] из ответа модели в {category, text} — устойчивую
+  // идентичность факта, НЕ индекс в state.bible: тот может съехать из-за
+  // правок/удалений в ДРУГИХ категориях между этой проверкой и кликом
+  // «Исправить» (см. openFixModal в ui/world.js — там сверка по этой же паре).
+  const resolveFacts = (indices)=> (Array.isArray(indices)?indices:[])
+    .map(n=>facts[n]).filter(Boolean)
+    .map(f=>({ category: f.category, text: f.text }));
+  const parseFindings = (arr)=> (Array.isArray(arr)?arr:[]).slice(0,3)
+    .map(it=>({ text: String(it?.text||'').trim(), facts: resolveFacts(it?.factIndices) }))
+    .filter(it=>it.text && it.facts.length>=2);
   return {
     depth: Math.max(0, Math.min(10, Math.round(j.depth))),
     thinCategories: category ? [] : (Array.isArray(j.thinCategories) ? j.thinCategories.slice(0,3) : []),
     issues: Array.isArray(j.issues) ? j.issues.slice(0,4) : [],
     suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4) : [],
-    conflicts: Array.isArray(j.conflicts) ? j.conflicts.slice(0,3) : [],
-    mergeCandidates: Array.isArray(j.mergeCandidates) ? j.mergeCandidates.slice(0,3) : [],
+    conflicts: parseFindings(j.conflicts),
+    mergeCandidates: parseFindings(j.mergeCandidates),
   };
+}
+
+// ── Исправление ОДНОГО противоречия/кандидата на объединение из runWorldOverview ──
+// item.facts — [{category, text}, ...], актуальность которых вызывающая сторона
+// (openFixModal в ui/world.js) уже сверила с текущим state.bible перед вызовом.
+// Правим/сливаем ТОЛЬКО то, что мешает — не переписываем факт с нуля, чтобы не
+// потерять остальной смысл, вложенный автором.
+export async function proposeConflictFix(state, item){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  const sys = 'Ты — редактор канона мира книги. Ниже — противоречие между несколькими фактами и сами факты дословно. Предложи ИСПРАВЛЕННУЮ версию КАЖДОГО факта так, чтобы противоречие исчезло — поменяй только то, что нужно для устранения (дату, причинность, формулировку конфликтующей детали), не переписывай факт целиком и не теряй остальную содержательную информацию.';
+  const user = [
+    `Противоречие: ${item.text}`,
+    '',
+    'Факты (верни исправленные версии в этом же порядке):',
+    item.facts.map((f,i)=>`${i+1}. [${f.category}] ${f.text}`).join('\n'),
+    '',
+    `Верни JSON: { "facts": [ { "text": "исправленный текст факта 1" }, { "text": "исправленный текст факта 2" } ] } — ровно ${item.facts.length} элемент(а/ов), в том же порядке, что и факты выше. Только JSON.`,
+  ].join('\n');
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:900, retries:g.retries });
+  const j = extractJSON(res.text);
+  const arr = j && Array.isArray(j.facts) ? j.facts : null;
+  if(!arr || arr.length !== item.facts.length) throw new Error('Не удалось разобрать исправление — попробуйте ещё раз.');
+  const out = arr.map((f,i)=>({ category: item.facts[i].category, oldText: item.facts[i].text, newText: String(f?.text||'').trim() })).filter(f=>f.newText);
+  if(out.length !== item.facts.length) throw new Error('Не удалось разобрать исправление — попробуйте ещё раз.');
+  return out;
+}
+
+export async function proposeMergeFix(state, item){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  const sys = 'Ты — редактор канона мира книги. Ниже — несколько фактов, которые по сути говорят одно и то же. Объедини их в ОДИН насыщенный факт, сохранив всю содержательную информацию из каждого, без повторов и без потери деталей.';
+  const user = [
+    `Почему стоит объединить: ${item.text}`,
+    '',
+    'Факты для объединения:',
+    item.facts.map((f,i)=>`${i+1}. [${f.category}] ${f.text}`).join('\n'),
+    '',
+    'Верни JSON: { "keys": "2-4 ключевых слова через запятую", "text": "объединённый факт, 1-3 предложения" }. Только JSON.',
+  ].join('\n');
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:500, retries:g.retries });
+  const j = extractJSON(res.text);
+  const text = j && String(j.text||'').trim();
+  if(!text) throw new Error('Не удалось разобрать объединение — попробуйте ещё раз.');
+  return { category: item.facts[0].category, keys: String(j.keys||'').trim(), text };
 }
 
 // Отпечаток набора фактов (число + лёгкая контрольная сумма текста) — НЕ
