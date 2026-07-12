@@ -20,8 +20,13 @@ const path = require('node:path');
 
 const PORT = process.env.PORT || 8788;
 const ROOT = __dirname;
-const CHECKPOINT_DIR = path.join(ROOT, 'checkpoints');
-const SYNC_DIR = path.join(ROOT, 'data', 'projects');
+// DATA_DIR указывает на смонтированный persistent volume (Railway и т.п.) —
+// без него чекпоинты и серверная синхронизация проектов жили в обычной
+// файловой системе контейнера и стирались при каждом деплое. По умолчанию
+// (без DATA_DIR, локальный запуск) поведение прежнее — данные рядом с кодом.
+const DATA_DIR = process.env.DATA_DIR || ROOT;
+const CHECKPOINT_DIR = path.join(DATA_DIR, 'checkpoints');
+const SYNC_DIR = path.join(DATA_DIR, 'data', 'projects');
 ensureDir(SYNC_DIR);
 
 // Страховка: без этого необработанная ошибка в любом асинхронном обработчике
