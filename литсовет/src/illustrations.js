@@ -97,7 +97,15 @@ export async function suggestIllustrations(state){
 // полностью убрать риск нельзя, только уменьшить (или выключить текст совсем — noText).
 export function textInstruction(ic){
   if(ic?.noText) return 'Do not include any readable text, letters, numbers or writing anywhere in the image.';
-  if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English — and rendered LARGE, bold and sparse: a few big, clear words, not small or dense text. Small/dense text reliably comes out garbled — prefer omitting a label entirely over rendering it small.';
+  // Раньше для обложки инструкция ограничивалась «если есть текст — пусть будет
+  // русский», но НИКОГДА не называла сам текст — генератор картинок книгу не
+  // читал и придумывал правдоподобное, но постороннее название. Явно передаём
+  // реальное название книги, только когда есть что передать (обложка + заголовок задан).
+  const titleClause = (ic?.type==='cover' && ic?.title)
+    ? ` The book title rendered on the cover must be EXACTLY this text, unchanged and not translated or shortened: «${ic.title}».`
+    : '';
+  if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English — and rendered LARGE, bold and sparse: a few big, clear words, not small or dense text. Small/dense text reliably comes out garbled — prefer omitting a label entirely over rendering it small.' + titleClause;
+  if(titleClause) return 'If the image contains any readable text or lettering, render it LARGE, bold and sparse — a few big, clear words, not small or dense text.' + titleClause;
   return '';
 }
 // Эффективное «текст на картинке» для конкретного кандидата/элемента галереи:
@@ -125,7 +133,7 @@ export async function generateIllustrationFor(state, candidate){
   if(artStyle) parts.push(artStyle.promptFragment);
   if(state.style?.colorMode==='bw') parts.push('black and white, monochrome, no color');
   const noText = !effectiveTextOn(candidate, ic);
-  const txtInstr = textInstruction({ noText, ruText: ic.ruText }); if(txtInstr) parts.push(txtInstr);
+  const txtInstr = textInstruction({ noText, ruText: ic.ruText, type: candidate.type, title: state.project?.title }); if(txtInstr) parts.push(txtInstr);
   const portraitInstr = portraitInstruction(ic, candidate.type); if(portraitInstr) parts.push(portraitInstr);
   const prompt = parts.length ? `${candidate.prompt}\n\n${parts.join('. ')}` : candidate.prompt;
   const size = (candidate.type==='cover' && ic.portraitCover) ? PORTRAIT_SIZE : ic.size;
