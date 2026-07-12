@@ -258,7 +258,20 @@ export function mapPromptFor(state){
   // насыщенном каноне (10+ фактов географии) общий .slice() в конце срезал
   // промпт прямо на середине списка фактов, тихо теряя половину из них —
   // не резать хвост, а ограничивать именно факты.
-  const facts = geoFacts.map(f=>f.text).join(' ').slice(0, 900);
+  // Кап поднят с 900 до 3000: у проработанного мира легко набирается 15+
+  // фактов географии (3-4 тыс. символов) — на 900 генератор видел едва ли
+  // четверть карты и обрубался ПРЯМО ПОСЕРЕДИНЕ СЛОВА одного из фактов,
+  // отправляя модели синтаксически оборванное предложение. Теперь режем
+  // строго по границе целого факта — последний, что не влезает целиком, в
+  // промпт не попадает вообще, а не отправляется огрызком.
+  const FACTS_BUDGET = 3000;
+  let facts = '';
+  for(const f of geoFacts){
+    const next = facts ? facts + ' ' + f.text : f.text;
+    if(next.length > FACTS_BUDGET) break;
+    facts = next;
+  }
+  if(!facts) facts = geoFacts[0].text.slice(0, FACTS_BUDGET); // единственный факт длиннее бюджета — редкий крайний случай
   const style = `${p.genre||'роман'}${p.era?', '+p.era:''}`;
   const flavor = MAP_STYLE_FLAVORS[Math.floor(Math.random()*MAP_STYLE_FLAVORS.length)];
   // Карта обычно требует МНОГО подписей (по факту на место) — а именно плотный
@@ -282,7 +295,7 @@ export function mapPromptFor(state){
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
-    `Render the terrain richly and visibly, not as a bare outline: rivers winding to the sea or lakes, forests as clusters of tree symbols, mountain ranges with peak hatching, roads or trails connecting settlements, coastlines with texture — infer plausible terrain features even where the facts below don't specify every one, as long as they don't contradict the facts.`,
+    `Render the terrain richly and visibly, not as a bare outline: rivers winding to the sea or lakes, forests as clusters of tree symbols, mountain ranges with peak hatching, roads or trails connecting settlements, coastlines with texture — infer plausible terrain features even where the facts below don't specify every one, as long as they don't contradict the facts. Where a fact names a terrain TYPE (desert, swamp, forest, mountains, sea), draw that actual terrain there, not a generic or unrelated feature — a desert fact means visible dunes/sand, not open water.`,
     `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — compass rose, sea monsters or ships in unmapped waters, decorative border, scale bar, weathered texture, subtle terrain shading. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
     `Setting: ${style}.`,
     geoLine,
