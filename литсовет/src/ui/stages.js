@@ -869,6 +869,12 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
   let prevEval = seedEval || null;
   let prevScore = prevEval ? prevEval.score : null;
   let skeleton = null, evalResult = null;
+  // Цикл, как и Прозаик⇄Оценщик сцены, не хранит «лучший» скелет отдельно от
+  // текущего — каждая итерация безусловно перезаписывает structure последней
+  // попыткой, даже если та вышла хуже предыдущей. Откат (↶, skeletonVersions)
+  // это технически чинит, но молча — автор не узнает, что стоит откатиться,
+  // если явно не сравнит баллы сам. Трекаем лучший балл только чтобы предупредить.
+  let bestScore = prevScore, bestIter = 0, lastIter = 0;
   // save() пересобирает DOM на каждой итерации — переприменяем busy-состояние
   // и текст статуса к свежим элементам, а не к ссылкам, взятым до первого save().
   const setBusy = (busy)=>{ ['genSkeleton','regenWithEval'].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=busy; }); };
@@ -876,6 +882,7 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
   setBusy(true);
   try{
     for(let iter=1; iter<=maxIter; iter++){
+      lastIter = iter;
       const label = maxIter>1 ? `Прогон ${iter}/${maxIter}: ` : '';
       setStatus(`<span class="spinner"></span> ${label}Архитектор ${prevEval?'перерабатывает':'проектирует'} структуру…`);
       const hint = prevEval ? hintFromStructureEval(prevEval) : '';
@@ -892,10 +899,14 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
       s.structureEval = evalResult;
       save();
       setBusy(true);
+      if(evalResult && (bestScore==null || evalResult.score > bestScore)){ bestScore = evalResult.score; bestIter = iter; }
       if(!evalResult || evalResult.score >= 8) break;
       prevEval = evalResult; prevScore = evalResult.score;
     }
     if(skeleton) await refreshMissingFacts(s, skeleton);
+    if(evalResult && bestIter && bestIter < lastIter && evalResult.score < bestScore - 0.5){
+      setStatus(`⚠ Итоговый прогон ${lastIter} (${evalResult.score}/10) вышел хуже прогона ${bestIter} (${bestScore}/10) — кнопкой «↶ скелет» выше можно вернуться на более ранний, лучший вариант (может понадобиться несколько нажатий).`);
+    }
   }catch(e){
     setStatus('');
     const stE = document.getElementById('genStatus');
@@ -1261,10 +1272,14 @@ export function renderWrite(els){
   // редактирование текста автором → отметка «рука автора»
   const edEl = document.getElementById('editor');
   if(scene.text && !_edReviewOn){
+    const editStartText = scene.text; // снимок ДО правки — сверяем на blur, реально ли текст изменился
     edEl.addEventListener('input', ()=>{ scene.text=edEl.innerText; if(!scene.handDone){ scene.handDone=true; } scene._dirty=true; });
     // Коммит правки (тут же ловит и Undo/Redo ниже — оба лишь ставят _dirty=true
     // и полагаются на этот blur): оценка/флаги относились к тексту ДО правки рукой.
-    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; scene.lastEval=null; scene.flags={}; scene._dirty=false; save(); } });
+    // Обнуляем оценку, только если текст на выходе реально отличается от снимка —
+    // иначе клик в редактор + случайная правка, отменённая тем же Ctrl+Z до blur,
+    // молча стирала действующую оценку сцены без единого фактического изменения.
+    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; if(scene.text!==editStartText){ scene.lastEval=null; scene.flags={}; } scene._dirty=false; save(); } });
     initSelectionMenu(edEl, scene, els);
   }
   if(scene.text && _edReviewOn) bindEditorMarks(edEl, scene, els);
@@ -2094,6 +2109,7 @@ async function doRun(els, s, scene, directive, runFlags={}){
   scene.brief=document.getElementById('brief').value.trim();
   const wasDone = scene.status==='done' && !!scene.text;
   const oldText = scene.text;
+  const oldEval = scene.lastEval;
   const btn=document.getElementById('runBtn'); btn.disabled=true;
   const ed=document.getElementById('editor'); ed.classList.remove('empty'); ed.removeAttribute('contenteditable');
   try{
@@ -2111,6 +2127,12 @@ async function doRun(els, s, scene, directive, runFlags={}){
     if(wasDone && oldText){ scene.proseVersions=scene.proseVersions||[]; scene.proseVersions.unshift(oldText); if(scene.proseVersions.length>10)scene.proseVersions.length=10; }
     scene.text=result.text; scene.words=(result.text.match(/\S+/g)||[]).length; scene.status='done';
     scene.lastEval=result.eval||null; scene.flags=result.flags||{}; scene.handDone=false; scene.stale=false;
+    // Перегенерация уже готовой сцены ничем не защищена от результата ХУЖЕ прежнего —
+    // новый черновик молча становится текущим, а прежний (лучший) виден только через
+    // кнопку отката (↶) в истории версий, если автор вообще заметит, что стало хуже.
+    if(wasDone && oldEval?.ok && result.eval?.ok && ((oldEval.pass && !result.eval.pass) || result.eval.weighted < oldEval.weighted - 0.5)){
+      pushProc({log:{icon:'⚠️', text:`Новая версия сцены хуже прежней: было ${oldEval.weighted}/10${oldEval.pass?' ✓ принято':''} → стало ${result.eval.weighted}/10 — прежний вариант в истории версий (кнопка ↶)`, state:'warn'}});
+    }
     // Каскад: перезапись уже готовой сцены могла повернуть сюжет — нижние готовые сцены под подозрением
     if(wasDone) markDownstreamStale(s, scene);
     save();
