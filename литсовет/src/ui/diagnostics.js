@@ -37,7 +37,7 @@ function paramSpecs(a){
   if(a.role==='bookArchitect'){
     specs.push({ key:'structureMaxIter', label:'Прогонов структуры', hint:'сколько раз архитектор сам перерабатывает скелет по замечаниям Оценщика структуры, прежде чем остановиться (или раньше, если оценка ≥8/10)', min:1, max:6, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
   }
-  if(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere'].includes(a.role) || a.custom){
+  if(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere','humor'].includes(a.role) || a.custom){
     specs.push({ key:'strictness', label:'Строгость', hint:'1 мягко · 3 придирчиво', min:1, max:3, step:1, target:'agent', def:2, fmt:v=>['','мягко','обычно','строго'][Math.round(v)]||v });
   }
   if(a.role==='prose'){
@@ -392,7 +392,7 @@ function openAddGuardModal(){
 }
 
 // Пайплайн агентов (тумблеры + настройки + бейджи + DnD) + прогоны.
-const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom','reader','imagery','pov','dialogue','resolution','atmosphere']);
+const PARALLEL_ROLES = new Set(['voiceguard','logic','events','styleguard','custom','reader','imagery','pov','dialogue','resolution','atmosphere','humor']);
 // Фактические стражи — бегут каждую итерацию петли; литературные — только при принятом тексте.
 const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
 
@@ -424,7 +424,7 @@ function renderPipelineFlow(agents){
 }
 const AGENT_FILTER_CATS = ['Все','Основные','Стражи','Мои'];
 const CORE_ROLES = new Set(['architect','prose','evaluator','lineedit']);
-const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere']);
+const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere','humor']);
 let _agentFilter = 'Все';
 
 function agentMatchesFilter(a, filter){
