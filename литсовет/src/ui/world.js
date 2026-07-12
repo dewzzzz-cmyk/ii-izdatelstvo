@@ -140,12 +140,13 @@ function renderMapBlock(s, geoCount){
           </select>
         </label>
       </div>
-      <div class="row" style="margin-bottom:8px">
+      <div class="row" style="gap:14px;margin-bottom:8px;flex-wrap:wrap">
         <label class="row" style="gap:6px;align-items:center;font-size:12px" for="wMapLabelCount" data-tip="Сколько САМЫХ важных мест подписать на карте крупным текстом. Больше подписей — больше текста на картинке, а мелкий/частый текст у любых image-моделей чаще выходит нечитаемой кашей из символов.">Мест на карте
-          <select id="wMapLabelCount" style="font-size:12px;width:auto">
+          <select id="wMapLabelCount" style="font-size:12px;width:auto" ${mapLang==='none'?'disabled':''}>
             ${[1,2,3,4,5,6,7,8,10].map(n=>`<option value="${n}" ${(ic.mapLabelCount??5)===n?'selected':''}>${n}</option>`).join('')}
           </select>
         </label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Совсем без подписей и текста на карте — только рисунок. То же самое, что выбрать «Без текста» в языке подписей выше, просто быстрее."><input type="checkbox" id="wMapNoLabels" ${mapLang==='none'?'checked':''}> Без подписей</label>
       </div>
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
@@ -532,6 +533,19 @@ function bindHandlers(els, s){
   if(wMapQuality) wMapQuality.onchange = ()=>{ s.illustrations.quality = wMapQuality.value; save(); renderWorld(els); };
   const wMapLabelCount = document.getElementById('wMapLabelCount');
   if(wMapLabelCount) wMapLabelCount.onchange = ()=>{ s.illustrations.mapLabelCount = parseInt(wMapLabelCount.value,10)||5; save(); renderWorld(els); };
+  // Быстрый доступ к «Без текста» — то же поле mapLanguage, что и в селекте языка
+  // выше (единый источник правды), просто отдельная галочка на видном месте:
+  // «язык подписей» — не то место, где интуитивно искать «убрать подписи совсем».
+  const wMapNoLabels = document.getElementById('wMapNoLabels');
+  if(wMapNoLabels) wMapNoLabels.onchange = ()=>{
+    if(wMapNoLabels.checked){
+      if(s.illustrations.mapLanguage!=='none') s.illustrations.mapLanguagePrev = s.illustrations.mapLanguage;
+      s.illustrations.mapLanguage = 'none';
+    } else {
+      s.illustrations.mapLanguage = s.illustrations.mapLanguagePrev || 'ru';
+    }
+    save(); renderWorld(els);
+  };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
