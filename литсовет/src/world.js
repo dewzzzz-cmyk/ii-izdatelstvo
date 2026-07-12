@@ -123,8 +123,9 @@ export async function suggestWorldFacts(state, category, opts={}){
 // ВСЕМ категориям сразу (общий срез мира); необязательный параметр category
 // сужает её до ОДНОЙ категории — точечная проверка прямо с карточки категории,
 // без прогона остальных.
-export function worldOverviewMessages(state, category=null){
+export function worldOverviewMessages(state, category=null, opts={}){
   const p = state.project;
+  const avoid = Array.isArray(opts.avoid) ? opts.avoid.slice(0, 20) : [];
   const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
   // Индекс [N] = позиция в этом же массиве facts — runWorldOverview резолвит
   // его обратно в конкретный факт, чтобы кнопка «Исправить» знала, какие
@@ -148,7 +149,14 @@ export function worldOverviewMessages(state, category=null){
     'Отдельно от глубины — сверь факты МЕЖДУ СОБОЙ (не каждый по отдельности):',
     '1) ПРОТИВОРЕЧИЯ — даты/сроки, которые не сходятся при пересчёте (событие датировано раньше, чем возникло место/организация/технология, к которой оно привязано), причинно-следственные разрывы (кто-то пользуется тем, чего по хронологии ещё/уже не существует), один и тот же объект/событие описан по-разному в двух фактах. Укажи номера [N] ВСЕХ затронутых фактов.',
     '2) КАНДИДАТЫ НА ОБЪЕДИНЕНИЕ — два и более факта, рассказывающие по сути ОДНО И ТО ЖЕ (то же место/событие/правило другими словами или с небольшим смещением акцента) — их лучше слить в один насыщенный факт, чем оставлять тонкими дублями. Это НЕ то же самое, что похожие по формулировке факты (для этого есть отдельная локальная проверка дублей) — здесь именно смысловое совпадение, даже если слова разные. Укажи номера [N] всех фактов-кандидатов.',
-  ].join('\n');
+    // При насыщенном каноне (сотни фактов) одна проверка физически не может
+    // пересчитать ВСЕ пары фактов между собой за один проход — модель находит
+    // лишь часть, и без этого списка каждый повторный клик «Искать ещё»
+    // мог бы заново находить (или переформулировать) то же самое, что уже
+    // найдено и, возможно, уже исправлено — автору кажется, что проверка
+    // «ходит по кругу», хотя на деле она просто не помнит прошлые находки.
+    avoid.length ? `Эти находки УЖЕ известны автору с прошлых проверок — не повторяй их (даже другими словами) и не предлагай снова, ищи ТОЛЬКО НОВЫЕ, ещё не названные:\n${avoid.map(a=>'— '+a).join('\n')}` : '',
+  ].filter(Boolean).join('\n');
   const user = [
     `Жанр: ${p.genre||'роман'}${p.era?', '+p.era:''}.`,
     '',
@@ -162,13 +170,13 @@ export function worldOverviewMessages(state, category=null){
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
-export async function runWorldOverview(state, category=null){
+export async function runWorldOverview(state, category=null, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
   const minFacts = category ? 2 : 3;
   if(facts.length < minFacts) throw new Error(category ? `Нужно хотя бы ${minFacts} факта категории «${category}», чтобы оценить глубину.` : 'Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
-  const msgs = worldOverviewMessages(state, category);
+  const msgs = worldOverviewMessages(state, category, opts);
   // 900 → 1400 → 2200: сверка фактов между собой (conflicts/mergeCandidates) —
   // новые поля поверх прежних, тот же бюджет их обрезал бы посреди ответа;
   // затем подняли лимит списков 3→6 на каждый (см. ниже) — при насыщенном
