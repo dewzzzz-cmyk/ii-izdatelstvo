@@ -267,9 +267,18 @@ export function mapPromptFor(state){
   // не всё подряд, а 2-3 САМЫХ важных места крупно; richLabels — осознанный
   // авторский выбор пойти на больший риск нечитаемых надписей ради большего
   // числа подписанных мест (см. чекбокс «Больше подписей» в ui/world.js).
+  // Доп. рычаги против кракозябр (сверх количества подписей и языка):
+  // 1) жёсткий лимит длины подписи — длинное название («Пустыня Забытых
+  //    Часов») ломается почти всегда, даже если подписей всего 2-3;
+  //    просим короткий алиас/ключевое слово, а не полное каноничное имя.
+  // 2) значок вместо слова там, где смысл читается без текста (гора,
+  //    дерево, череп) — меньше текста на картинке в принципе.
+  // 3) явный запрет на тонкие/рукописные засечки — они гарантированно
+  //    рассыпаются на мелких деталях сильнее, чем толстая простая обводка.
+  const fontNote = 'Use thick, simple, blocky lettering (like carved stone or a woodcut stamp) — thin serif or flowing cursive strokes reliably break apart into illegible marks at this level of detail.';
   const geoLine = noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear as visual features — ${facts}). Label ${richLabels ? 'up to 6-8 named places' : 'ONLY the 2-3 most important named places'}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption)${richLabels ? ' — keep each label short (one or two words), more labels means higher risk of garbled illegible letters, accept that trade-off' : ' — small or numerous labels reliably render as illegible garbage, so leave the rest of the geography unlabeled rather than cramming in more small text'}.`;
+    : `Geography (must appear as visual features — ${facts}). Label ${richLabels ? 'up to 6-8 named places' : 'ONLY the 2-3 most important named places'}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Where a place's nature is obvious from a small icon (mountain, tree, skull, tower, wave), draw the icon INSTEAD of spelling it out, and reserve actual lettering only for proper names that need it. ${fontNote}${richLabels ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off.' : ' Numerous or small labels reliably render as illegible garbage regardless of these precautions, so leave the rest of the geography unlabeled rather than cramming in more text.'}`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,

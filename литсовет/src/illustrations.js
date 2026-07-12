@@ -276,7 +276,11 @@ export function saveMapItem(state, dataUrl, prompt=''){
   const old = (state.illustrations.items||[]).find(it=>it.type==='map');
   const versions = carryVersions(old);
   state.illustrations.items = (state.illustrations.items||[]).filter(it=>it.type!=='map');
-  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, createdAt:Date.now(), versions };
+  // baseDataUrl — чистая картинка БЕЗ подписей (та, что реально пришла от
+  // генератора), labels — координатные подписи поверх неё (см. compositeMapLabels
+  // ниже). Новая генерация — новая геометрия карты, старые координаты подписей
+  // больше не имеют смысла, поэтому labels всегда сбрасываются здесь, не переносятся.
+  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, baseDataUrl:dataUrl, labels:[], createdAt:Date.now(), versions };
   state.illustrations.items.push(item);
   return item;
 }
@@ -294,10 +298,102 @@ export function saveUploadedItem(state, dataUrl, { type, sceneId=null, sceneTitl
     versions = carryVersions(state.illustrations.items.find(it=>it.type===type));
     state.illustrations.items = state.illustrations.items.filter(it=>it.type!==type);
   }
-  const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true, versions };
+  const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true, versions,
+    ...(type==='map' ? { baseDataUrl:dataUrl, labels:[] } : {}) };
   state.illustrations.items.push(item);
   if(type==='cover') state.project.coverDataUrl = dataUrl;
   return item;
+}
+
+// ── Подписи мест на карте — НАСТОЯЩИЙ текст (canvas), а не то, что рисует сама
+// image-модель. У сгенерированного текста на картинке всегда есть шанс
+// нечитаемых «кракозябр» (см. mapPromptFor в world.js) — этого способа не
+// избежать полностью никакими формулировками промпта. Подписи поверх карты —
+// координаты (в процентах от размера картинки, не в пикселях — не зависят от
+// того, каким разрешением ответил провайдер) хранятся ОТДЕЛЬНО от готовой
+// картинки: item.dataUrl каждый раз пересобирается заново из item.baseDataUrl
+// (чистая карта без подписей) + item.labels, поэтому добавление/правка/
+// удаление одной подписи не требует новой платной генерации и никогда не
+// накладывает текст поверх уже напечатанного текста.
+export const MAX_MAP_LABELS = 15;
+export function addMapLabel(item, text, xPct, yPct){
+  item.labels = item.labels || [];
+  if(item.labels.length >= MAX_MAP_LABELS) return null;
+  const label = { id:'lbl_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    text: String(text||'').trim().slice(0,40), xPct: clampPct(xPct), yPct: clampPct(yPct) };
+  item.labels.push(label);
+  return label;
+}
+export function removeMapLabel(item, id){
+  if(!item.labels) return false;
+  const before = item.labels.length;
+  item.labels = item.labels.filter(l=>l.id!==id);
+  return item.labels.length !== before;
+}
+export function updateMapLabelText(item, id, text){
+  const l = (item.labels||[]).find(x=>x.id===id);
+  if(!l) return false;
+  l.text = String(text||'').trim().slice(0,40);
+  return true;
+}
+function clampPct(n){ return Math.max(0, Math.min(100, Number(n)||0)); }
+
+function roundRectPath(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+// baseDataUrl + labels → готовая PNG-картинка с наложенным текстом. Пустой
+// labels — возвращает base как есть (не гоняет картинку через canvas зря).
+export function compositeMapLabels(baseDataUrl, labels){
+  const list = (labels||[]).filter(l=>(l.text||'').trim());
+  if(!list.length) return Promise.resolve(baseDataUrl);
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      try{
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const fontSize = Math.max(16, Math.round(canvas.width * 0.024));
+        ctx.font = `700 ${fontSize}px Georgia, 'Times New Roman', serif`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        list.forEach(l=>{
+          const text = l.text.trim();
+          const x = (l.xPct/100) * canvas.width;
+          const y = (l.yPct/100) * canvas.height;
+          const w = ctx.measureText(text).width;
+          const padX = fontSize*0.55, padY = fontSize*0.32;
+          const boxW = w + padX*2, boxH = fontSize + padY*2;
+          ctx.fillStyle = 'rgba(24,16,8,0.6)';
+          roundRectPath(ctx, x-boxW/2, y-boxH/2, boxW, boxH, boxH/2);
+          ctx.fill();
+          ctx.fillStyle = '#f7edd8';
+          ctx.fillText(text, x, y + fontSize*0.04);
+        });
+        resolve(canvas.toDataURL('image/png'));
+      }catch(e){ reject(e); }
+    };
+    img.onerror = ()=>reject(new Error('Не удалось загрузить карту для наложения подписей.'));
+    img.src = baseDataUrl;
+  });
+}
+
+// Пересобрать item.dataUrl из base+labels и сохранить прошлую готовую картинку
+// в историю версий — тот же принцип отката, что у обычной перегенерации.
+export async function applyMapLabels(item){
+  const base = item.baseDataUrl || item.dataUrl;
+  const composited = await compositeMapLabels(base, item.labels||[]);
+  if(composited !== item.dataUrl){ pushImageVersion(item); item.dataUrl = composited; }
+  return composited;
 }
 
 // Убрать обложку целиком — используется и стадией «Концепция» (ручная загрузка/
