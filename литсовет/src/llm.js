@@ -1,7 +1,7 @@
 // Клиент к /api/generate. Стриминг текста; ретраи; оценка стоимости.
 
 import { estimateTokens } from './tokens.js';
-import { PRICES } from './state.js';
+import { PRICES, getState } from './state.js';
 
 // Вызов LLM. messages — массив {role, content}. Возвращает {text, tokensIn, tokensOut, cost}.
 // onToken(chunk) — колбэк для стрима (опц.).
@@ -41,6 +41,12 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       const tokensOut = estimateTokens(text);
       const p = PRICES[model] || {in:0.14, out:0.28};
       const cost = tokensIn/1e6*p.in + tokensOut/1e6*p.out;
+      // Единая точка учёта расхода на текущий проект — см. state.spend в
+      // state.js. Считаем здесь, а не в каждой из ~20 функций, которые зовут
+      // callLLM: так гарантированно не пропустим ни один запрос, независимо
+      // от того, через какого агента/кнопку он прошёл.
+      const st = getState();
+      if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.text += cost; }
       return { text: text.trim(), tokensIn, tokensOut, cost };
     }catch(e){
       lastErr = e.message;

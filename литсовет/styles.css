@@ -498,6 +498,7 @@ textarea{resize:vertical;min-height:60px}
   /* Рейл: скрыть бренд и мета, чипы — горизонтальный скролл */
   .brand{display:none}
   .proj-meta{display:none}
+  .proj-spend{display:none}
   .rail{padding:0 8px;gap:6px}
   .stages{overflow-x:auto;gap:3px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
   .stages::-webkit-scrollbar{display:none}

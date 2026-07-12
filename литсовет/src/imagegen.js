@@ -2,6 +2,8 @@
 // не зависящий от того, какой провайдер выбран (Gemini/Nano Banana, OpenAI, Qwen).
 // Сервер сам знает разницу форматов запроса/ответа — отсюда только настройки.
 
+import { getState } from './state.js';
+
 // Очень грубая оценка стоимости на картинку (USD) — ориентир для автора ДО
 // траты денег, не точный биллинг (у провайдеров своя точная тарификация).
 // Qwen/DashScope — самая неуверенная оценка из четырёх: цены Wanxiang в CNY и
@@ -52,5 +54,11 @@ export async function generateImage(opts){
   }
   const j = await res.json();
   if(!j.dataUrl) throw new Error('Провайдер не вернул изображение.');
+  // Провайдеры не возвращают точный биллинг за конкретный вызов — берём ту же
+  // оценку, что и в кнопке ДО генерации (estimateImageCost), и фиксируем её
+  // как факт расхода один раз, после успеха. См. state.spend в state.js —
+  // тот же choke-point, что и текстовый учёт в llm.js.
+  const st = getState();
+  if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.images += estimateImageCost(opts.provider, opts.quality, 1); }
   return { dataUrl: j.dataUrl };
 }

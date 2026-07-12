@@ -92,6 +92,14 @@ export function defaultState(){
     },
     log: [],
     ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false, editorAuto: false },
+    // Суммарный факт. расход на ЭТОТ проект — в отличие от «потрачено» в
+    // Роадмапе (сумма diagnostics.runs[].totalCost, только текст, и runs
+    // обрезаются до 50 последних — у долгоживущих книг старые прогоны
+    // выпадают из суммы), это НИКОГДА не урезаемый счётчик: llm.js и
+    // imagegen.js прибавляют сюда после КАЖДОГО успешного запроса (см.
+    // callLLM/generateImage), независимо от того, какая бизнес-функция его
+    // вызвала — единая точка учёта вместо разметки каждого места вызова.
+    spend: { text: 0, images: 0 },
   };
 }
 
@@ -445,6 +453,7 @@ function migrate(s){
     if(coverItem) s.project.coverDataUrl = coverItem.dataUrl;
   }
   s.diagnostics = s.diagnostics || { runs: [] };
+  s.spend = s.spend || { text: 0, images: 0 };
   s.structureStale = s.structureStale || false;
   // Порог принятия сцены — теперь минимум 7.5 (жёсткий пол, не «дефолт по
   // умолчанию»): даже если автор раньше сам поставил ниже, качество текста

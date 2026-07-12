@@ -48,6 +48,7 @@ const els = {
   center: document.getElementById('panelCenter'),
   right: document.getElementById('panelRight'),
   projMeta: document.getElementById('projMeta'),
+  projSpend: document.getElementById('projSpend'),
   body: document.getElementById('body'),
   modalRoot: document.getElementById('modalRoot'),
 };
@@ -78,6 +79,20 @@ function renderRail(){
   });
   const wc = (s.structure||[]).filter(n=>n.type==='scene').reduce((a,n)=>a+(n.words||0),0);
   els.projMeta.textContent = (s.project.title||'новый проект') + (wc?` · ${wc.toLocaleString('ru')} сл.`:'');
+  // Суммарный расход на книгу — текст (все LLM-запросы) + картинки, см.
+  // state.spend (llm.js/imagegen.js пишут туда после каждого успешного
+  // вызова). Скрыт, пока расхода ещё нет (свежий проект) — не шумим "$0.000".
+  const spend = s.spend || { text:0, images:0 };
+  const totalSpend = spend.text + spend.images;
+  if(els.projSpend){
+    if(totalSpend > 0){
+      els.projSpend.style.display = '';
+      els.projSpend.textContent = `💰 $${totalSpend.toFixed(3)}`;
+      els.projSpend.setAttribute('data-tip', `Текст: $${spend.text.toFixed(3)} · Картинки: $${spend.images.toFixed(3)}`);
+    } else {
+      els.projSpend.style.display = 'none';
+    }
+  }
 }
 
 function renderStage(){
