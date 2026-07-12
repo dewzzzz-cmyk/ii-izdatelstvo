@@ -290,20 +290,27 @@ export function mapPromptFor(state){
   // 1) жёсткий лимит длины подписи — длинное название («Пустыня Забытых
   //    Часов») ломается почти всегда, даже если подписей всего 2-3;
   //    просим короткий алиас/ключевое слово, а не полное каноничное имя.
-  // 2) значок вместо слова там, где смысл читается без текста (гора,
-  //    дерево, череп) — меньше текста на картинке в принципе.
-  // 3) явный запрет на тонкие/рукописные засечки — они гарантированно
+  // 2) явный запрет на тонкие/рукописные засечки — они гарантированно
   //    рассыпаются на мелких деталях сильнее, чем толстая простая обводка.
   const fontNote = 'Use thick, simple, blocky lettering (like carved stone or a woodcut stamp) — thin serif or flowing cursive strokes reliably break apart into illegible marks at this level of detail.';
   // Порог поднят с ">5" на ">3" по живому тесту: на 5 подписях 2 из 5 вышли
   // с побитыми буквами (реальный прогон, не гипотеза) — риск начинается
-  // раньше, чем предыдущая формулировка признавала.
-  const riskNote = labelCount > 3
+  // раньше, чем предыдущая формулировка признавала. Второй риск ниже (подпись
+  // типа рельефа) добавляет ещё текста на ту же картинку — предупреждение
+  // об этом всегда, не только при большом labelCount.
+  const riskNote = (labelCount > 3
     ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off, and take extra care to spell each one correctly.'
-    : ' Leave the rest of the geography unlabeled rather than cramming in more text — fewer, larger labels stay legible far more reliably than many small ones.';
+    : ' Leave the rest of the geography unlabeled rather than cramming in more text — fewer, larger labels stay legible far more reliably than many small ones.')
+    + ' Each name+type pair together is still just two short words — do not let the type line grow longer or more detailed than the name above it.';
   const geoLine = noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Where a place's nature is obvious from a small icon (mountain, tree, skull, tower, wave), draw the icon INSTEAD of spelling it out, and reserve actual lettering only for proper names that need it. Do not add a title, banner, caption, scale bar, or any other text or label anywhere on the map beyond these ${labelCount} — the ONLY exception is a compass rose's single-letter N/S/E/W marks, nothing else. ${fontNote}${riskNote}`;
+    // Автор явно попросил подписывать не только имя, но и ОБЩИЙ ТИП рельефа —
+    // без этого «Кристальных Когтей»/«Забытых Часов» читаются как случайные
+    // фэнтези-слова, и непонятно, что перед тобой горы или пустыня, не
+    // прочитав факт в каноне отдельно. Тип — второй, заметно мельче основного
+    // имени, чтобы не спорить с ним за внимание и не задваивать риск кракозябр
+    // на самом важном слове (названии).
+    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Directly under each name, add a SECOND, noticeably smaller line — exactly ONE plain Russian word naming its general terrain type (горы, пустыня, лес, болото, озеро, остров, город, река, побережье, долина, etc. — whichever matches the fact), so the kind of place is clear without guessing from the fantasy name alone. Do not add a title, banner, caption, scale bar, or any other text on the map beyond these ${labelCount} name+type pairs — the ONLY exception is a compass rose's single-letter N/S/E/W marks, nothing else. ${fontNote}${riskNote}`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
