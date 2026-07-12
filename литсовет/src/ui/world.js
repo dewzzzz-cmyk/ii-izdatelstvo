@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint } from '../world.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -161,7 +161,7 @@ function renderMapBlock(s, geoCount){
 // category='X' — точечная проверка ОДНОЙ категории (кнопка «📊» на карточке):
 // заголовок и текст кнопки дозаполнения меняются, блок «Тонкие категории» не
 // показывается (он не имеет смысла, когда r уже про одну категорию).
-function openWorldDepthModal(r, onFill, category=null, onRecheck=null){
+function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=false){
   const root = document.getElementById('modalRoot'); if(!root) return;
   const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
   const title = category ? `📊 Глубина категории «${esc(category)}»` : '📊 Глубина мира';
@@ -177,8 +177,10 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null){
     ? `🔧 Дозаполнить «${esc(category)}»`
     : r.thinCategories.length ? `🔧 Дозаполнить тонкие категории (${r.thinCategories.length})` : '🔧 Учесть замечания по всем категориям';
   const showFill = category ? true : (r.thinCategories.length>0 || hasNotes);
+  const conflicts = r.conflicts||[], mergeCandidates = r.mergeCandidates||[];
   root.innerHTML = `<div class="modal-bg" id="wdBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>${title}</h2>
+    ${stale ? `<div style="border:1px solid var(--err);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:var(--err)">⚠ Канон изменился после этой проверки — оценка ниже может быть устаревшей. Нажмите «🔄 Переоценить», чтобы обновить.</div>` : ''}
     <div class="apv-row" style="flex-direction:column;align-items:flex-start;gap:2px;background:var(--accent-bg);padding:10px 12px;margin-bottom:6px">
       <b style="font-size:24px;color:${col}">${r.depth}/10</b>
       ${r.checkedAt ? `<span class="muted" style="font-size:11px">Проверено: ${new Date(r.checkedAt).toLocaleString('ru-RU')}</span>` : ''}
@@ -186,10 +188,12 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null){
     ${(!category && r.thinCategories.length) ? `<div class="ares-h">Тонкие категории</div>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">${r.thinCategories.map(c=>`<span class="tag">${esc(c)}</span>`).join('')}</div>` : ''}
     ${r.issues.length ? `<div class="ares-h">Проблемы</div>${r.issues.map(i=>`<div class="ares-note"><span>${esc(i)}</span></div>`).join('')}` : ''}
+    ${conflicts.length ? `<div class="ares-h">⚠ Противоречия между фактами</div>${conflicts.map(c=>`<div class="ares-note" style="border-color:var(--err)"><span>${esc(c)}</span></div>`).join('')}` : ''}
+    ${mergeCandidates.length ? `<div class="ares-h">Стоит объединить</div>${mergeCandidates.map(c=>`<div class="ares-note"><span>${esc(c)}</span></div>`).join('')}` : ''}
     ${r.suggestions.length ? `<div class="ares-h">Куда копать</div>${r.suggestions.map(x=>`<div class="ares-note"><span>${esc(x)}</span></div>`).join('')}` : ''}
-    ${(!r.issues.length && !r.suggestions.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — ${category?'категория':'мир'} уже неплохо проработан${category?'а':''}.</div>` : ''}
+    ${(!r.issues.length && !r.suggestions.length && !conflicts.length && !mergeCandidates.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — ${category?'категория':'мир'} уже неплохо проработан${category?'а':''}.</div>` : ''}
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
-      ${onRecheck ? `<button class="btn" id="wdRecheck">🔄 Переоценить</button>` : ''}
+      ${onRecheck ? `<button class="btn ${stale?'btn-primary':''}" id="wdRecheck">🔄 Переоценить</button>` : ''}
       ${showFill ? `<button class="btn btn-primary" id="wdFillThin">${fillLabel}</button>` : ''}
       <button class="btn" id="wdClose">Закрыть</button>
     </div>
@@ -212,9 +216,19 @@ async function runAndCacheDepth(s, category){
   const r = await runWorldOverview(s, category);
   const key = category || '__all__';
   s.worldDepthEvals = s.worldDepthEvals || {};
-  s.worldDepthEvals[key] = { ...r, checkedAt: Date.now() };
+  s.worldDepthEvals[key] = { ...r, checkedAt: Date.now(), fingerprint: worldFactsFingerprint(s, category) };
   save();
   return s.worldDepthEvals[key];
+}
+// Кэш экономит платный вызов, но при правках канона ПОСЛЕ проверки молча
+// показывал старую оценку без единого признака, что она устарела — автор
+// правит факт, ждёт, что балл изменится, а видит прежнее число (найдено по
+// репорту автора). Сверяем текущий отпечаток фактов с тем, что был на момент
+// проверки — НЕ автопересчёт (платный вызов остаётся только по явному клику),
+// просто явный флаг «показанное ниже уже не то, что в каноне сейчас».
+function isDepthStale(s, cached, category){
+  if(!cached) return false;
+  return worldFactsFingerprint(s, category) !== cached.fingerprint;
 }
 
 // По клику «Дозаполнить тонкие категории»/«Учесть замечания по всем категориям»
@@ -398,7 +412,7 @@ function bindHandlers(els, s){
     // Кэш (см. runAndCacheDepth) показывается без ключа — на просмотр прошлого
     // результата ключ не нужен, только на «🔄 Переоценить» внутри модалки.
     const cached = s.worldDepthEvals?.__all__;
-    if(cached){ _depthResult = cached; openWorldDepthModal(cached, (r)=>fillThinCategories(els, s, r), null, doRecheck); return; }
+    if(cached){ _depthResult = cached; openWorldDepthModal(cached, (r)=>fillThinCategories(els, s, r), null, doRecheck, isDepthStale(s, cached, null)); return; }
     await doRecheck();
   };
 
@@ -419,7 +433,7 @@ function bindHandlers(els, s){
       finally{ _catDepthBusy = null; renderWorld(els); }
     };
     const cached = s.worldDepthEvals?.[cat];
-    if(cached){ openWorldDepthModal(cached, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck); return; }
+    if(cached){ openWorldDepthModal(cached, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck, isDepthStale(s, cached, cat)); return; }
     await doRecheck();
   });
 
