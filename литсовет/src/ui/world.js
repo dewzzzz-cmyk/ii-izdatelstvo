@@ -293,17 +293,22 @@ function openFixModal(s, els, kind, item){
   render();
 }
 
+// Факты из прозы (архивариус/ручное добавление) не имеют category — теперь
+// оценщик мира сверяет их с каноном тоже (см. overviewFactSet в world.js),
+// поэтому здесь может оказаться факт без категории; пустая метка выглядела
+// бы как баг, а не как «это из текста, не из карточки Мира».
+function catLabel(cat){ return cat ? esc(cat) : 'из прозы'; }
 function renderProposal(kind, proposal, item){
   if(kind==='conflict'){
     return proposal.map(f=>`<div style="margin-bottom:10px">
-      <div class="muted" style="font-size:11px;margin-bottom:2px">${esc(f.category)}</div>
+      <div class="muted" style="font-size:11px;margin-bottom:2px">${catLabel(f.category)}</div>
       <div class="ed-pop-orig">«${esc(f.oldText)}»</div>
       <div class="ed-pop-arrow">→</div>
       <div class="ed-pop-sugg">«${esc(f.newText)}»</div>
     </div>`).join('');
   }
   return `<div style="margin-bottom:10px">
-    <div class="muted" style="font-size:11px;margin-bottom:2px">Заменит ${item.facts.length} факта категории «${esc(proposal.category)}» одним:</div>
+    <div class="muted" style="font-size:11px;margin-bottom:2px">Заменит ${item.facts.length} факта категории «${catLabel(proposal.category)}» одним:</div>
     <div class="ed-pop-sugg">«${esc(proposal.text)}»</div>
   </div>`;
 }

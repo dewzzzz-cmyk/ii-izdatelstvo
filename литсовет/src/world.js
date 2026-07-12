@@ -123,16 +123,33 @@ export async function suggestWorldFacts(state, category, opts={}){
 // ВСЕМ категориям сразу (общий срез мира); необязательный параметр category
 // сужает её до ОДНОЙ категории — точечная проверка прямо с карточки категории,
 // без прогона остальных.
+// Единый набор фактов для «Оценки глубины мира» — вынесен отдельно, чтобы
+// worldOverviewMessages (строит промпт) и runWorldOverview (резолвит номера
+// [N] из ответа обратно в факты) считали ОДИНАКОВЫЕ индексы, не дублируя
+// логику их построения в двух местах.
+// otherFacts — факты БЕЗ source:'world' (архивариус вытащил их реактивно из
+// уже написанной прозы, или автор добавил вручную через «Память») — раньше
+// они были полностью невидимы этой проверке: мир мог противоречить тому, что
+// уже написано в сценах (или наоборот), и ничего это не ловило. Только для
+// ОБЩЕЙ проверки (category=null) — точечная по одной категории мира была и
+// остаётся узкой, эти факты категории не имеют.
+function overviewFactSet(state, category){
+  const worldFacts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
+  const otherFacts = category ? [] : (state.bible||[]).filter(b=>b.source!=='world');
+  return { worldFacts, otherFacts, facts: [...worldFacts, ...otherFacts] };
+}
+
 export function worldOverviewMessages(state, category=null, opts={}){
   const p = state.project;
   const avoid = Array.isArray(opts.avoid) ? opts.avoid.slice(0, 20) : [];
-  const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
-  // Индекс [N] = позиция в этом же массиве facts — runWorldOverview резолвит
-  // его обратно в конкретный факт, чтобы кнопка «Исправить» знала, какие
-  // именно 2+ факта редактировать/сливать, а не только текстовое описание.
+  const { worldFacts, otherFacts } = overviewFactSet(state, category);
+  // Индекс [N] = позиция в общем facts (мир + затем "прочие") — runWorldOverview
+  // резолвит его обратно в конкретный факт, чтобы кнопка «Исправить» знала,
+  // какие именно 2+ факта редактировать/сливать, а не только текстовое описание.
   const byCategory = {};
-  facts.forEach((f,i)=>{ const cat=f.category||'без категории'; (byCategory[cat]=byCategory[cat]||[]).push({i,text:f.text}); });
+  worldFacts.forEach((f,i)=>{ const cat=f.category||'без категории'; (byCategory[cat]=byCategory[cat]||[]).push({i,text:f.text}); });
   const catText = Object.entries(byCategory).map(([cat,items])=>`${cat} (${items.length}):\n${items.map(it=>`  [${it.i}] ${it.text}`).join('\n')}`).join('\n\n');
+  const otherText = otherFacts.map((f,j)=>`  [${worldFacts.length+j}] ${f.text}`).join('\n');
   const sys = [
     category
       ? `Ты — редактор-worldbuilder. Оцени, насколько ГЛУБОКО и КОНКРЕТНО проработана ТОЛЬКО категория «${category}» мира книги — по уже собранным фактам канона, прозы может ещё не быть вообще.`
@@ -149,6 +166,11 @@ export function worldOverviewMessages(state, category=null, opts={}){
     'Отдельно от глубины — сверь факты МЕЖДУ СОБОЙ (не каждый по отдельности):',
     '1) ПРОТИВОРЕЧИЯ — даты/сроки, которые не сходятся при пересчёте (событие датировано раньше, чем возникло место/организация/технология, к которой оно привязано), причинно-следственные разрывы (кто-то пользуется тем, чего по хронологии ещё/уже не существует), один и тот же объект/событие описан по-разному в двух фактах. Укажи номера [N] ВСЕХ затронутых фактов.',
     '2) КАНДИДАТЫ НА ОБЪЕДИНЕНИЕ — два и более факта, рассказывающие по сути ОДНО И ТО ЖЕ (то же место/событие/правило другими словами или с небольшим смещением акцента) — их лучше слить в один насыщенный факт, чем оставлять тонкими дублями. Это НЕ то же самое, что похожие по формулировке факты (для этого есть отдельная локальная проверка дублей) — здесь именно смысловое совпадение, даже если слова разные. Укажи номера [N] всех фактов-кандидатов.',
+    // Факты из прозы (архивариус/ручное добавление) не участвуют в оценке
+    // ГЛУБИНЫ (это не проактивный worldbuilding, а то, что уже случилось в
+    // тексте) — но обязаны участвовать в сверке на противоречия: иначе сцена
+    // может тихо противоречить канону мира (или наоборот), и никто не заметит.
+    otherFacts.length ? 'Ниже отдельным списком — факты из уже написанной прозы или добавленные вручную (НЕ учитывай их при оценке глубины/полноты категорий). Сверь их с каноном мира выше на противоречия и смысловые дубли ТОЧНО ТАК ЖЕ, как факты мира между собой — если сцена установила что-то, что не сходится с уже решённым миром, это противоречие; если она просто пересказывает уже установленный факт мира другими словами — это кандидат на объединение.' : '',
     // При насыщенном каноне (сотни фактов) одна проверка физически не может
     // пересчитать ВСЕ пары фактов между собой за один проход — модель находит
     // лишь часть, и без этого списка каждый повторный клик «Искать ещё»
@@ -160,7 +182,8 @@ export function worldOverviewMessages(state, category=null, opts={}){
   const user = [
     `Жанр: ${p.genre||'роман'}${p.era?', '+p.era:''}.`,
     '',
-    facts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА${category?` КАТЕГОРИИ «${category}»`:' ПО КАТЕГОРИЯМ'} (номер в [квадратных скобках] — используй его в factIndices ниже, а не переписывай текст):\n${catText}` : `Фактов канона${category?` категории «${category}»`:''} пока нет вообще.`,
+    worldFacts.length ? `СОБРАННЫЕ ФАКТЫ КАНОНА${category?` КАТЕГОРИИ «${category}»`:' ПО КАТЕГОРИЯМ'} (номер в [квадратных скобках] — используй его в factIndices ниже, а не переписывай текст):\n${catText}` : `Фактов канона${category?` категории «${category}»`:''} пока нет вообще.`,
+    otherFacts.length ? `\nФАКТЫ ИЗ ПРОЗЫ/ДОБАВЛЕННЫЕ ВРУЧНУЮ (не для оценки глубины — только для сверки на противоречия с каноном мира выше):\n${otherText}` : '',
     '',
     category
       ? `Верни JSON: { "depth": 0-10 (0 = фактов почти нет или сплошные общие слова, 10 = богатая, конкретная категория), "issues": ["до 4 конкретных проблем с привязкой к факту"], "suggestions": ["до 4 конкретных направлений, что добавить или уточнить именно в этой категории"], "conflicts": [{"text":"суть противоречия","factIndices":[N,M]}] (до 6, ищи ВСЕ, не только самые очевидные), "mergeCandidates": [{"text":"что и почему стоит объединить","factIndices":[N,M]}] (до 6, ищи ВСЕ) }`
@@ -173,9 +196,11 @@ export function worldOverviewMessages(state, category=null, opts={}){
 export async function runWorldOverview(state, category=null, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
-  const facts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
+  const { worldFacts, facts } = overviewFactSet(state, category);
   const minFacts = category ? 2 : 3;
-  if(facts.length < minFacts) throw new Error(category ? `Нужно хотя бы ${minFacts} факта категории «${category}», чтобы оценить глубину.` : 'Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
+  // Гейт — по фактам МИРА, не по общему facts: без них нечего оценивать на
+  // глубину, даже если в каноне уже сотня строк, извлечённых из прозы.
+  if(worldFacts.length < minFacts) throw new Error(category ? `Нужно хотя бы ${minFacts} факта категории «${category}», чтобы оценить глубину.` : 'Нужно хотя бы несколько фактов канона мира, чтобы оценить глубину.');
   const msgs = worldOverviewMessages(state, category, opts);
   // 900 → 1400 → 2200: сверка фактов между собой (conflicts/mergeCandidates) —
   // новые поля поверх прежних, тот же бюджет их обрезал бы посреди ответа;
@@ -211,6 +236,12 @@ export async function runWorldOverview(state, category=null, opts={}){
 // (openFixModal в ui/world.js) уже сверила с текущим state.bible перед вызовом.
 // Правим/сливаем ТОЛЬКО то, что мешает — не переписываем факт с нуля, чтобы не
 // потерять остальной смысл, вложенный автором.
+// Факты из прозы (архивариус/ручное добавление) не имеют category — с тех
+// пор как оценщик мира сверяет их с каноном тоже (см. overviewFactSet), item.facts
+// здесь может включать такие; без этой заглушки промпт получал бы буквальное
+// "[undefined]" вместо метки.
+function catLabel(cat){ return cat || 'из прозы'; }
+
 export async function proposeConflictFix(state, item){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
@@ -219,7 +250,7 @@ export async function proposeConflictFix(state, item){
     `Противоречие: ${item.text}`,
     '',
     'Факты (верни исправленные версии в этом же порядке):',
-    item.facts.map((f,i)=>`${i+1}. [${f.category}] ${f.text}`).join('\n'),
+    item.facts.map((f,i)=>`${i+1}. [${catLabel(f.category)}] ${f.text}`).join('\n'),
     '',
     `Верни JSON: { "facts": [ { "text": "исправленный текст факта 1" }, { "text": "исправленный текст факта 2" } ] } — ровно ${item.facts.length} элемент(а/ов), в том же порядке, что и факты выше. Только JSON.`,
   ].join('\n');
@@ -240,7 +271,7 @@ export async function proposeMergeFix(state, item){
     `Почему стоит объединить: ${item.text}`,
     '',
     'Факты для объединения:',
-    item.facts.map((f,i)=>`${i+1}. [${f.category}] ${f.text}`).join('\n'),
+    item.facts.map((f,i)=>`${i+1}. [${catLabel(f.category)}] ${f.text}`).join('\n'),
     '',
     'Верни JSON: { "keys": "2-4 ключевых слова через запятую", "text": "объединённый факт, 1-3 предложения" }. Только JSON.',
   ].join('\n');
@@ -248,7 +279,12 @@ export async function proposeMergeFix(state, item){
   const j = extractJSON(res.text);
   const text = j && String(j.text||'').trim();
   if(!text) throw new Error('Не удалось разобрать объединение — попробуйте ещё раз.');
-  return { category: item.facts[0].category, keys: String(j.keys||'').trim(), text };
+  // Если хотя бы один из объединяемых фактов — уже часть категорийного
+  // канона мира (не безкатегорийная строка из прозы), объединённый факт
+  // наследует эту категорию — иначе слияние архивариус-факта с фактом мира
+  // тихо теряло бы категорию последнего.
+  const category = item.facts.find(f=>f.category)?.category;
+  return { category, keys: String(j.keys||'').trim(), text };
 }
 
 // Отпечаток набора фактов (число + лёгкая контрольная сумма текста) — НЕ
