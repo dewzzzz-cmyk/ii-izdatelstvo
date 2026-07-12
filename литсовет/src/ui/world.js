@@ -156,7 +156,7 @@ function renderMapBlock(s, geoCount){
 // category='X' — точечная проверка ОДНОЙ категории (кнопка «📊» на карточке):
 // заголовок и текст кнопки дозаполнения меняются, блок «Тонкие категории» не
 // показывается (он не имеет смысла, когда r уже про одну категорию).
-function openWorldDepthModal(r, onFill, category=null){
+function openWorldDepthModal(r, onFill, category=null, onRecheck=null){
   const root = document.getElementById('modalRoot'); if(!root) return;
   const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
   const title = category ? `📊 Глубина категории «${esc(category)}»` : '📊 Глубина мира';
@@ -176,6 +176,7 @@ function openWorldDepthModal(r, onFill, category=null){
     <h2>${title}</h2>
     <div class="apv-row" style="flex-direction:column;align-items:flex-start;gap:2px;background:var(--accent-bg);padding:10px 12px;margin-bottom:6px">
       <b style="font-size:24px;color:${col}">${r.depth}/10</b>
+      ${r.checkedAt ? `<span class="muted" style="font-size:11px">Проверено: ${new Date(r.checkedAt).toLocaleString('ru-RU')}</span>` : ''}
     </div>
     ${(!category && r.thinCategories.length) ? `<div class="ares-h">Тонкие категории</div>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">${r.thinCategories.map(c=>`<span class="tag">${esc(c)}</span>`).join('')}</div>` : ''}
@@ -183,6 +184,7 @@ function openWorldDepthModal(r, onFill, category=null){
     ${r.suggestions.length ? `<div class="ares-h">Куда копать</div>${r.suggestions.map(x=>`<div class="ares-note"><span>${esc(x)}</span></div>`).join('')}` : ''}
     ${(!r.issues.length && !r.suggestions.length) ? `<div class="muted" style="margin-top:8px">Замечаний нет — ${category?'категория':'мир'} уже неплохо проработан${category?'а':''}.</div>` : ''}
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
+      ${onRecheck ? `<button class="btn" id="wdRecheck">🔄 Переоценить</button>` : ''}
       ${showFill ? `<button class="btn btn-primary" id="wdFillThin">${fillLabel}</button>` : ''}
       <button class="btn" id="wdClose">Закрыть</button>
     </div>
@@ -192,6 +194,22 @@ function openWorldDepthModal(r, onFill, category=null){
   document.getElementById('wdClose').onclick = close;
   const fillBtn = document.getElementById('wdFillThin');
   if(fillBtn) fillBtn.onclick = ()=>{ close(); onFill(r); };
+  const recheckBtn = document.getElementById('wdRecheck');
+  if(recheckBtn) recheckBtn.onclick = ()=>{ close(); onRecheck(); };
+}
+
+// Прогон глубины — платный текстовый вызов; раньше повторное открытие панели
+// всегда гоняло его заново, даже если автор ничего не менял с прошлой
+// проверки. Результат теперь кладётся в канон (s.worldDepthEvals, ключ —
+// категория или '__all__' для общей) и переживает перезагрузку/переключение
+// вкладки — повторная оценка только по явному клику «🔄 Переоценить».
+async function runAndCacheDepth(s, category){
+  const r = await runWorldOverview(s, category);
+  const key = category || '__all__';
+  s.worldDepthEvals = s.worldDepthEvals || {};
+  s.worldDepthEvals[key] = { ...r, checkedAt: Date.now() };
+  save();
+  return s.worldDepthEvals[key];
 }
 
 // По клику «Дозаполнить тонкие категории»/«Учесть замечания по всем категориям»
@@ -361,28 +379,43 @@ function bindHandlers(els, s){
 
   const wdc = document.getElementById('wDepthCheck');
   if(wdc) wdc.onclick = async ()=>{
-    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
     if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
-    _depthBusy = true; renderWorld(els);
-    try{
-      _depthResult = await runWorldOverview(s);
-      openWorldDepthModal(_depthResult, (r)=>fillThinCategories(els, s, r));
-    }catch(e){ alert('Глубина мира: '+e.message); }
-    finally{ _depthBusy = false; renderWorld(els); }
+    const doRecheck = async ()=>{
+      if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+      if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+      _depthBusy = true; renderWorld(els);
+      try{
+        _depthResult = await runAndCacheDepth(s, null);
+        openWorldDepthModal(_depthResult, (r)=>fillThinCategories(els, s, r), null, doRecheck);
+      }catch(e){ alert('Глубина мира: '+e.message); }
+      finally{ _depthBusy = false; renderWorld(els); }
+    };
+    // Кэш (см. runAndCacheDepth) показывается без ключа — на просмотр прошлого
+    // результата ключ не нужен, только на «🔄 Переоценить» внутри модалки.
+    const cached = s.worldDepthEvals?.__all__;
+    if(cached){ _depthResult = cached; openWorldDepthModal(cached, (r)=>fillThinCategories(els, s, r), null, doRecheck); return; }
+    await doRecheck();
   };
 
   // Точечная проверка глубины ОДНОЙ категории (кнопка «📊» на карточке) —
   // отдельно от общей кнопки вверху, которая всегда идёт по всем сразу.
+  // Тот же кэш (s.worldDepthEvals), что и у общей проверки — свой ключ на категорию.
   document.querySelectorAll('.world-cat-depth').forEach(btn=>btn.onclick=async ()=>{
-    if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
     const cat = btn.dataset.cat;
     if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
-    _catDepthBusy = cat; renderWorld(els);
-    try{
-      const r = await runWorldOverview(s, cat);
-      openWorldDepthModal(r, (rr)=>fillOneCategory(els, s, cat, rr), cat);
-    }catch(e){ alert('Глубина категории: '+e.message); }
-    finally{ _catDepthBusy = null; renderWorld(els); }
+    const doRecheck = async ()=>{
+      if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+      if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+      _catDepthBusy = cat; renderWorld(els);
+      try{
+        const fresh = await runAndCacheDepth(s, cat);
+        openWorldDepthModal(fresh, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck);
+      }catch(e){ alert('Глубина категории: '+e.message); }
+      finally{ _catDepthBusy = null; renderWorld(els); }
+    };
+    const cached = s.worldDepthEvals?.[cat];
+    if(cached){ openWorldDepthModal(cached, (rr)=>fillOneCategory(els, s, cat, rr), cat, doRecheck); return; }
+    await doRecheck();
   });
 
   // «Предложить весь мир» — последовательно, категория за категорией (не
