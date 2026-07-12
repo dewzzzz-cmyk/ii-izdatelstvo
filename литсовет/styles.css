@@ -470,7 +470,12 @@ textarea{resize:vertical;min-height:60px}
 
 /* ── Modal ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100}
-.modal{background:var(--surface);border-radius:var(--radius-lg);padding:18px;width:420px;max-width:90vw}
+/* max-height+overflow-y на базовом классе, а не только у .ares-body ниже —
+   раньше только модалка ручного разбора агента (.ares) умела скроллиться;
+   любая другая с длинным содержимым (напр. «Глубина мира» с 4 проблемами +
+   4 подсказками + списком тонких категорий) могла вылезти за экран без
+   единого способа долистать до кнопок внизу — ни скролла модалки, ни фона. */
+.modal{background:var(--surface);border-radius:var(--radius-lg);padding:18px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto}
 .modal h2{font-size:15px;margin-bottom:14px}
 .settings-section{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);margin:18px 0 8px;padding-top:14px;border-top:1px solid var(--border)}
 .settings-section:first-of-type{margin-top:0;padding-top:0;border-top:none}
