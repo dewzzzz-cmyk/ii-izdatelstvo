@@ -160,8 +160,18 @@ function openWorldDepthModal(r, onFill, category=null){
   const root = document.getElementById('modalRoot'); if(!root) return;
   const col = r.depth>=7?'var(--ok)':r.depth>=4?'var(--warn)':'var(--err)';
   const title = category ? `📊 Глубина категории «${esc(category)}»` : '📊 Глубина мира';
-  const fillLabel = category ? `🔧 Дозаполнить «${esc(category)}»` : `🔧 Дозаполнить тонкие категории (${r.thinCategories.length})`;
-  const showFill = category ? true : r.thinCategories.length>0;
+  // Раньше кнопка дозаполнения при общей проверке зависела ТОЛЬКО от
+  // thinCategories — а модель по своему промпту вправе вернуть его пустым,
+  // если категории уже не пустые/расплывчатые, даже когда issues/suggestions
+  // («Куда копать») указывают на конкретные точечные пробелы. В этом случае
+  // кнопка вообще не показывалась — замечания было некуда деть, кроме как
+  // руками переписывать их в факты самому (см. fillThinCategories ниже —
+  // без thinCategories он теперь берёт все использующиеся категории).
+  const hasNotes = r.issues.length>0 || r.suggestions.length>0;
+  const fillLabel = category
+    ? `🔧 Дозаполнить «${esc(category)}»`
+    : r.thinCategories.length ? `🔧 Дозаполнить тонкие категории (${r.thinCategories.length})` : '🔧 Учесть замечания по всем категориям';
+  const showFill = category ? true : (r.thinCategories.length>0 || hasNotes);
   root.innerHTML = `<div class="modal-bg" id="wdBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>${title}</h2>
     <div class="apv-row" style="flex-direction:column;align-items:flex-start;gap:2px;background:var(--accent-bg);padding:10px 12px;margin-bottom:6px">
@@ -184,15 +194,20 @@ function openWorldDepthModal(r, onFill, category=null){
   if(fillBtn) fillBtn.onclick = ()=>{ close(); onFill(r); };
 }
 
-// По клику «Дозаполнить тонкие категории» из модалки — та же генерация, что
-// у «✨ Предложить»/«Предложить весь мир» (кандидаты, не автозапись в канон),
-// но только по категориям из thinCategories и с доп. подсказкой из issues/
-// suggestions проверки глубины, чтобы модель целилась именно в названные пробелы.
+// По клику «Дозаполнить тонкие категории»/«Учесть замечания по всем категориям»
+// из модалки — та же генерация, что у «✨ Предложить»/«Предложить весь мир»
+// (кандидаты, не автозапись в канон), с доп. подсказкой из issues/suggestions
+// проверки глубины, чтобы модель целилась именно в названные пробелы.
+// thinCategories — узкий список (модель вправе вернуть его пустым, даже когда
+// issues/suggestions не пусты — категории не «тонкие», просто есть точечные
+// замечания). Без явно тонких категорий обходим ВСЕ категории жанра — каждая
+// видит свои уже одобренные факты (см. worldSuggestMessages) и естественно
+// игнорирует замечания не по своей части, а не гадает вслепую.
 async function fillThinCategories(els, s, r){
   if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
   if(_busyCategory || _bulkBusy) return;
   const validCats = categoriesFor(s.project.genre);
-  const targets = r.thinCategories.filter(c=>validCats.includes(c));
+  const targets = r.thinCategories.length ? r.thinCategories.filter(c=>validCats.includes(c)) : validCats;
   if(!targets.length) return;
   const note = [
     r.issues.length ? `Проблемы из проверки глубины мира: ${r.issues.join('; ')}.` : '',
