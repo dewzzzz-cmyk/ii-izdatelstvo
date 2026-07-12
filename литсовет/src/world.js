@@ -253,7 +253,6 @@ export function mapPromptFor(state){
   const ic = state.illustrations || {};
   const lang = MAP_LANGUAGES[ic.mapLanguage] ? ic.mapLanguage : 'ru';
   const noText = lang === 'none';
-  const richLabels = !!ic.mapRichLabels;
   // Бюджет символов — у фактов ОТДЕЛЬНЫЙ кап, а не общий с шаблоном: при
   // насыщенном каноне (10+ фактов географии) общий .slice() в конце срезал
   // промпт прямо на середине списка фактов, тихо теряя половину из них —
@@ -276,10 +275,11 @@ export function mapPromptFor(state){
   const flavor = MAP_STYLE_FLAVORS[Math.floor(Math.random()*MAP_STYLE_FLAVORS.length)];
   // Карта обычно требует МНОГО подписей (по факту на место) — а именно плотный
   // мелкий текст (много коротких надписей на одной картинке) сильнее всего
-  // подвержен артефактам у любых image-моделей. По умолчанию просим подписать
-  // не всё подряд, а 2-3 САМЫХ важных места крупно; richLabels — осознанный
-  // авторский выбор пойти на больший риск нечитаемых надписей ради большего
-  // числа подписанных мест (см. чекбокс «Больше подписей» в ui/world.js).
+  // подвержен артефактам у любых image-моделей. Автор сам выбирает, сколько
+  // САМЫХ важных мест подписать крупно (селектор в ui/world.js, по умолчанию
+  // 5) — раньше это был бинарный переключатель («2-3» или «6-8»), не дающий
+  // выбрать промежуточное или большее значение.
+  const labelCount = Math.max(1, Math.min(10, Math.round(Number(ic.mapLabelCount)) || 5));
   // Доп. рычаги против кракозябр (сверх количества подписей и языка):
   // 1) жёсткий лимит длины подписи — длинное название («Пустыня Забытых
   //    Часов») ломается почти всегда, даже если подписей всего 2-3;
@@ -289,9 +289,12 @@ export function mapPromptFor(state){
   // 3) явный запрет на тонкие/рукописные засечки — они гарантированно
   //    рассыпаются на мелких деталях сильнее, чем толстая простая обводка.
   const fontNote = 'Use thick, simple, blocky lettering (like carved stone or a woodcut stamp) — thin serif or flowing cursive strokes reliably break apart into illegible marks at this level of detail.';
+  const riskNote = labelCount > 5
+    ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off.'
+    : ' Leave the rest of the geography unlabeled rather than cramming in more text — fewer, larger labels stay legible far more reliably than many small ones.';
   const geoLine = noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
-    : `Geography (must appear as visual features — ${facts}). Label ${richLabels ? 'up to 6-8 named places' : 'ONLY the 2-3 most important named places'}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Where a place's nature is obvious from a small icon (mountain, tree, skull, tower, wave), draw the icon INSTEAD of spelling it out, and reserve actual lettering only for proper names that need it. ${fontNote}${richLabels ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off.' : ' Numerous or small labels reliably render as illegible garbage regardless of these precautions, so leave the rest of the geography unlabeled rather than cramming in more text.'}`;
+    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name (e.g. for "Пустыня Забытых Часов" write only "Забытых Часов" or shorter). Where a place's nature is obvious from a small icon (mountain, tree, skull, tower, wave), draw the icon INSTEAD of spelling it out, and reserve actual lettering only for proper names that need it. ${fontNote}${riskNote}`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,

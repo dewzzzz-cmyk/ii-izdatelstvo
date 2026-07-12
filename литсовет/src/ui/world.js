@@ -141,7 +141,11 @@ function renderMapBlock(s, geoCount){
         </label>
       </div>
       <div class="row" style="margin-bottom:8px">
-        <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="По умолчанию карта подписывает только 2-3 самых важных места крупным текстом — так надёжнее. Больше подписей означает больше текста на картинке, а мелкий/частый текст у любых image-моделей чаще выходит нечитаемой кашей из символов."><input type="checkbox" id="wMapRichLabels" ${ic.mapRichLabels?'checked':''}> Больше подписей на карте (риск нечитаемых артефактов текста)</label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" for="wMapLabelCount" data-tip="Сколько САМЫХ важных мест подписать на карте крупным текстом. Больше подписей — больше текста на картинке, а мелкий/частый текст у любых image-моделей чаще выходит нечитаемой кашей из символов.">Мест на карте
+          <select id="wMapLabelCount" style="font-size:12px;width:auto">
+            ${[1,2,3,4,5,6,7,8,10].map(n=>`<option value="${n}" ${(ic.mapLabelCount??5)===n?'selected':''}>${n}</option>`).join('')}
+          </select>
+        </label>
       </div>
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
@@ -526,8 +530,8 @@ function bindHandlers(els, s){
   if(wMapLang) wMapLang.onchange = ()=>{ s.illustrations.mapLanguage = wMapLang.value; save(); renderWorld(els); };
   const wMapQuality = document.getElementById('wMapQuality');
   if(wMapQuality) wMapQuality.onchange = ()=>{ s.illustrations.quality = wMapQuality.value; save(); renderWorld(els); };
-  const wMapRichLabels = document.getElementById('wMapRichLabels');
-  if(wMapRichLabels) wMapRichLabels.onchange = ()=>{ s.illustrations.mapRichLabels = wMapRichLabels.checked; save(); renderWorld(els); };
+  const wMapLabelCount = document.getElementById('wMapLabelCount');
+  if(wMapLabelCount) wMapLabelCount.onchange = ()=>{ s.illustrations.mapLabelCount = parseInt(wMapLabelCount.value,10)||5; save(); renderWorld(els); };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
