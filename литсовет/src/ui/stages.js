@@ -845,6 +845,11 @@ function renderStructureEval(ev){
 // раньше, если оценка достигла 8/10 — тот же порог, что уже решал, показывать
 // ли кнопку «Улучшить» в renderStructureEval выше.
 const AXIS_NAMES_STRUCT = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
+// Почти идеальный балл — панель оценки прячется сама (см. runIterativeArchitect
+// ниже), а не ждёт, пока автор нажмёт «Скрыть» руками ради результата, который
+// и так хорош. Отдельно от порога 8/10 (останов итераций/кнопка «Улучшить») —
+// это порог именно видимости панели, по просьбе автора.
+const STRUCT_AUTOHIDE_SCORE = 9.5;
 function hintFromStructureEval(ev){
   if(!ev) return '';
   const axisScores = ev.axes
@@ -906,6 +911,14 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
     if(skeleton) await refreshMissingFacts(s, skeleton);
     if(evalResult && bestIter && bestIter < lastIter && evalResult.score < bestScore - 0.5){
       setStatus(`⚠ Итоговый прогон ${lastIter} (${evalResult.score}/10) вышел хуже прогона ${bestIter} (${bestScore}/10) — кнопкой «↶ скелет» выше можно вернуться на более ранний, лучший вариант (может понадобиться несколько нажатий).`);
+    } else if(evalResult && evalResult.score >= STRUCT_AUTOHIDE_SCORE){
+      // Балл почти идеальный — панель с оценкой и так больше нечего сообщить
+      // (issues/suggestions пусты), а «Улучшить» уже скрыта порогом 8/10 в
+      // renderStructureEval. Прячем панель сама, а не заставляем автора
+      // нажимать «Скрыть» руками ради результата, который и так хорош.
+      s.structureEval = null;
+      save();
+      setStatus(`✓ Структура оценена на ${evalResult.score.toFixed(1)}/10 — отлично, дальше не нужно.`);
     }
   }catch(e){
     setStatus('');
