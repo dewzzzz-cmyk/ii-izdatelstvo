@@ -7,6 +7,7 @@
 import { callLLM, extractJSON } from './llm.js';
 import { generateImage } from './imagegen.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
+import { estimateTokens } from './tokens.js';
 
 // Жанры с придуманным сеттингом — добавляют категорию магии/технологии/системы
 // (см. categoriesFor ниже). Стадия «Мир» видна всегда (как «Иллюстрации»),
@@ -160,6 +161,17 @@ function overviewFactSet(state, category){
   const worldFacts = (state.bible||[]).filter(b=>b.source==='world' && (!category || b.category===category));
   const otherFacts = category ? [] : (state.bible||[]).filter(b=>b.source!=='world');
   return { worldFacts, otherFacts, facts: [...worldFacts, ...otherFacts] };
+}
+
+// Оценка размера промпта общей/категорийной проверки ДО платного вызова —
+// в отличие от worldSuggestMessages (otherCanon там обрезается бюджетом),
+// здесь факты обрезать нельзя: смысл проверки — сверить ВСЕ факты между
+// собой на противоречия/дубли, усечение молча потеряло бы часть находок.
+// Единственная защита от неожиданно дорогого/медленного запроса на большом
+// каноне — предупредить автора заранее (см. вызов в ui/world.js).
+export function estimateOverviewTokens(state, category=null){
+  const msgs = worldOverviewMessages(state, category, {});
+  return estimateTokens(msgs[0].content) + estimateTokens(msgs[1].content);
 }
 
 export function worldOverviewMessages(state, category=null, opts={}){

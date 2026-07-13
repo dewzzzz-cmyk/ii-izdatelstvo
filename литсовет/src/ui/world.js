@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix, estimateOverviewTokens } from '../world.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -23,6 +23,11 @@ let _mapBusy = false;
 let _mapError = '';  // инлайн вместо блокирующего alert() — тот же подход, что в ui/illustrations.js
 let _mapLabelEdit = false; // режим расстановки текстовых подписей поверх карты (см. compositeMapLabels)
 let _mapLabelBusy = false; // идёт пересборка dataUrl (canvas) после добавления/правки/удаления подписи
+// Порог для предупреждения о размере проверки глубины (см. estimateOverviewTokens
+// в world.js) — точечные проверки по категории физически не могут его достичь
+// (там нет otherFacts и facts одной категории), срабатывает только на общей
+// проверке при насыщенном каноне (сотня+ фактов).
+const OVERVIEW_WARN_TOKENS = 10000;
 let _depthBusy = false;
 let _depthResult = null; // {depth, thinCategories, issues, suggestions} — последний прогон runWorldOverview, держится до следующего клика
 let _catDepthBusy = null; // категория, для которой сейчас идёт ТОЧЕЧНАЯ проверка глубины (кнопка «📊» на карточке, отдельно от общей кнопки вверху)
@@ -473,6 +478,18 @@ function isDepthStale(s, cached, category){
   return worldFactsFingerprint(s, category) !== cached.fingerprint;
 }
 
+// Общая проверка (category=null) включает ВСЕ факты канона разом (не только
+// otherCanon-справку, как у «✨ Предложить») — их нельзя обрезать бюджетом,
+// не потеряв часть находок о противоречиях. Единственная защита от
+// неожиданно дорогого/медленного запроса на насыщенном каноне — спросить
+// автора заранее, а не молча выставить счёт. Точечная проверка категории
+// сюда физически не попадает (там нет otherFacts, а facts — одна категория).
+function confirmOverviewCost(s, category){
+  const est = estimateOverviewTokens(s, category);
+  if(est <= OVERVIEW_WARN_TOKENS) return true;
+  return confirm(`Канон уже большой (${s.bible.length} фактов) — проверка соберёт промпт примерно на ${est.toLocaleString('ru')} токенов, это дороже и медленнее обычного запроса. Продолжить?`);
+}
+
 // По клику «Дозаполнить тонкие категории»/«Учесть замечания по всем категориям»
 // из модалки — та же генерация, что у «✨ Предложить»/«Предложить весь мир»
 // (кандидаты, не автозапись в канон), с доп. подсказкой из issues/suggestions
@@ -644,6 +661,7 @@ function bindHandlers(els, s){
     const runAndOpen = async (opts)=>{
       if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
       if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+      if(!confirmOverviewCost(s, null)) return;
       _depthBusy = true; renderWorld(els);
       try{
         _depthResult = await runAndCacheDepth(s, null, opts);
@@ -669,6 +687,7 @@ function bindHandlers(els, s){
     const runAndOpen = async (opts)=>{
       if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
       if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+      if(!confirmOverviewCost(s, cat)) return;
       _catDepthBusy = cat; renderWorld(els);
       try{
         const fresh = await runAndCacheDepth(s, cat, opts);
