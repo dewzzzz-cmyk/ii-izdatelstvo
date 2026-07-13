@@ -74,7 +74,30 @@ export function worldSuggestMessages(state, category, opts={}){
   // явный список (ui/world.js передаёт в него ещё и кандидатов ЭТОГО ЖЕ
   // булк-прогона «Предложить весь мир», которые пока не одобрены и потому
   // не попали в state.bible); без него — берём одобренный канон сами.
-  const otherCanon = opts.otherCanon || (state.bible||[]).filter(b=>b.source==='world' && b.category!==category);
+  const otherCanonRaw = opts.otherCanon || (state.bible||[]).filter(b=>b.source==='world' && b.category!==category);
+  // Бюджет на канон других категорий — без него насыщенный мир (реальный
+  // пример: 134 факта, 5 категорий) раздувает рутинный клик «Предложить»
+  // ОДНОЙ категории до ~39 тыс. символов (~20 тыс. токенов) только за счёт
+  // «контекста, чтобы не противоречить» — почти весь остальной канон целиком
+  // на каждый чих. Делим бюджет ПОРОВНУ между категориями (не по порядку
+  // массива), иначе одна большая категория (например, 37 фактов культуры)
+  // съедает весь лимит, а самая маленькая не достаётся вообще — тот же приём,
+  // что и FACTS_BUDGET в mapPromptFor ниже: целыми фактами, без обрезки на
+  // середине предложения.
+  const OTHER_CANON_BUDGET = 3000;
+  const otherByCat = {};
+  otherCanonRaw.forEach(f=>{ (otherByCat[f.category||'—']=otherByCat[f.category||'—']||[]).push(f); });
+  const otherCatKeys = Object.keys(otherByCat);
+  const perCatBudget = otherCatKeys.length ? OTHER_CANON_BUDGET / otherCatKeys.length : OTHER_CANON_BUDGET;
+  const otherCanon = [];
+  otherCatKeys.forEach(cat=>{
+    let used = 0;
+    for(const f of otherByCat[cat]){
+      const len = f.text.length + cat.length + 4;
+      if(used && used + len > perCatBudget) break;
+      otherCanon.push(f); used += len;
+    }
+  });
   const sys = [
     'Ты — соавтор по мироустройству (worldbuilding). Ты предлагаешь конкретные факты мира книги — НЕ пишешь прозу и не строишь сюжет.',
     'Каждый факт — конкретное, проверяемое утверждение (не «в этом мире есть магия», а «боевая магия истощает год жизни за каждое применение») — расплывчатые факты хуже работают с системой поиска канона и не помогают стражам ловить противоречия.',
