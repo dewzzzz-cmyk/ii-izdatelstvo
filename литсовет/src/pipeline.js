@@ -490,10 +490,19 @@ export async function runScene(state, scene, opts={}, onProgress){
     if(agentEnabled('lineedit')){
       const leAg = ag(state,'lineedit');
       const beforeLineEdit = best;
+      // Линейный редактор возвращает ВЕСЬ отредактированный текст сцены целиком
+      // (не диф/список правок) — в отличие от статичного maxTokens он должен
+      // расти вместе со сценой, иначе на длинных сценах (проект на 90 тыс. слов
+      // при 48 сценах — уже ~1875 слов на сцену в среднем, кульминационные ещё
+      // длиннее) ответ обрывается раньше, чем текст дописан. Тот же приём и та
+      // же формула (2.5 ток/слово), что и у Прозаика чуть выше по файлу.
+      const bestWords = (best.match(/\S+/g)||[]).length;
+      const leDynMin = Math.max(2000, Math.round(bestWords * 2.5));
+      const leMaxTk = Math.max(leAg.maxTokens ?? 3600, leDynMin);
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
-          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:leAg.maxTokens??1600 });
+          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:leMaxTk });
           if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
             logStep({ agent:'lineedit', input:'(черновик)', output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
             onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
@@ -501,7 +510,13 @@ export async function runScene(state, scene, opts={}, onProgress){
             if(gt.approve){ best = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text; break; }
             // переписать: оставляем прежний best, просим иначе — но без note менять нечего, выходим
             if(!gt.note){ break; }
-          } else break;
+          } else {
+            // Раньше это било молча — сцена просто оставалась без правки
+            // Линейного редактора без единого следа, автор не мог отличить
+            // «текст уже был идеален» от «ответ обрезался лимитом токенов».
+            onProgress && onProgress({log:{icon:'⚠️', text:`Линейный редактор: ответ короче половины исходного текста (похоже на обрыв лимитом ${leMaxTk} ток.) — правка пропущена, текст остаётся как был`, state:'warn'}});
+            break;
+          }
         }catch(e){ logStep({ agent:'lineedit', output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message }); break; }
       }
       // Линейный редактор — последний шаг, Стражи его результат уже не проверяют.
