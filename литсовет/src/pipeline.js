@@ -70,7 +70,7 @@ async function gate(state, role, label, output, opts, extra={}){
   return await opts.onApproval({ role, label, output, ...extra });
 }
 // Объединённая директива: Прозаик получает всё сразу — оценщик + стражи + запреты.
-function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions){
+function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions, literaryNotes){
   const parts = [];
   if((verdict.anchors||[]).length) parts.push('СОХРАНИ ДОСЛОВНО (якоря): ' + verdict.anchors.join('; '));
   parts.push(...(verdict.notes||[]));
@@ -81,6 +81,12 @@ function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestio
   // наравне с настоящими critical — Прозаик был вынужден изобретать факт, которого
   // в сцене нет, лишь бы «исправить» то, что на деле было вопросом автору.
   if(factualQuestions && factualQuestions.length) parts.push('ВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (это пробел, не ошибка — не выдумывай факт: либо сделай формулировку нейтральной, либо оставь как есть для решения автора):\n' + factualQuestions.join('\n'));
+  // Замечания литературных стражей (голос/стиль/юмор/диалог/развязка/атмосфера/...)
+  // с severity 'warning' — раньше эти стражи физически не успевали отработать до
+  // последней итерации (см. гейт iter>=maxIter-1 выше), так что их находки было
+  // некому применить. Теперь они успевают, но по своей природе это стилистические
+  // рекомендации, а не обязательные к исправлению ошибки — формулируем как совет.
+  if(literaryNotes && literaryNotes.length) parts.push('ЗАМЕЧАНИЯ ЛИТЕРАТУРНЫХ СТРАЖЕЙ (стиль/приём — учти при правке, если не противоречит другим указаниям):\n' + literaryNotes.join('\n'));
   if(allBanned.length) parts.push('убери клише (все предыдущие итерации): ' + allBanned.join(', '));
   return parts.join('\n\n');
 }
@@ -280,6 +286,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       flags = {};
       let criticals = [];
       let factualQuestions = [];
+      let literaryNotes = [];
       const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
 
       // Проверка механических повторов (не LLM, см. guards.js) — не завязана на
@@ -303,8 +310,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         (state.agents||[]).filter(a=>a.custom && a.enabled!==false && a.factual).forEach(a=>{
           guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
         });
-        // Литературные стражи — только когда текст принят или итерации кончились
-        if(evalAccepted || iter >= maxIter){
+        // Литературные стражи — когда текст принят, или за одну итерацию до конца
+        // (не строго на последней): иначе их находки физически некому применить —
+        // после последней итерации Прозаик уже не переписывает черновик.
+        if(evalAccepted || iter >= maxIter - 1){
           if(agentEnabled('voiceguard')){
             if(voiceExamples.length > 0)
               guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags, onProgress));
@@ -370,6 +379,13 @@ export async function runScene(state, scene, opts={}, onProgress){
         // завершение сцены и не требует придумывать ответ.
         factualQuestions = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
           .filter(f=>f.severity==='warning' && isFactualGuard(state, role))
+          .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+        // warning от ЛИТЕРАТУРНЫХ стражей (голос/стиль/юмор/диалог/...) — раньше
+        // никуда не шли дальше flagList (видны в логе, но не в директиве Прозаику):
+        // с гейтом на iter>=maxIter-1 они теперь успевают появиться ДО последней
+        // итерации, так что должны реально доходить до правки, а не только до лога.
+        literaryNotes = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+          .filter(f=>f.severity==='warning' && !isFactualGuard(state, role))
           .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
         if(flagList.length || dupFound.length){
           onProgress && onProgress({log:{icon:'🛡',
@@ -437,7 +453,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           break;
         }
         if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
-        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions) || directive;
+        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes) || directive;
         continue;
       }
 
@@ -486,7 +502,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       // всплывёт снова в другой сцене, автор увидит подсказку «уже случалось» в
       // Памяти вместо того, чтобы Оценщик каждый раз находил её заново с нуля.
       if(directiveVerdict.clicheCategory) recordObservedPattern(state, scene.id, directiveVerdict.clicheCategory);
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions) || directive) + stagnantNote + categoryNote;
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes) || directive) + stagnantNote + categoryNote;
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
