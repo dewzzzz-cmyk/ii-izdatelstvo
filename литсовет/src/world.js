@@ -6,7 +6,7 @@
 
 import { callLLM, extractJSON } from './llm.js';
 import { generateImage } from './imagegen.js';
-import { tokensOf, tfvec, cosine } from './bible.js';
+import { tokensOf, tfvec, cosine, bibleForPrompt } from './bible.js';
 import { estimateTokens } from './tokens.js';
 
 // Жанры с придуманным сеттингом — добавляют категорию магии/технологии/системы
@@ -525,10 +525,19 @@ export async function generateWorldMap(state){
 export function missingFactsMessages(state, skeleton){
   const p = state.project;
   const worldFacts = (state.bible||[]).filter(b=>b.source==='world');
-  const canonText = worldFacts.length ? worldFacts.map(f=>`— ${f.text}`).join('\n') : '(канон пуст)';
   const skeletonText = skeleton.chapters.map((ch,ci)=>
     (ch.scenes||[]).map((sc,si)=>`${ci+1}.${si+1}. ${sc.brief||sc.title}`).join('\n')
   ).join('\n');
+  // Раньше — ВЕСЬ канон целиком, та же болезнь, что у worldOverviewMessages/
+  // otherCanon (worldSuggestMessages): на реальном проекте (134 факта) это
+  // ~36 700 симв/~16 700 ток., и, в отличие от тех проверок, ЭТА собирается
+  // АВТОМАТИЧЕСКИ при каждой (пере)генерации скелета (см. ui/stages.js), а не
+  // по явному клику — то есть чаще и без предупреждения о цене. Здесь усечение
+  // безопасно (в отличие от общей проверки мира): задача не сверить факты МЕЖДУ
+  // СОБОЙ, а дать архитектору общее представление о каноне, чтобы не изобретать
+  // то, что уже есть — тот же TF-IDF-подбор, что уже используется для самого
+  // скелета в architect-book.js.
+  const canonText = worldFacts.length ? bibleForPrompt(worldFacts, skeletonText, 30) : '(канон пуст)';
   const sys = 'Ты — книжный архитектор. Ты только что спроектировал скелет книги. Сверь его с уже зафиксированным каноном мира и найди факты, на которые скелет ОПИРАЕТСЯ (упоминает как данность), но которых в каноне ещё нет. НЕ придумывай новые сюжетные повороты — только формализуй то, что уже подразумевает скелет.';
   const user = [
     `Жанр: ${p.genre||'роман'}.`,
