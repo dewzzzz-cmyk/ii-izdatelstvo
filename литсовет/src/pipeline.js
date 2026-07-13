@@ -8,9 +8,9 @@ import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
-         parseDebateRevision, styleGuardMessages, readerGuardMessages, imageryGuardMessages,
-         povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
-         humorGuardMessages, findDuplicatePhrases } from './guards.js';
+         radicalReviseMessages, parseDebateRevision, styleGuardMessages, readerGuardMessages,
+         imageryGuardMessages, povGuardMessages, dialogueGuardMessages, resolutionGuardMessages,
+         atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag } from './state.js';
@@ -159,6 +159,12 @@ export async function runScene(state, scene, opts={}, onProgress){
     let anchorVerdict = null;   // оценки итерации 1 — baseline для стабильности Оценщика
     const scoreHistory = [];    // история scores по итерациям — детектор стагнации осей
     const AXIS_LABELS = Object.fromEntries(RUBRIC_AXES.map(a=>[a.key, a.label]));
+    // true, если предыдущая итерация обнаружила стагнацию осей — на СЛЕДУЮЩУЮ
+    // итерацию идём через radicalReviseMessages вместо surgicalReviseMessages
+    // (см. комментарий там же): иначе директива «измени РАДИКАЛЬНО» уходит в
+    // промпт, который тут же безусловно запрещает именно это, и застревание
+    // никогда не выходит из локального минимума точечных правок.
+    let stagnantLastIter = false;
 
     while(iter < maxIter && safety++ < 20){
       iter++;
@@ -167,9 +173,14 @@ export async function runScene(state, scene, opts={}, onProgress){
       const streamCb = chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); };
       let pRes, logInput, logLayers;
       if(isRevision){
-        onProgress && onProgress({stage:'prose', text:`Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
+        onProgress && onProgress({stage:'prose', text: stagnantLastIter
+          ? `Прозаик перерабатывает застрявшие места шире обычного (итерация ${iter})…`
+          : `Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
         const cap = Math.min(5000, Math.max(2000, Math.round(prevDraft.length/2) + 1400));
-        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: surgicalReviseMessages(prevDraft, directive, state.style?.rules), maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
+        const reviseMsgs = stagnantLastIter
+          ? radicalReviseMessages(prevDraft, directive, state.style?.rules)
+          : surgicalReviseMessages(prevDraft, directive, state.style?.rules);
+        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
         const parsed = parseDebateRevision(pRes.text);
         if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
         if(parsed.rejected && parsed.rejected.length){
@@ -454,13 +465,15 @@ export async function runScene(state, scene, opts={}, onProgress){
       // как «подряд» и мог заявить «стагнация 2 итерации», хотя в промежутке был
       // пропуск, а не реальное отсутствие прогресса.
       let stagnantNote = '';
+      stagnantLastIter = false;
       if(scoreHistory.length >= 2){
         const last = scoreHistory[scoreHistory.length-1], prev = scoreHistory[scoreHistory.length-2];
         const adjacent = last && prev && last.iter === prev.iter + 1;
         const stuck = adjacent ? RUBRIC_AXES.map(a=>a.key).filter(k=>(last[k]||0) <= (prev[k]||0) + 0.5) : [];
         if(stuck.length){
           stagnantNote = '\n\nОСИ БЕЗ ПРОГРЕССА — измени подход РАДИКАЛЬНО, не шлифуй то же самое: ' + stuck.map(k=>AXIS_LABELS[k]||k).join(', ');
-          onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена`, state:'warn'}});
+          stagnantLastIter = true;
+          onProgress && onProgress({log:{icon:'⚡', text:`Стагнация осей: ${stuck.map(k=>AXIS_LABELS[k]).join(', ')} — директива усилена, следующая правка пойдёт шире обычной`, state:'warn'}});
         }
       }
       // Бан точной фразы не спасает от клише — модель просто перефразирует ту же идею
