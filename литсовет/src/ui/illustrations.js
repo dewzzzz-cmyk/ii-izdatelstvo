@@ -311,21 +311,29 @@ function bindHandlers(els, s){
     if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
     if(_busy || !_manualChecked.size) return;
     const chapters = chaptersWithProse(s);
-    const targets = [..._manualChecked].map(t=>{
-      if(t==='cover') return {type:'cover'};
-      const ch = chapters.find(c=>c.id===t);
-      return ch ? {type:'scene', chapterId:ch.id, chapterTitle:ch.title} : null;
+    // Пары (ключ чекбокса → цель), не просто список целей — иначе после цикла
+    // нечем сопоставить упавшую цель обратно с конкретным чекбоксом ('cover'
+    // или id главы), чтобы снять отметку ТОЛЬКО с реально обработанных.
+    const pairs = [..._manualChecked].map(key=>{
+      if(key==='cover') return { key, target:{type:'cover'} };
+      const ch = chapters.find(c=>c.id===key);
+      return ch ? { key, target:{type:'scene', chapterId:ch.id, chapterTitle:ch.title} } : null;
     }).filter(Boolean);
     _busy = true; _suggestError='';
     const fresh = [];
-    for(let i=0;i<targets.length;i++){
-      _busyText = `Подбираю промпт ${i+1}/${targets.length}…`; renderIllustrations(els);
-      try{ fresh.push(await suggestOneIllustration(s, targets[i])); }
+    // Раньше _manualChecked = new Set() сбрасывал ВСЕ отметки безусловно,
+    // включая упавшие цели — при сбое одной главы автор терял весь выбор и
+    // должен был по памяти отмечать заново, что именно не сгенерировалось
+    // (репорт «пропадает выбор глав после первой генерации»). Теперь снимаем
+    // отметку только с успешно обработанных — упавшие остаются отмеченными,
+    // повторный клик «Предложить промпты» повторит только их.
+    for(let i=0;i<pairs.length;i++){
+      _busyText = `Подбираю промпт ${i+1}/${pairs.length}…`; renderIllustrations(els);
+      try{ fresh.push(await suggestOneIllustration(s, pairs[i].target)); _manualChecked.delete(pairs[i].key); }
       catch(e){ _suggestError = e.message; }
     }
     _candidates = [..._candidates, ...fresh];
     fresh.forEach(c=>_selected.add(c.id));
-    _manualChecked = new Set();
     _busy = false; _busyText='';
     announce(fresh.length ? `Предложено ${fresh.length} промптов` : 'Не удалось предложить промпты');
     renderIllustrations(els);
