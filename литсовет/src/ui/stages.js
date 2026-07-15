@@ -1219,6 +1219,7 @@ export function renderWrite(els){
       ${(()=>{ const illust=illustrationForScene(s, scene.id); return illust?`<img class="scene-thumb" src="${illust}" alt="Иллюстрация сцены" data-tip="Иллюстрация сцены — клик открывает в полный размер" id="sceneThumb">`:''; })()}
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
+      ${(scene.status==='done' && scene.targetWords && scene.words && scene.words < scene.targetWords*0.6)?`<span class="stale-badge" title="Правки Оценщика/Прозаика режут текст, но объём в директиву не попадает — короче цели могло получиться и намеренно (хороший ритм), и просто из-за накопленных сокращений. Проверьте на слух.">📏 ${scene.words} из ${scene.targetWords} слов</span>`:''}
       <span style="flex:1"></span>
       ${scene.text?'<button class="iconbtn" id="edProof" data-tip="ИИ-корректор: орфография, пунктуация, согласование. Стиль не трогает — покажет список правок перед применением.">Аа✓</button>':''}
       ${scene.text?`<button class="iconbtn" id="edStyle" data-tip="Редактор: ищет клише, эмоциональные ярлыки, однообразный ритм. В ручном режиме подсвечивает фрагменты прямо в тексте — примите (✓) или отклоните (✗) каждый. В авто — применяет сразу.">${_edReviewOn?'✕ Завершить редактуру':'📝 Редактор'}</button>

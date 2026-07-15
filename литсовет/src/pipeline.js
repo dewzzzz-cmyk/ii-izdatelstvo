@@ -502,7 +502,19 @@ export async function runScene(state, scene, opts={}, onProgress){
       // всплывёт снова в другой сцене, автор увидит подсказку «уже случалось» в
       // Памяти вместо того, чтобы Оценщик каждый раз находил её заново с нуля.
       if(directiveVerdict.clicheCategory) recordObservedPattern(state, scene.id, directiveVerdict.clicheCategory);
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes) || directive) + stagnantNote + categoryNote;
+      // Директива правки никогда не напоминает про объём (только самый первый
+      // черновик видит scene.targetWords, см. buildTask в context.js) — а ось
+      // «Темп» Оценщика на каждой итерации честно просит резать «избыточные
+      // детали». Без противовеса это копится: черновик усыхает итерация за
+      // итерацией без единого сигнала «уже ниже цели, хватит резать» (найдено
+      // на реальной сцене: 751→747→651→629→619 слов при цели 1500 — 5 правок
+      // подряд без единого отскока вверх). Не запрещаем резать (замечание может
+      // быть правильным), только просим не резать ДАЛЬШЕ без необходимости.
+      const curWords = (pRes.text.match(/\S+/g)||[]).length;
+      const lengthNote = (scene.targetWords && curWords < scene.targetWords*0.7)
+        ? `\n\nОБЪЁМ: черновик уже заметно короче цели (${curWords} из ${scene.targetWords} слов) — если конкретное замечание выше не требует прямо резать текст, ищи другой способ его выполнить (не удаляй абзацы целиком ради мелкой правки).`
+        : '';
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes) || directive) + stagnantNote + categoryNote + lengthNote;
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
