@@ -49,6 +49,7 @@ export function defaultState(){
       forbidden: ['клише','эмоц. ярлыки','восклицания'],
       rules: [],               // правила автора (do/don't): идут Прозаику, Оценщику, Стражу стиля
       profanity: 'off',        // off | mild | moderate | strict — см. effectiveRules() ниже
+      humorLevel: 'auto',      // auto | off | light | strong — см. humorLevelNote() в genres.js
       colorMode: 'color',      // color | bw — цветные иллюстрации или чёрно-белые
       artStyleId: '',          // id пресета из artStyles.js; '' = без пресета (только «Визуальный голос»)
     },

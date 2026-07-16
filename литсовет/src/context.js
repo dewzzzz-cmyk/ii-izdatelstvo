@@ -7,7 +7,7 @@ import { bibleForPrompt } from './bible.js';
 import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
 import { charNamesMatch, effectiveRules } from './state.js';
-import { genreToneNote, genreJudgeNote } from './genres.js';
+import { genreToneNote, genreJudgeNote, humorLevelNote } from './genres.js';
 
 const SEP = '\n\n';
 
@@ -162,7 +162,7 @@ export function buildSceneContext(state, scene, opts={}){
   const curIdx = scenesInOrder.findIndex(n=>n.id===scene.id);
   const isFirstScene = curIdx === 0;
   const prevSceneNode = curIdx > 0 ? scenesInOrder[curIdx-1] : null;
-  const user = buildTask(scene, proj, opts, isFirstScene, prevSceneNode);
+  const user = buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style);
 
   return {
     messages: [
@@ -188,7 +188,7 @@ function sequelConnectionNote(opts, prevSceneNode){
   return '';
 }
 
-function buildTask(scene, proj, opts, isFirstScene, prevSceneNode){
+function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style){
   const lines = [];
   const revising = !!opts.prevDraft;
   // При доработке директива идёт первой — иначе тонет в контексте ниже брифа и объёма
@@ -199,7 +199,13 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode){
   lines.push('Бриф сцены: ' + (scene.brief || scene.title || '(нет)'));
   if(scene.emotion) lines.push('Эмоция читателя в финале: ' + scene.emotion + ' (передай через действие и деталь, не называй чувство прямо).');
   const target = scene.targetWords || 700;
-  lines.push(`Объём: примерно ${target} слов.`);
+  // «Примерно N слов» систематически недобиралось живыми прогонами (первый
+  // черновик приходил на 40-45% цели — 605-650 слов при цели 1500 — до единой
+  // правки, то есть проблема не в цикле оценщик⇄правки, который уже защищён
+  // effectiveRules/tooShort, а в самом первом черновике). Явное разрешение
+  // разворачивать сцену подробнее — не «пиши больше воды», а конкретные оси
+  // (тело, окружение, паузы), которые не в ущерб плотности прозы.
+  lines.push(`Объём: ${target} слов — это цель, а не мягкий ориентир. Если чувствуешь, что укладываешься заметно короче, разворачивай сцену подробнее (телесная реакция, конкретная деталь окружения, пауза перед репликой) вместо того, чтобы обрывать её раньше времени ради лаконичности.`);
   if(!revising && opts.directive) lines.push('Указание автора: ' + opts.directive);
   // Тип сцены по Дуайту Свейну (техника «сцена/секвель») — задаёт внутреннюю
   // структуру и держит ритм книги: не каждая сцена должна быть на пределе напряжения.
@@ -223,6 +229,10 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode){
   // на уровне конкретной сцены для жанров со своими конвенциями письма.
   const toneNote = genreToneNote(proj.genre);
   if(toneNote) lines.push(toneNote);
+  // Явная авторская настройка иронии/юмора поверх жанрового умолчания — см.
+  // её комментарий в genres.js. 'auto' ничего не добавляет (тон решает жанр).
+  const humorNote = humorLevelNote(style?.humorLevel);
+  if(humorNote) lines.push(humorNote);
   lines.push(opts.prevSceneText
     ? 'Финал сцены: посмотри, каким приёмом заканчивается «ПРЕДЫДУЩАЯ СЦЕНА» в контексте — если она уже завершается коротким зеркальным предложением и уходом в тишину/темноту, в этот раз закончи иначе (репликой, действием, конкретной деталью, вопросом без ответа).'
     : 'Финал сцены: не завершай сцену дежурным приёмом «короткое зеркальное предложение + тишина/темнота» — выбери другой способ поставить точку.');

@@ -157,7 +157,13 @@ export async function runScene(state, scene, opts={}, onProgress){
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7.5;
     const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 5) : 1;
-    const wantsHumor = genreWantsHumor(state.project?.genre); // см. humor ниже — страж только для иронических жанров
+    // 'auto' (умолчание) — решает жанр, как раньше. Явная настройка автора
+    // (style.humorLevel) может как включить стража юмора вне «иронических»
+    // жанров ('light'/'strong'), так и выключить его в них ('off').
+    const humorLevel = state.style?.humorLevel;
+    const wantsHumor = humorLevel==='off' ? false
+      : (humorLevel==='light' || humorLevel==='strong') ? true
+      : genreWantsHumor(state.project?.genre);
     const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
       agentEnabled('reader') || agentEnabled('imagery') || agentEnabled('pov') || agentEnabled('dialogue') ||
       agentEnabled('resolution') || agentEnabled('atmosphere') || (agentEnabled('humor') && wantsHumor) ||

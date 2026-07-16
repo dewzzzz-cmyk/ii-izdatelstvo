@@ -472,6 +472,7 @@ export function renderVoice(els){
       ${renderStylePresets(s)}
       ${renderRefsEditor(s)}
       ${renderProfanityEditor(s)}
+      ${renderHumorEditor(s)}
       ${renderRulesEditor(s)}
 
       <div class="row" style="margin-top:18px;justify-content:flex-end">
@@ -489,6 +490,7 @@ export function renderVoice(els){
   bindModeSwitchKeyboard(document.getElementById('vmode'));
   bindRefsEditor();
   bindProfanityEditor();
+  bindHumorEditor();
   bindRulesEditor();
   document.querySelectorAll('.style-add').forEach(btn=>{
     btn.onclick = ()=>{
@@ -654,6 +656,31 @@ function bindProfanityEditor(){
   const sel = document.getElementById('profanitySel');
   if(!sel) return;
   sel.onchange = ()=>{ const s=getState(); s.style.profanity = sel.value; save(); };
+}
+
+// Явная авторская настройка иронии/юмора поверх жанрового умолчания — см.
+// humorLevelNote() в genres.js. Найдено живым разбором: даже в ироничном
+// жанре модель регулярно роняет иронию к кульминации, а жанровая заметка
+// это лишь разрешает, не требует — 'strong' даёт явное требование.
+const HUMOR_OPTIONS = [
+  ['auto', 'Автоматически — решает жанр'],
+  ['off', 'Выключено — держать серьёзный тон'],
+  ['light', 'Немного — только в спокойных местах'],
+  ['strong', 'Много — ирония даже в кульминации'],
+];
+function renderHumorEditor(s){
+  const cur = s.style.humorLevel || 'auto';
+  return `<div class="field" style="margin-top:22px;border-top:1px solid var(--border);padding-top:16px">
+    <label>Ирония / юмор <span class="hint">(влияет на Прозаика; включает Стража юмора вне «иронических» жанров)</span></label>
+    <select id="humorSel">
+      ${HUMOR_OPTIONS.map(([v,label])=>`<option value="${v}"${cur===v?' selected':''}>${esc(label)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+function bindHumorEditor(){
+  const sel = document.getElementById('humorSel');
+  if(!sel) return;
+  sel.onchange = ()=>{ const s=getState(); s.style.humorLevel = sel.value; save(); };
 }
 
 // Правила автора (do/don't): задаются один раз, идут Прозаику (профилактика),
