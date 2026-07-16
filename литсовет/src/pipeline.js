@@ -70,10 +70,20 @@ async function gate(state, role, label, output, opts, extra={}){
   return await opts.onApproval({ role, label, output, ...extra });
 }
 // Объединённая директива: Прозаик получает всё сразу — оценщик + стражи + запреты.
-function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions, literaryNotes){
+function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions, literaryNotes, tooShort){
   const parts = [];
   if((verdict.anchors||[]).length) parts.push('СОХРАНИ ДОСЛОВНО (якоря): ' + verdict.anchors.join('; '));
-  parts.push(...(verdict.notes||[]));
+  // Ось «Темп» Оценщика пишет notes вида «избыточная деталь — сократи/убери» на
+  // каждой итерации, не глядя на текущий объём сцены. Когда сцена уже заметно
+  // короче цели (tooShort), эта команда — один голос среди прочих замечаний —
+  // статистически перевешивает единственный lengthNote в конце директивы (найдено
+  // на реальном прогоне: ось «Темп» + 6 правок диалога одной итерацией срезали
+  // 761→671 слов, несмотря на lengthNote). Глушим команду «режь» ТОЧЕЧНО у
+  // notes, где она встречается — сама претензия (что именно топчется) остаётся
+  // видна, просто без указания как её решать.
+  const notes = (verdict.notes||[]).map(n=>
+    (tooShort && SHORTEN_HINT_RE.test(n)) ? n + ' — НЕ сокращай: сцена и так короче цели, реши другим способом.' : n);
+  parts.push(...notes);
   if(criticalFlags.length) parts.push('КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticalFlags.join('\n'));
   // Отдельно от критических: вопросы фактических стражей (логика/события) с severity
   // "warning" — их собственный промпт называет их пробелом, на который не нужно
@@ -275,6 +285,10 @@ export async function runScene(state, scene, opts={}, onProgress){
       // Без Оценщика (выключен) «принято» тривиально верно — завершение решают
       // тогда только Стражи, через критический/warning-флаг.
       const evalAccepted = !agentEnabled('evaluator') || (verdict.ok && verdict.pass && !(hasCliches && iter < maxIter));
+      // Черновик уже заметно короче цели — используется и директивой ниже (глушит
+      // команды «сократи» из notes Оценщика), и в самом lengthNote дальше по циклу.
+      const curWords = (pRes.text.match(/\S+/g)||[]).length;
+      const tooShort = !!(scene.targetWords && curWords < scene.targetWords*0.7);
 
       // ── Стражи: проверяют ТЕКУЩИЙ черновик (pRes.text), не исторический best.
       // Раньше проверяли best — если следующий черновик по сути исправлял находку
@@ -453,7 +467,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           break;
         }
         if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
-        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes) || directive;
+        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive;
         continue;
       }
 
@@ -510,11 +524,10 @@ export async function runScene(state, scene, opts={}, onProgress){
       // на реальной сцене: 751→747→651→629→619 слов при цели 1500 — 5 правок
       // подряд без единого отскока вверх). Не запрещаем резать (замечание может
       // быть правильным), только просим не резать ДАЛЬШЕ без необходимости.
-      const curWords = (pRes.text.match(/\S+/g)||[]).length;
-      const lengthNote = (scene.targetWords && curWords < scene.targetWords*0.7)
+      const lengthNote = tooShort
         ? `\n\nОБЪЁМ: черновик уже заметно короче цели (${curWords} из ${scene.targetWords} слов) — если конкретное замечание выше не требует прямо резать текст, ищи другой способ его выполнить (не удаляй абзацы целиком ради мелкой правки).`
         : '';
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes) || directive) + stagnantNote + categoryNote + lengthNote;
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote;
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
