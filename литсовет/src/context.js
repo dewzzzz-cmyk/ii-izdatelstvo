@@ -6,7 +6,7 @@ import { estimateTokens, smartTrunc, trimToTokens } from './tokens.js';
 import { bibleForPrompt } from './bible.js';
 import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
-import { charNamesMatch } from './state.js';
+import { charNamesMatch, effectiveRules } from './state.js';
 import { genreToneNote, genreJudgeNote } from './genres.js';
 
 const SEP = '\n\n';
@@ -67,7 +67,9 @@ export function buildSceneContext(state, scene, opts={}){
   if(voiceBlock) layers.push({ name:'voice', text:'=== ГОЛОС ===\n'+voiceBlock, fixed:true });
 
   // 1b. Правила автора (do/don't) — фикс, не режется. Профилактика: Прозаик не порождает.
-  const rules = (style.rules||[]).filter(Boolean);
+  // effectiveRules() подмешивает сюда же настройку мата (style.profanity) —
+  // единая точка сборки, см. её комментарий в state.js.
+  const rules = effectiveRules(style);
   if(rules.length) layers.push({ name:'rules', text:'=== ПРАВИЛА АВТОРА (соблюдай неукоснительно) ===\n'+rules.map(r=>'— '+r).join('\n'), fixed:true });
 
   // 1c. Замеченные паттерны (мягкая память, не rules): категории клише, которые Оценщик

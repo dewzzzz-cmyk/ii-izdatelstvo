@@ -11,6 +11,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
          humorGuardMessages } from './guards.js';
 import { bookContextBlock } from './context.js';
+import { effectiveRules } from './state.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
 //   kind:'evaluator' → { verdict }      (оценка по рубрике + клише + замечания)
@@ -27,7 +28,7 @@ export async function runAgentOnDemand(state, scene, agent){
   const role = agent.role;
 
   if(role==='evaluator'){
-    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
+    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
     const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
     return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7.5) };
   }
@@ -47,8 +48,9 @@ export async function runAgentOnDemand(state, scene, agent){
   else if(role==='logic')    msgs = logicGuardMessages(state, scene, draft, agent.strictness);
   else if(role==='events')   msgs = eventsGuardMessages(state, scene, draft, agent.strictness);
   else if(role==='styleguard'){
-    if(!(state.style?.rules||[]).filter(Boolean).length) throw new Error('Нет правил автора — добавьте их на вкладке «Голос» или кнопкой «⊕ В правило».');
-    msgs = styleGuardMessages(draft, state.style.rules, agent.strictness);
+    const rules = effectiveRules(state.style);
+    if(!rules.length) throw new Error('Нет правил автора — добавьте их на вкладке «Голос» или кнопкой «⊕ В правило».');
+    msgs = styleGuardMessages(draft, rules, agent.strictness);
   }
   else if(role==='reader')    msgs = readerGuardMessages(scene, draft, agent.strictness);
   else if(role==='imagery')   msgs = imageryGuardMessages(draft, agent.strictness);

@@ -13,7 +13,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
-import { recordObservedPattern, ag } from './state.js';
+import { recordObservedPattern, ag, effectiveRules } from './state.js';
 import { genreWantsHumor } from './genres.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -194,8 +194,8 @@ export async function runScene(state, scene, opts={}, onProgress){
           : `Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
         const cap = Math.min(5000, Math.max(2000, Math.round(prevDraft.length/2) + 1400));
         const reviseMsgs = stagnantLastIter
-          ? radicalReviseMessages(prevDraft, directive, state.style?.rules)
-          : surgicalReviseMessages(prevDraft, directive, state.style?.rules);
+          ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
+          : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
         pRes = await callLLM({ ...llmBase, temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
         const parsed = parseDebateRevision(pRes.text);
         if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
@@ -251,7 +251,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       let verdict = null;
       if(agentEnabled('evaluator')){
         onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
-        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), state.style?.rules);
+        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
         // Anchor-score: передаём baseline итерации 1 чтобы Оценщик не дрейфовал между итерациями
         if(iter > 1 && anchorVerdict?.ok){
           const baseStr = Object.entries(anchorVerdict.scores).map(([k,v])=>`${AXIS_LABELS[k]||k}:${v}`).join(', ');
@@ -335,7 +335,7 @@ export async function runScene(state, scene, opts={}, onProgress){
               onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
           }
           if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
-            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, state.style.rules, ag(state,'styleguard').strictness), flags, onProgress));
+            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
           if(agentEnabled('reader'))
             guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress));
           if(agentEnabled('imagery'))

@@ -471,6 +471,7 @@ export function renderVoice(els){
       `}
       ${renderStylePresets(s)}
       ${renderRefsEditor(s)}
+      ${renderProfanityEditor(s)}
       ${renderRulesEditor(s)}
 
       <div class="row" style="margin-top:18px;justify-content:flex-end">
@@ -487,6 +488,7 @@ export function renderVoice(els){
   document.getElementById('vmode').onclick=(ev)=>{ const o=ev.target.closest('.mode-opt'); if(!o)return; s.ui.voiceMode=o.dataset.m; save(); };
   bindModeSwitchKeyboard(document.getElementById('vmode'));
   bindRefsEditor();
+  bindProfanityEditor();
   bindRulesEditor();
   document.querySelectorAll('.style-add').forEach(btn=>{
     btn.onclick = ()=>{
@@ -628,6 +630,30 @@ function bindRefsEditor(){
   add.onclick=doAdd;
   inp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); doAdd(); } };
   document.querySelectorAll('.tag-x').forEach(b=>b.onclick=()=>{ const s=getState(); s.style.refs.splice(+b.dataset.i,1); save(); });
+}
+
+// Ненормативная лексика (мат) — раньше поле было в данных, но нигде не читалось
+// (см. effectiveRules() в state.js). off по умолчанию: явный запрет мата в
+// промпте Прозаика и Оценщика, а не молчаливое разрешение «как получится».
+const PROFANITY_OPTIONS = [
+  ['off', 'Выключено — без мата'],
+  ['mild', 'Мягко — лёгкая грубость, без мата'],
+  ['moderate', 'Естественно — модель решает сама'],
+  ['strict', 'Разрешено — откровенный мат в напряжённых сценах'],
+];
+function renderProfanityEditor(s){
+  const cur = s.style.profanity || 'off';
+  return `<div class="field" style="margin-top:22px;border-top:1px solid var(--border);padding-top:16px">
+    <label>Ненормативная лексика <span class="hint">(влияет на Прозаика и Оценщика)</span></label>
+    <select id="profanitySel">
+      ${PROFANITY_OPTIONS.map(([v,label])=>`<option value="${v}"${cur===v?' selected':''}>${esc(label)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+function bindProfanityEditor(){
+  const sel = document.getElementById('profanitySel');
+  if(!sel) return;
+  sel.onchange = ()=>{ const s=getState(); s.style.profanity = sel.value; save(); };
 }
 
 // Правила автора (do/don't): задаются один раз, идут Прозаику (профилактика),
