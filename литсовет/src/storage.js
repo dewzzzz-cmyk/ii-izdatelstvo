@@ -112,14 +112,20 @@ export async function getServerProject(id){
   catch{ return null; }
 }
 
+// Возвращает true/false — раньше ошибка (сеть, 5xx) проглатывалась молча, и
+// вызывающий код (state.js save()) не мог отличить реальную синхронизацию от
+// провалившейся: индикатор показывал «●» синхронизировано, даже если запрос
+// на сервер не дошёл вовсе (см. фикс в save()).
 export async function pushToServer(state){
-  if(!state?.id) return;
+  if(!state?.id) return false;
   try{
     const body = JSON.stringify(state, safeReplacer);
-    await fetch('/api/sync/'+encodeURIComponent(state.id),{
+    const res = await fetch('/api/sync/'+encodeURIComponent(state.id),{
       method:'POST', headers:{'Content-Type':'application/json'}, body,
     });
-  }catch(e){ console.warn('sync push failed',e); }
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return true;
+  }catch(e){ console.warn('sync push failed',e); return false; }
 }
 
 export async function deleteFromServer(id){

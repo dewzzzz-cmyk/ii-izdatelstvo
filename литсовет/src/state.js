@@ -345,7 +345,13 @@ export function save(){
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(()=>{
     saveProject(_state)
-      .then(()=>{ pushToServer(_state); setSyncStatus('ok'); })
+      .then(()=>pushToServer(_state))
+      // pushToServer возвращает false при любой сетевой/HTTP-ошибке (см. её
+      // комментарий в storage.js) — раньше результат не проверялся вообще,
+      // индикатор синхронизации всегда показывал «●», даже если сцена никогда
+      // не доходила до сервера. Локальные данные (IndexedDB) при этом целы —
+      // это именно сигнал «сервер не видит последних правок», не потеря данных.
+      .then(ok=>setSyncStatus(ok ? 'ok' : 'err'))
       .catch(e=>{
         console.error('save failed', e);
         setSyncStatus('err');
@@ -425,7 +431,16 @@ export async function switchProject(id){
 // Индикатор статуса синхронизации (обновляется в шапке)
 let _syncStatus = 'ok'; // 'ok' | 'syncing' | 'err'
 export function getSyncStatus(){ return _syncStatus; }
-export function setSyncStatus(s){ _syncStatus=s; const el=document.getElementById('_syncDot'); if(el) el.textContent=s==='ok'?'●':s==='syncing'?'◌':'⚠'; el&&(el.style.color=s==='ok'?'var(--ok)':s==='syncing'?'var(--text-3)':'var(--err)'); }
+export function setSyncStatus(s){
+  _syncStatus=s;
+  const el=document.getElementById('_syncDot');
+  if(!el) return;
+  el.textContent = s==='ok' ? '●' : s==='syncing' ? '◌' : '⚠';
+  el.style.color = s==='ok' ? 'var(--ok)' : s==='syncing' ? 'var(--text-3)' : 'var(--err)';
+  el.title = s==='err'
+    ? 'Не удалось синхронизировать с сервером — правки сохранены только в этом браузере, на другом устройстве их не видно'
+    : 'Синхронизация с сервером';
+}
 
 // Мягкая миграция отсутствующих полей (версионирование схемы).
 function migrate(s){
