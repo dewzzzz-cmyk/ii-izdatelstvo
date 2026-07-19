@@ -496,7 +496,7 @@ export function mapPromptFor(state){
   const riskNote = (labelCount > 3
     ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off, and take extra care to spell each one correctly.'
     : ' Leave the rest of the geography unlabeled rather than cramming in more text — fewer, larger labels stay legible far more reliably than many small ones.')
-    + ' Each name+type pair together is still just two short words — do not let the type line grow longer or more detailed than the name above it.';
+    + ' Each name+type pair together is still just two short words — do not let the type line grow longer or more detailed than the name below it.';
   // «Пронумеровать точки для авто-подписи» (только вместе с «Без текста») —
   // просим не слова, а простые пронумерованные значки: цифры image-модели
   // рисуют НАМНОГО надёжнее слов (особенно кириллических составных названий),
@@ -520,10 +520,12 @@ export function mapPromptFor(state){
     // Автор явно попросил подписывать не только имя, но и ОБЩИЙ ТИП рельефа —
     // без этого «Кристальных Когтей»/«Забытых Часов» читаются как случайные
     // фэнтези-слова, и непонятно, что перед тобой горы или пустыня, не
-    // прочитав факт в каноне отдельно. Тип — второй, заметно мельче основного
-    // имени, чтобы не спорить с ним за внимание и не задваивать риск кракозябр
-    // на самом важном слове (названии).
-    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name. ALWAYS strip the generic category word from the name, keeping only the distinctive part: "Пустыня Забытых Часов" → "Забытых Часов", "Хребет Кристальных Когтей" → "Кристальных Когтей", "Болото Ускользающих Огней" → "Ускользающих Огней", "Лес Шатких Теней" → "Шатких Теней" — this applies to EVERY label, not just some of them. This is not optional: the type line below already states that generic word (горы, пустыня, болото, лес...), so keeping it in the name too means saying the same thing twice on the same label. Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Directly under each name, add a SECOND, noticeably smaller line — exactly ONE plain Russian word naming its general terrain type (горы, пустыня, лес, болото, озеро, остров, город, река, побережье, долина, etc. — whichever matches the fact), so the kind of place is clear without guessing from the fantasy name alone. Do not add a title, banner, caption, scale bar, or any other text on the map beyond these ${labelCount} name+type pairs — the ONLY exception is a compass rose's single-letter N/S/E/W marks, nothing else. ${fontNote}${riskNote}`;
+    // прочитав факт в каноне отдельно. Порядок строк (тип сверху мельче,
+    // имя снизу крупнее) — по запросу автора, увидевшего именно такую
+    // раскладку на живой карте (она сложилась случайно, не по этой ветке
+    // промпта — карта шла через autoLabels, см. геолинию выше) и попросившего
+    // сделать её нормой для обычного словесного режима тоже.
+    : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}. Each label is TWO lines: on top, a SMALL, noticeably less prominent line — exactly ONE plain Russian word naming its general terrain type (горы, пустыня, лес, болото, озеро, остров, город, река, побережье, долина, etc. — whichever matches the fact); directly under it, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption), the specific name. The name must be SHORT — one word, or a two-word nickname, never the full name. ALWAYS strip the generic category word from the name, keeping only the distinctive part: "Пустыня Забытых Часов" → "Забытых Часов", "Хребет Кристальных Когтей" → "Кристальных Когтей", "Болото Ускользающих Огней" → "Ускользающих Огней", "Лес Шатких Теней" → "Шатких Теней" — this applies to EVERY label, not just some of them. This is not optional: the type line above already states that generic word (горы, пустыня, болото, лес...), so keeping it in the name too means saying the same thing twice on the same label. Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Do not add a title, banner, caption, scale bar, or any other text on the map beyond these ${labelCount} name+type pairs — the ONLY exception is a compass rose's single-letter N/S/E/W marks, nothing else. ${fontNote}${riskNote}`;
   return [
     `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText && !autoLabels ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
