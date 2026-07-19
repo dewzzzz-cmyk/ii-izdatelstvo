@@ -4,11 +4,15 @@ import { estimateTokens } from './tokens.js';
 import { PRICES, getState } from './state.js';
 
 // Вызов LLM. messages — массив {role, content}. Возвращает {text, tokensIn, tokensOut, cost}.
-// onToken(chunk) — колбэк для стрима (опц.).
-export async function callLLM({ baseURL, apiKey, model, temperature, messages, maxTokens, retries=2 }, onToken){
+// onToken(chunk) — колбэк для стрима (опц.). onRetry() — вызывается перед
+// каждой повторной попыткой (опц.): чанки неудачной попытки уже переданы в
+// onToken, и накопительный буфер вызывающего кода (напр. streamed в
+// pipeline.js) иначе клеит их с началом успешного повтора без сброса.
+export async function callLLM({ baseURL, apiKey, model, temperature, messages, maxTokens, retries=2 }, onToken, onRetry){
   const tokensIn = messages.reduce((s,m)=>s+estimateTokens(m.content), 0);
   let lastErr = null;
   for(let attempt=0; attempt<=retries; attempt++){
+    if(attempt>0 && onRetry){ try{ onRetry(); }catch{} }
     const controller = new AbortController();
     const timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s)')), 90000);
     try{
@@ -21,11 +25,17 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       });
       if(!res.ok){
         const body = await res.text().catch(()=> '');
-        // 429/5xx — ретраим с бэкоффом
-        if((res.status===429 || res.status>=500) && attempt<retries){
+        // 429/5xx — ретраим с бэкоффом; остальное (401/400/403 и т.п. — неверный
+        // ключ, битый payload, несуществующая модель) фатально и от повтора не
+        // исправится — раньше эти статусы ретраились наравне с сетевыми ошибками
+        // через общий catch ниже, впустую тратя время на каждом узле пайплайна.
+        const retryable = res.status===429 || res.status>=500;
+        if(retryable && attempt<retries){
           await sleep(500 * Math.pow(2, attempt)); lastErr = body; continue;
         }
-        throw new Error(`HTTP ${res.status}: ${body.slice(0,200)}`);
+        const err = new Error(`HTTP ${res.status}: ${body.slice(0,200)}`);
+        if(!retryable) err.nonRetryable = true;
+        throw err;
       }
       // стрим text/plain
       const reader = res.body.getReader();
@@ -49,6 +59,7 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.text += cost; }
       return { text: text.trim(), tokensIn, tokensOut, cost };
     }catch(e){
+      if(e.nonRetryable) throw e;
       lastErr = e.message;
       if(attempt>=retries) throw new Error(lastErr);
       await sleep(500 * Math.pow(2, attempt));

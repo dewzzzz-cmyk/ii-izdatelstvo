@@ -96,15 +96,15 @@ function renderFlags(scene){
     </div>`:''}
     <div class="flags-list" id="flagsList">
       ${all.map((f,i)=>`<div class="flag-item${f.severity!=='ok'?' flag-selectable':''}" data-fi="${i}">
-        ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+f.detail)}" data-fi="${i}"></label>`:''}
+        ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+(f.detail||''))}" data-fi="${i}"></label>`:''}
         <div class="flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span>
           <span class="flag-role">${GUARD_LABELS[f.role] || (getState().agents.find(a=>a.id===f.role)?.name) || f.role}</span></div>
         <div class="flag-title">${esc(f.title)}</div>
         ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
         ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
         ${f.severity!=='ok'?`<div class="flag-acts">
-          <button class="flag-fix" data-fix="${esc(f.title+': '+f.detail)}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
-          <button class="flag-rewrite" data-fix="${esc(f.title+': '+f.detail)}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
+          <button class="flag-fix" data-fix="${esc(f.title+': '+(f.detail||''))}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
+          <button class="flag-rewrite" data-fix="${esc(f.title+': '+(f.detail||''))}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
         </div>`:''}
       </div>`).join('')}
     </div>`;
@@ -496,8 +496,13 @@ function rerenderDiag(){
 }
 
 function bindToggles(){
-  document.querySelectorAll('.toggle[data-role]').forEach(t=>{
-    t.onclick=(e)=>{ e.stopPropagation(); const role=t.dataset.role; const s=getState(); const a=s.agents.find(x=>x.role===role); toggleAgent(role, !(a.enabled!==false)); };
+  // По id, не по role (см. toggleAgent) — раньше этот обработчик всё равно
+  // не срабатывал: bindAgents() навешивал СВОЙ, дублирующий обработчик на те
+  // же узлы через .toggle[data-id] сразу следом, и второе присваивание
+  // .onclick стирало это (мимо toggleAgent(), который из-за этого был мёртвым
+  // кодом). Теперь единственная точка привязки — сразу через id.
+  document.querySelectorAll('.toggle[data-id]').forEach(t=>{
+    t.onclick=(e)=>{ e.stopPropagation(); const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.id); if(a) toggleAgent(t.dataset.id, !(a.enabled!==false)); };
   });
   // клик по строке агента (не по тумблеру) — раскрыть/свернуть настройки
   document.querySelectorAll('.agent-toggle[data-open]').forEach(row=>{
@@ -531,10 +536,7 @@ function bindAgents(){
   bindToggles();
   // фильтр категорий агентов
   document.querySelectorAll('.ap-fcat').forEach(b=>b.onclick=()=>{ _agentFilter=b.dataset.fcat; rerenderDiag(); });
-  // тумблер вкл/выкл по id (включая кастомных)
-  document.querySelectorAll('.toggle[data-id]').forEach(t=>{
-    t.onclick=(e)=>{ e.stopPropagation(); const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.id); if(a){ a.enabled=!(a.enabled!==false); save(); } };
-  });
+  // тумблер вкл/выкл — теперь привязан один раз в bindToggles() (см. выше)
   // промпт кастомного агента
   document.querySelectorAll('.ap-prompt').forEach(t=>t.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.aid); if(a){ a.prompt=t.value; save(); } }));
   // «фактический страж» — бежит каждую итерацию, а не только на принятом тексте

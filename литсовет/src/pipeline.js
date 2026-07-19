@@ -193,6 +193,10 @@ export async function runScene(state, scene, opts={}, onProgress){
       const isRevision = !!(iter > 1 && prevDraft || iter === 1 && prevDraft && directive);
       let streamed = '';
       const streamCb = chunk=>{ streamed+=chunk; onProgress && onProgress({stage:'prose', text:streamed, streaming:true}); };
+      // Сброс накопленного превью при внутреннем ретрае callLLM (см. llm.js) —
+      // иначе чанки неудачной попытки, уже показанные через streamCb, оставались
+      // склеены с началом успешного повтора на несколько секунд стриминга.
+      const streamRetry = ()=>{ streamed = ''; };
       let pRes, logInput, logLayers;
       if(isRevision){
         onProgress && onProgress({stage:'prose', text: stagnantLastIter
@@ -202,7 +206,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
-        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb);
+        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb, streamRetry);
         const parsed = parseDebateRevision(pRes.text);
         if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
         if(parsed.rejected && parsed.rejected.length){
@@ -221,7 +225,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         const sceneWords = scene.targetWords || 700;
         const dynMin = Math.max(2000, Math.round(sceneWords * 2.5));
         const proseMaxTk = proseAg.maxTokens != null ? Math.max(proseAg.maxTokens, dynMin) : dynMin;
-        pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb);
+        pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb, streamRetry);
         // Первый черновик не проходит через parseDebateRevision (нет секции [ТЕКСТ] —
         // это просто сырая проза), поэтому обрыв по лимиту токенов раньше не ловился
         // вообще: текст молча уходил дальше по пайплайну оборванным на полуслове.
@@ -230,7 +234,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         if(looksTokenTruncated(pRes.text)){
           const retryMaxTk = Math.min(8000, proseMaxTk * 2);
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
-          pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb);
+          pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
         }
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
@@ -559,17 +563,20 @@ export async function runScene(state, scene, opts={}, onProgress){
       const bestWords = (best.match(/\S+/g)||[]).length;
       const leDynMin = Math.max(2000, Math.round(bestWords * 2.5));
       const leMaxTk = Math.max(leAg.maxTokens ?? 3600, leDynMin);
+      let leNote = '';
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
-          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden), maxTokens:leMaxTk });
+          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote), maxTokens:leMaxTk });
           if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
-            logStep({ agent:'lineedit', input:'(черновик)', output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
+            logStep({ agent:'lineedit', input:'(черновик)'+(leNote?' + заметка автора: '+leNote:''), output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
             onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
             const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
             if(gt.approve){ best = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text; break; }
-            // переписать: оставляем прежний best, просим иначе — но без note менять нечего, выходим
+            // переписать с заметкой — раньше gt.note нигде не читался, и повтор
+            // был идентичен первому запросу (отличался только сэмплированием)
             if(!gt.note){ break; }
+            leNote = gt.note;
           } else {
             // Раньше это било молча — сцена просто оставалась без правки
             // Линейного редактора без единого следа, автор не мог отличить

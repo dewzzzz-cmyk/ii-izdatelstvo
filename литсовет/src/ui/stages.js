@@ -970,7 +970,11 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
       prevEval = evalResult; prevScore = evalResult.score;
     }
     if(skeleton) await refreshMissingFacts(s, skeleton);
-    if(evalResult && bestIter && bestIter < lastIter && evalResult.score < bestScore - 0.5){
+    // bestIter=0 ("лучший — исходный сид, ни одна итерация не улучшила")
+    // раньше делал `bestIter &&` ложным (0 falsy), и предупреждение никогда
+    // не показывалось именно в самом частом случае провала — когда ВСЕ
+    // прогоны вышли хуже сида. bestIter!==lastIter корректно ловит и его.
+    if(evalResult && bestIter !== lastIter && evalResult.score < bestScore - 0.5){
       setStatus(`⚠ Итоговый прогон ${lastIter} (${evalResult.score}/10) вышел хуже прогона ${bestIter} (${bestScore}/10) — кнопкой «↶ скелет» выше можно вернуться на более ранний, лучший вариант (может понадобиться несколько нажатий).`);
     } else if(evalResult && evalResult.score >= STRUCT_AUTOHIDE_SCORE){
       // Балл почти идеальный — панель с оценкой и так больше нечего сообщить
@@ -1558,6 +1562,12 @@ function markedEditorHtml(text){
     }
   });
   ranges.sort((a,b)=>a.start-b.start);
+  // Запоминаем позицию КОНКРЕТНОГО вхождения на самой подсказке — resolveSuggestion
+  // раньше принимал правку через text.replace(original, suggestion) без /g, который
+  // всегда меняет ПЕРВОЕ вхождение фразы в тексте, а не то, что реально подсвечено
+  // и на которое нажал автор (если фраза встречается в сцене дважды с разными
+  // предложенными правками).
+  ranges.forEach(r=>{ _edSuggestions[r.idx]._pos = {start:r.start, end:r.end}; });
   let html = '', cursor = 0;
   ranges.forEach(r=>{
     html += esc(text.slice(cursor, r.start));
@@ -1647,10 +1657,20 @@ function bindEditorMarks(edEl, scene, els){
 function resolveSuggestion(scene, idx, accept){
   const sug = _edSuggestions[idx];
   if(!sug) return;
-  if(accept && scene.text.includes(sug.original)){
-    scene.text = scene.text.replace(sug.original, sug.suggestion);
-    scene.words = (scene.text.match(/\S+/g)||[]).length;
-    scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
+  if(accept){
+    const p = sug._pos;
+    if(p && scene.text.slice(p.start, p.end)===sug.original){
+      // Меняем именно то вхождение, что подсвечено и на которое нажал автор
+      // (по позиции из markedEditorHtml), а не первое совпадение в тексте.
+      scene.text = scene.text.slice(0,p.start) + sug.suggestion + scene.text.slice(p.end);
+      scene.words = (scene.text.match(/\S+/g)||[]).length;
+      scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
+    } else if(scene.text.includes(sug.original)){
+      // запасной вариант, если позиция не совпала (текст менялся мимо рендера)
+      scene.text = scene.text.replace(sug.original, sug.suggestion);
+      scene.words = (scene.text.match(/\S+/g)||[]).length;
+      scene.lastEval=null; scene.flags={};
+    }
   }
   _edSuggestions.splice(idx, 1);
   if(!_edSuggestions.length){ _edReviewOn = false; _edReviewSceneId = null; }
@@ -2357,7 +2377,7 @@ async function applyInlineEdit(scene, edEl, action, start, end){
   edEl.style.opacity='0.55'; edEl.setAttribute('aria-busy','1');
   try{
     const fresh = await transformSelection(s, action, selected, before, after);
-    if(!fresh){ return; }
+    if(!fresh){ edEl.style.opacity=''; edEl.removeAttribute('aria-busy'); return; }
     const newText = action==='continue'
       ? full.slice(0, end) + (full[end-1]==='\n'?'':' ') + fresh + full.slice(end)
       : full.slice(0, start) + fresh + full.slice(end);
@@ -2367,5 +2387,5 @@ async function applyInlineEdit(scene, edEl, action, start, end){
     scene.text = newText; scene.words=(newText.match(/\S+/g)||[]).length;
     scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
     save();
-  }catch(e){ edEl.style.opacity=''; alert('Не удалось: '+e.message); }
+  }catch(e){ edEl.style.opacity=''; edEl.removeAttribute('aria-busy'); alert('Не удалось: '+e.message); }
 }

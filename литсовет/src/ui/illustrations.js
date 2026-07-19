@@ -207,7 +207,10 @@ function renderGallery(items, s){
 function openImagePreview(dataUrl, label){
   const root = document.getElementById('modalRoot');
   const ext = (dataUrl.match(/^data:image\/(\w+)/)||[])[1] || 'png';
-  const fname = (label||'illustration').replace(/[^a-zA-Zа-яА-Я0-9 _-]/g,'').trim().replace(/\s+/g,'_').slice(0,60) || 'illustration';
+  // ё/Ё вне диапазона а-я/А-Я в Unicode (не примыкают к нему) — без явного
+  // добавления вырезались из имени файла у любой картинки со словом «ёж»,
+  // «поёт» и т.п.
+  const fname = (label||'illustration').replace(/[^a-zA-Zа-яА-ЯёЁ0-9 _-]/g,'').trim().replace(/\s+/g,'_').slice(0,60) || 'illustration';
   root.innerHTML = `<div class="modal-bg" id="imgPvBg"><div class="modal" style="width:auto;max-width:94vw;padding:12px" onclick="event.stopPropagation()">
     <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
       <b style="font-size:13px">${esc(label||'')}</b>

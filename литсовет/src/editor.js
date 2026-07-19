@@ -30,18 +30,44 @@ function userPrompt(text, forbidden){
   ].filter(Boolean).join('\n');
 }
 
+// Читает «сбалансированную» по глубине цитату «…», начиная с индекса
+// открывающей «. Возвращает {content, end} (end — индекс сразу после
+// закрывающей »), или null если она не закрылась на этой строке.
+function readBalancedQuote(line, openIdx){
+  if(line[openIdx] !== '«') return null;
+  let depth = 1, i = openIdx + 1;
+  for(; i < line.length; i++){
+    if(line[i] === '«') depth++;
+    else if(line[i] === '»'){ depth--; if(depth === 0) break; }
+  }
+  if(depth !== 0) return null;
+  return { content: line.slice(openIdx+1, i), end: i+1 };
+}
+
 // Разбор ответа в список {original, suggestion, reason}. Правки, чью цитату
 // не удалось найти дословно в тексте (перефразировала модель), отбрасываются —
 // подсветить и применить их всё равно нельзя.
+// Построчный разбор с подсчётом глубины скобок (та же техника, что и в
+// guards.js parseRejected) — раньше единый регэксп поддерживал только ОДИН
+// уровень вложенных «…» внутри цитаты и молча терял всю правку при 3+
+// уровнях (модель процитировала фрагмент, который сам содержит цитату/диалог).
 export function parseEditorSuggestions(raw, originalText){
   const out = [];
   if(!raw) return out;
   const body = (raw.match(/\[ПРАВКИ\]([\s\S]*?)(?:\[\/ПРАВКИ\]|$)/i) || [])[1] || raw;
-  // Внутренние группы допускают один уровень вложенных «…» (см. guards.js parseRejected).
-  const re = /[-–—•]\s*«((?:[^«»]|«[^»]*»)*)»\s*→\s*«((?:[^«»]|«[^»]*»)*)»\s*[—-]?\s*(.*)/g;
-  let m;
-  while((m = re.exec(body))){
-    const original = m[1].trim(), suggestion = m[2].trim(), reason = (m[3] || '').trim();
+  for(const line of body.split('\n')){
+    const bm = line.match(/^\s*[-–—•]\s*/);
+    if(!bm) continue;
+    const first = readBalancedQuote(line, bm[0].length);
+    if(!first) continue;
+    const arrowIdx = line.indexOf('→', first.end);
+    if(arrowIdx < 0) continue;
+    let idx2 = arrowIdx + 1;
+    while(line[idx2] === ' ') idx2++;
+    const second = readBalancedQuote(line, idx2);
+    if(!second) continue;
+    const reason = line.slice(second.end).trim().replace(/^[—-]\s*/, '').trim();
+    const original = first.content.trim(), suggestion = second.content.trim();
     if(!original || !suggestion || original === suggestion) continue;
     if(!originalText.includes(original)) continue;
     out.push({ original, suggestion, reason });

@@ -54,7 +54,19 @@ export async function suggestIllustrations(state){
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.candidates) ? j.candidates : null;
   if(!arr) throw new Error('Не удалось разобрать ответ арт-директора.');
-  const sceneByTitle = new Map(scenes.map(s=>[s.title.trim().toLowerCase(), s]));
+  // Map<название, очередь сцен> — раньше был Map<название, сцена>, и при
+  // совпадении названий (например, дефолтное «Без названия» у нескольких
+  // незаполненных сцен — штатный случай, не гипотетика) побеждала последняя
+  // по порядку сцена в книге: иллюстрация, задуманная для одной сцены,
+  // прикреплялась к совершенно другой. Теперь каждый кандидат забирает
+  // ПЕРВУЮ ещё не занятую сцену с этим названием — по порядку кандидатов,
+  // совпадающему с порядком обзора книги, который видела модель.
+  const sceneByTitle = new Map();
+  scenes.forEach(s=>{
+    const key = s.title.trim().toLowerCase();
+    if(!sceneByTitle.has(key)) sceneByTitle.set(key, []);
+    sceneByTitle.get(key).push(s);
+  });
   const cap = state.illustrations?.suggestCount || 7;
   // Без единой законченной сцены брать в расчёт только обложку — сцену-кандидата
   // без реального текста подставить всё равно не к чему (модель могла
@@ -62,7 +74,8 @@ export async function suggestIllustrations(state){
   const usable = scenes.length ? arr : arr.filter(c=>c.type==='cover');
   return usable.slice(0, cap).map((c,i)=>{
     const sceneTitle = String(c.sceneTitle||'').trim();
-    const matched = sceneTitle ? sceneByTitle.get(sceneTitle.toLowerCase()) : null;
+    const queue = sceneTitle ? sceneByTitle.get(sceneTitle.toLowerCase()) : null;
+    const matched = queue && queue.length ? queue.shift() : null;
     return {
       id: 'ic_'+Date.now().toString(36)+'_'+i,
       type: c.type==='cover' ? 'cover' : 'scene',

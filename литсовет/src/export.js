@@ -74,17 +74,32 @@ function worldMapItem(state){
   return items.find(i=>i.type==='map') || null;
 }
 // Декодировать data:image/(jpeg|png);base64,... → {bytes, ext, mime} или null (не бросает).
+// Раньше поддерживались только jpeg/png — загрузка своих картинок идёт через
+// <input type="file" accept="image/*"> (ui/illustrations.js), так что WEBP/GIF/
+// BMP — не гипотетика. Формат вне списка тихо пропадал из EPUB без единого
+// предупреждения; экспорт «успешно» завершался без обложки/карты/иллюстрации.
+const IMG_TYPES = {
+  jpeg:{ext:'jpg', mime:'image/jpeg'}, jpg:{ext:'jpg', mime:'image/jpeg'},
+  png:{ext:'png', mime:'image/png'},
+  gif:{ext:'gif', mime:'image/gif'},
+  webp:{ext:'webp', mime:'image/webp'},
+  bmp:{ext:'bmp', mime:'image/bmp'},
+  'svg+xml':{ext:'svg', mime:'image/svg+xml'}, svg:{ext:'svg', mime:'image/svg+xml'},
+};
+// Собирает пропущенные картинки за время одного exportEpub() — синхронный вызов,
+// поэтому простой модульный массив безопасен (нет параллельных вызовов).
+let _epubSkipped = [];
 function decodeDataUrlImage(dataUrl){
-  const m = /^data:image\/(jpeg|png);base64,(.+)$/.exec(dataUrl||'');
+  const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl||'');
   if(!m) return null;
+  const info = IMG_TYPES[m[1].toLowerCase()];
+  if(!info){ _epubSkipped.push(m[1]); return null; }
   try{
     const bin = atob(m[2]);
     const bytes = new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-    const ext = m[1]==='png' ? 'png' : 'jpg';
-    const mime = m[1]==='png' ? 'image/png' : 'image/jpeg';
-    return { bytes, ext, mime };
-  }catch(e){ console.warn('image decode failed', e); return null; }
+    return { bytes, ext:info.ext, mime:info.mime };
+  }catch(e){ console.warn('image decode failed', e); _epubSkipped.push(m[1]+' (ошибка декодирования)'); return null; }
 }
 
 function download(blob, filename){
@@ -134,6 +149,7 @@ export function exportDocx(state){
 
 // ── .epub (EPUB 3) ──
 export function exportEpub(state){
+  _epubSkipped = [];
   const book = buildBook(state);
   const p = state.project || {};
   // Постоянный уникальный идентификатор книги: читалки и магазины различают
@@ -224,6 +240,7 @@ ${coverMeta}</metadata>
 <spine>${coverSpine}${mapSpine}${spine.join('')}</spine></package>`);
 
   download(zip.blob(), book.title+'.epub');
+  if(_epubSkipped.length) alert('EPUB сохранён, но пропущены картинки неподдерживаемого формата: '+_epubSkipped.join(', ')+'. Пересохраните их как JPEG/PNG и загрузите заново.');
 }
 
 // ── .json (полный проект, секреты вычищены) ──

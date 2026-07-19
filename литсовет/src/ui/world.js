@@ -504,7 +504,14 @@ async function fillThinCategories(els, s, r){
   if(_busyCategory || _bulkBusy) return;
   const validCats = categoriesFor(s.project.genre);
   const targets = r.thinCategories.length ? r.thinCategories.filter(c=>validCats.includes(c)) : validCats;
-  if(!targets.length) return;
+  if(!targets.length){
+    // Кнопка показывалась по r.thinCategories.length>0, но после фильтра по
+    // категориям текущего жанра список мог опустеть (проверка вернула
+    // название категории из другого жанра/с иным написанием) — модалка к
+    // этому моменту уже закрыта, автор видел клик без всякого эффекта.
+    alert('Не удалось определить категории для дозаполнения (не совпали с категориями текущего жанра). Попробуйте добавить факты вручную по категориям ниже.');
+    return;
+  }
   const note = [
     r.issues.length ? `Проблемы из проверки глубины мира: ${r.issues.join('; ')}.` : '',
     r.suggestions.length ? `Куда копать: ${r.suggestions.join('; ')}.` : '',
@@ -850,7 +857,15 @@ function bindHandlers(els, s){
   const wmlt = document.getElementById('wMapLabelToggle');
   if(wmlt) wmlt.onclick = ()=>{ _mapLabelEdit = !_mapLabelEdit; renderWorld(els); };
 
+  // Guard внутри самой функции, а не на каждом месте вызова — раньше только
+  // обработчик ДОБАВЛЕНИЯ метки проверял _mapLabelBusy перед вызовом, а
+  // изменение текста подписи и удаление — нет. Быстрое редактирование одной
+  // подписи и, не дожидаясь пересборки, удаление другой запускало два
+  // параллельных applyMapLabels() для одной карты — какой из промисов
+  // завершится последним (не гарантировано), тот и победит в map.dataUrl,
+  // рассинхронизируя картинку с актуальным списком меток.
   const applyAndRerender = async (map)=>{
+    if(_mapLabelBusy) return;
     _mapLabelBusy = true; renderWorld(els);
     try{ await applyMapLabels(map); save(); }
     catch(e){ _mapError = e.message; }

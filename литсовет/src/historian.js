@@ -19,7 +19,7 @@ export async function generateSearchQueries(state) {
       'Верни JSON: { "queries": ["запрос1", …] }. Только JSON.',
     ].filter(Boolean).join('\n') },
   ];
-  const res = await callLLM({ baseURL: g.baseURL, apiKey: g.apiKey, model: g.model, temperature: 0.7, messages: msgs, maxTokens: 400 });
+  const res = await callLLM({ baseURL: g.baseURL, apiKey: g.apiKey, model: g.model, temperature: 0.7, messages: msgs, maxTokens: 400, retries: g.retries });
   const j = extractJSON(res.text);
   return (j && Array.isArray(j.queries)) ? j.queries.slice(0, 9) : [];
 }
@@ -57,7 +57,7 @@ export async function synthesizeFacts(summaries, state) {
       'Верни JSON: { "facts": [ { "keys": "…", "text": "…", "plotHook": "…" } ] }. Только JSON.',
     ].filter(Boolean).join('\n') },
   ];
-  const res = await callLLM({ baseURL: g.baseURL, apiKey: g.apiKey, model: g.model, temperature: 0.4, messages: msgs, maxTokens: 2500 });
+  const res = await callLLM({ baseURL: g.baseURL, apiKey: g.apiKey, model: g.model, temperature: 0.4, messages: msgs, maxTokens: 2500, retries: g.retries });
   const j = extractJSON(res.text);
   return (j && Array.isArray(j.facts)) ? j.facts.filter(f => f.keys && f.text) : [];
 }

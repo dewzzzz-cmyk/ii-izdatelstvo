@@ -146,8 +146,16 @@ export async function summarizeScene(state, scene){
     if(closest) conflictCandidates.push({ newText: f.text, oldText: closest.text });
     state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); added++;
   });
-  // лимит размера Bible (защита от раздувания на длинной книге): держим последние 300
-  if(state.bible.length > 300) state.bible.splice(0, state.bible.length-300);
+  // лимит размера Bible (защита от раздувания на длинной книге): держим последние 300.
+  // Раньше splice(0, len-300) резал самые старые ПО ИНДЕКСУ безусловно — мог
+  // стереть факт, который автор явно закрепил (📌 pinned, «виден всегда»)
+  // на раннем этапе проекта. Пропускаем закреплённые, режем только обычные.
+  if(state.bible.length > 300){
+    let excess = state.bible.length - 300;
+    for(let i=0; i<state.bible.length && excess>0; i++){
+      if(!state.bible[i].pinned){ state.bible.splice(i,1); i--; excess--; }
+    }
+  }
   if(added) rebuildBibleVecs(state.bible);
 
   // Необязательная проверка — падение здесь не должно ронять суммаризацию сцены

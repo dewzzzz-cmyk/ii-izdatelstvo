@@ -39,11 +39,16 @@ export async function importSeriesBook(state, title, text){
   // 1. Голос — из образца текста (примеры + метрики)
   const voiceSample = text.slice(0, 4000);
   const extractedVoice = extractVoice(voiceSample, 6);
-  // дифф-эволюция: если голос уже был — запомним сдвиг средней длины
+  // дифф-эволюция: если голос уже был — запомним сдвиг средней длины.
+  // extractedVoice не содержит evolution — забираем накопленную историю ДО
+  // перезаписи state.voice, иначе импорт каждой новой книги серии стирал
+  // всю историю эволюции голоса из предыдущих книг, оставляя только дельту
+  // последней перезаписи.
   const prevAvg = state.voice?.metrics?.avgSentence;
+  const prevEvolution = state.voice?.evolution || [];
   state.voice = extractedVoice;
+  state.voice.evolution = prevEvolution;
   if(prevAvg && extractedVoice.metrics){
-    state.voice.evolution = state.voice.evolution || [];
     state.voice.evolution.push({ book:title, avgSentence:extractedVoice.metrics.avgSentence, delta: extractedVoice.metrics.avgSentence - prevAvg });
   }
 

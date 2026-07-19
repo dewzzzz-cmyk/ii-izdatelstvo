@@ -62,8 +62,11 @@ export function agentEnabled(role){
   return a ? a.enabled !== false : false;
 }
 
-export function toggleAgent(role, on){
+// По id, не по role: несколько кастомных агентов могут делить один role
+// ('custom') — поиск по role находил бы всегда ПЕРВОГО такого агента,
+// независимо от того, чей тумблер реально нажали.
+export function toggleAgent(id, on){
   const st = getState();
-  const a = (st?.agents||[]).find(x=>x.role===role);
+  const a = (st?.agents||[]).find(x=>x.id===id);
   if(a){ a.enabled = on; save(); }
 }

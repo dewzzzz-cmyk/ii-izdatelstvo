@@ -75,10 +75,22 @@ function contextPrompt(s, editMode){
   return parts.join('\n');
 }
 
+// Флаг «идёт запрос» — модульная переменная, а не DOM-свойство кнопки:
+// save() внутри doSend() синхронно пересобирает панель чата (renderChat
+// планирует setTimeout(bindChat,0)), новые узлы #chatSend/#chatInput уже НЕ
+// несут disabled, выставленный на старом узле — блокировка от повторного
+// клика раньше не держала, позволяя два параллельных (и оплачиваемых) запроса.
+let sending = false;
+function updateSendUI(){
+  const btn = document.getElementById('chatSend');
+  if(btn) btn.disabled = sending;
+}
+
 function bindChat(){
   const send = document.getElementById('chatSend');
   const input = document.getElementById('chatInput');
   if(!send) return;
+  updateSendUI(); // если ре-рендер случился во время активного запроса — новый узел тоже должен быть задизейблен
 
   const discBtn = document.getElementById('chatModeDiscuss');
   if(discBtn) discBtn.onclick = ()=>{ const s=getState(); s.ui.chatEditMode=false; save(); };
@@ -107,12 +119,14 @@ function bindChat(){
   };
 
   const doSend = async ()=>{
+    if(sending) return;
     const s=getState(); const text=input.value.trim();
     if(!text) return;
     if(!s.global.apiKey){ alert('Задайте API-ключ (⚙).'); return; }
+    sending = true;
     const editMode = !!(s.ui && s.ui.chatEditMode);
     s.chat=s.chat||[]; s.chat.push({role:'user', content:text}); save();
-    input.value=''; send.disabled=true;
+    input.value=''; updateSendUI();
     const log=document.getElementById('chatLog');
     if(log){ log.innerHTML+=`<div class="chat-msg assistant"><div class="chat-bubble"><span class="spinner"></span></div></div>`; log.scrollTop=log.scrollHeight; }
     try{
@@ -121,7 +135,7 @@ function bindChat(){
         temperature: editMode ? 1.0 : 0.7, messages:msgs, maxTokens: editMode ? 2000 : 700 });
       s.chat.push({role:'assistant', content:res.text||'(пусто)'}); save();
     }catch(e){ s.chat.push({role:'assistant', content:'Ошибка: '+e.message}); save(); }
-    finally{ send.disabled=false; }
+    finally{ sending = false; updateSendUI(); }
   };
   send.onclick=doSend;
   input.onkeydown=(e)=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); doSend(); } };

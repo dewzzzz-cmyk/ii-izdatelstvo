@@ -93,12 +93,21 @@ export function renderPublish(els){
 }
 
 function bindHandlers(els, s){
-  document.querySelectorAll('.pub-copy').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.pub-copy').forEach(b=>b.onclick=async ()=>{
     const text = _chapterTexts[b.dataset.copyId];
     if(!text) return;
-    navigator.clipboard?.writeText(text).catch(()=>{});
-    const orig = b.textContent; b.textContent = '✓ Скопировано'; b.disabled = true;
-    setTimeout(()=>{ b.textContent = orig; b.disabled = false; }, 1200);
+    const orig = b.textContent;
+    // Раньше «✓ Скопировано» показывалось безусловно, даже если копирование
+    // реально не удалось (нет разрешения, API недоступен вне HTTPS) — автор
+    // мог вставить в форму площадки пустой/устаревший буфер, не заметив сбоя.
+    try{
+      await navigator.clipboard.writeText(text);
+      b.textContent = '✓ Скопировано'; b.disabled = true;
+      setTimeout(()=>{ b.textContent = orig; b.disabled = false; }, 1200);
+    }catch(e){
+      b.textContent = '✗ не скопировалось'; b.disabled = true;
+      setTimeout(()=>{ b.textContent = orig; b.disabled = false; }, 1800);
+    }
   });
   const fb2 = document.getElementById('pubFb2');
   if(fb2) fb2.onclick = ()=>{ exportFb2(s); };

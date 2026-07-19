@@ -9,7 +9,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
          styleGuardMessages, sceneQuestionMessages, readerGuardMessages, imageryGuardMessages,
          povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
-         humorGuardMessages } from './guards.js';
+         humorGuardMessages, parseDebateRevision } from './guards.js';
 import { bookContextBlock } from './context.js';
 import { effectiveRules } from './state.js';
 
@@ -39,8 +39,16 @@ export async function runAgentOnDemand(state, scene, agent){
   }
   if(role==='lineedit'){
     const msgs = lineEditMessages(draft, state.style?.forbidden);
-    const res = await callLLM({ ...base, temperature:agent.temp??0.3, messages:msgs, maxTokens:agent.maxTokens??1600 });
-    return { kind:'lineedit', text:(res.text||'').trim() };
+    // Тот же приём, что и в pipeline.js: Линейный редактор возвращает ВЕСЬ текст
+    // сцены целиком, статичный maxTokens обрубал длинные сцены раньше, чем текст
+    // дописан. Без проверки длины обрубленный ответ тихо заменял всю сцену.
+    const draftWords = (draft.match(/\S+/g)||[]).length;
+    const dynMin = Math.max(2000, Math.round(draftWords * 2.5));
+    const maxTk = Math.max(agent.maxTokens ?? 3600, dynMin);
+    const res = await callLLM({ ...base, temperature:agent.temp??0.3, messages:msgs, maxTokens:maxTk });
+    if(!res.text || res.text.length < draft.length*0.5)
+      throw new Error(`Ответ короче половины исходного текста (похоже на обрыв лимитом ${maxTk} ток.) — попробуйте ещё раз.`);
+    return { kind:'lineedit', text:res.text.trim() };
   }
   // стражи (включая кастомных) — только флагуют
   let msgs;
@@ -88,7 +96,11 @@ export async function patchScene(state, scene, instruction){
   const cap = Math.min(4000, Math.max(1400, Math.round(draft.length/2) + 800));
   const res = await callLLM({ ...base, temperature:0.4,
     messages: surgicalReviseMessages(draft, instruction, state.style?.rules), maxTokens:cap });
-  const out = (res.text||'').trim();
+  // Ответ приходит в формате [РАЗБОР]/[ТЕКСТ] (см. surgicalReviseMessages) — без
+  // parseDebateRevision в сцену дословно попадал служебный разбор замечаний.
+  const parsed = parseDebateRevision(res.text||'');
+  if(parsed.truncated) throw new Error('Ответ оборван — попробуйте ещё раз.');
+  const out = (parsed.prose||'').trim();
   if(out.length < draft.length*0.6) throw new Error('Ответ оборван — попробуйте ещё раз.');
   return out;
 }

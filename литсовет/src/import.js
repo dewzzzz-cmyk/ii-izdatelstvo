@@ -45,14 +45,86 @@ async function unzip(uint8){
   return out;
 }
 
+// Именованные HTML-сущности, которые реально встречаются в тексте прозы
+// (Word/EPUB регулярно кодируют так тире, многоточие и, критично для русского
+// текста, кавычки-«ёлочки»). Раньше всё, что не входило в жёсткий список
+// amp/lt/gt/quot/nbsp, просто ВЫРЕЗАЛОСЬ (.replace(/&#?\w+;/g,'')) — диалоги
+// молча теряли кавычки, а тире иногда склеивало два слова без пробела.
+const XML_ENTITIES = {
+  amp:'&', lt:'<', gt:'>', quot:'"', apos:"'", nbsp:' ',
+  mdash:'—', ndash:'–', hellip:'…', laquo:'«', raquo:'»',
+  lsquo:'‘', rsquo:'’', ldquo:'“', rdquo:'”',
+  sect:'§', copy:'©', reg:'®', trade:'™', deg:'°',
+};
+function decodeXmlEntity(name){
+  if(/^#x[0-9a-f]+$/i.test(name)) return String.fromCodePoint(parseInt(name.slice(2),16));
+  if(/^#\d+$/.test(name)) return String.fromCodePoint(parseInt(name.slice(1),10));
+  return XML_ENTITIES[name.toLowerCase()] ?? '';
+}
 function stripXml(xml){
   return xml
     .replace(/<w:p\b[^>]*>/g,'\n').replace(/<\/w:p>/g,'\n')  // docx абзацы
     .replace(/<p\b[^>]*>/g,'\n').replace(/<\/p>/g,'\n')        // epub абзацы
     .replace(/<br\s*\/?>/g,'\n')
     .replace(/<[^>]+>/g,'')                                     // прочие теги
-    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#160;|&nbsp;/g,' ').replace(/&#?\w+;/g,'')
+    .replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (_, ent) => decodeXmlEntity(ent))
     .replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+
+// Натуральная сортировка (chapter2 < chapter10), в отличие от лексикографической
+// (.sort() дал бы chapter1, chapter10, chapter11, chapter2, …) — запасной
+// вариант для epubSpineOrder(), если реальный спайн из content.opf недоступен.
+function naturalCompare(a, b){
+  const ax = a.match(/(\d+)|(\D+)/g) || [];
+  const bx = b.match(/(\d+)|(\D+)/g) || [];
+  const len = Math.max(ax.length, bx.length);
+  for(let i=0; i<len; i++){
+    const av = ax[i] ?? '', bv = bx[i] ?? '';
+    if(/^\d+$/.test(av) && /^\d+$/.test(bv)){ const d = parseInt(av,10)-parseInt(bv,10); if(d) return d; }
+    else { const d = av.localeCompare(bv); if(d) return d; }
+  }
+  return 0;
+}
+
+function parseXmlAttrs(tag){
+  const attrs = {};
+  const re = /([\w:-]+)\s*=\s*"([^"]*)"/g;
+  let m; while((m = re.exec(tag))) attrs[m[1]] = m[2];
+  return attrs;
+}
+
+// Реальный порядок чтения EPUB — из <spine> в content.opf (как делает любая
+// читалка), а не из имён файлов. Возвращает null, если OPF не нашёлся/не
+// распарсился — вызывающий код в этом случае откатывается на naturalCompare.
+async function epubSpineOrder(zip){
+  try{
+    const containerBytes = zip.get('META-INF/container.xml');
+    if(!containerBytes) return null;
+    const containerXml = new TextDecoder().decode(containerBytes);
+    const rootTag = containerXml.match(/<rootfile\b[^>]*>/i);
+    const opfPath = rootTag && parseXmlAttrs(rootTag[0])['full-path'];
+    if(!opfPath) return null;
+    const opfBytes = zip.get(opfPath);
+    if(!opfBytes) return null;
+    const opfXml = new TextDecoder().decode(opfBytes);
+    const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/')+1) : '';
+    const manifest = {};
+    const itemRe = /<item\b[^>]*\/?>/g;
+    let im; while((im = itemRe.exec(opfXml))){
+      const a = parseXmlAttrs(im[0]);
+      if(a.id && a.href) manifest[a.id] = opfDir + decodeURIComponent(a.href);
+    }
+    const spineMatch = opfXml.match(/<spine\b[^>]*>([\s\S]*?)<\/spine>/i);
+    if(!spineMatch) return null;
+    const spineIds = [];
+    const itemrefRe = /<itemref\b[^>]*\/?>/g;
+    let sm; while((sm = itemrefRe.exec(spineMatch[1]))){
+      const a = parseXmlAttrs(sm[0]);
+      if(a.idref) spineIds.push(a.idref);
+    }
+    const order = spineIds.map(id=>manifest[id]).filter(Boolean);
+    return order.length ? order : null;
+  }catch{ return null; }
 }
 
 // ── Парсеры форматов → чистый текст ──
@@ -69,8 +141,13 @@ export async function parseFile(file){
   }
   if(name.endsWith('.epub')){
     const zip = await unzip(new Uint8Array(await file.arrayBuffer()));
-    // собрать все xhtml/html в порядке имени
-    const htmls = [...zip.keys()].filter(k=>/\.x?html?$/i.test(k) && !/nav|toc/i.test(k)).sort();
+    // Порядок глав — из спайна content.opf; если он не резолвится (нестандартный
+    // пакет, пути не совпали) — натуральная сортировка имён вместо лексикографической
+    // (та давала chapter1, chapter10, chapter11, chapter2, … для книг от 10 глав).
+    let htmls = await epubSpineOrder(zip);
+    if(!htmls || !htmls.length || !htmls.every(k=>zip.has(k))){
+      htmls = [...zip.keys()].filter(k=>/\.x?html?$/i.test(k) && !/nav|toc/i.test(k)).sort(naturalCompare);
+    }
     if(!htmls.length) throw new Error('epub: не найдено глав');
     return htmls.map(k=>stripXml(new TextDecoder().decode(zip.get(k)))).join('\n\n');
   }

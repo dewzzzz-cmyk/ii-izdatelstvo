@@ -45,7 +45,11 @@ export function betaReaderMessages(state){
   const scenes = doneScenesOrdered(state);
   const first = scenes[0], last = scenes[scenes.length-1];
   const p = state.project;
-  const lowScored = scenes.filter(s=>s.lastEval?.weighted).sort((a,b)=>a.lastEval.weighted-b.lastEval.weighted).slice(0,3);
+  // typeof-проверка, не просто truthy: weighted===0 обычно значит, что ответ
+  // Оценщика был обрезан/не распарсился (см. agents.js) — именно такие сцены
+  // самые вероятные кандидаты на «слабое место», а не «нет оценки вообще»,
+  // но `s.lastEval?.weighted` как truthy-проверка их отфильтровывала.
+  const lowScored = scenes.filter(s=>typeof s.lastEval?.weighted==='number').sort((a,b)=>a.lastEval.weighted-b.lastEval.weighted).slice(0,3);
   const sys = [
     'Ты — обычный читатель целевой аудитории этой книги, не редактор и не критик. Ты прочитал рукопись целиком и честно делишься впечатлением — так, как отвечал бы на анкету бета-ридера.',
     'Не придумывай похвалу из вежливости и не выдумывай проблем, которых нет — отвечай так, будто это реальное чтение.',
@@ -121,7 +125,7 @@ export function criticReviewMessages(state){
   const scenes = doneScenesOrdered(state);
   const first = scenes[0], last = scenes[scenes.length-1];
   const p = state.project;
-  const lowScored = scenes.filter(s=>s.lastEval?.weighted).sort((a,b)=>a.lastEval.weighted-b.lastEval.weighted).slice(0,3)
+  const lowScored = scenes.filter(s=>typeof s.lastEval?.weighted==='number').sort((a,b)=>a.lastEval.weighted-b.lastEval.weighted).slice(0,3)
     .filter(s=>s.id!==first?.id && s.id!==last?.id);
   const sys = [
     'Ты — литературный критик с 15-летним опытом рецензирования жанровой и серьёзной прозы. Тебя попросили дать честную, НЕСОКРАЩЁННУЮ рецензию на рукопись — развёрнутый профессиональный отзыв, а не анкету с баллами.',

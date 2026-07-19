@@ -156,7 +156,11 @@ export async function runBookArchitect(state, opts={}){
       const maxW = Math.round(norm * 1.20);
       allScenes.forEach(sc=>{
         const tw = Number(sc.targetWords)||0;
-        if(tw < minW) sc.targetWords = norm;
+        // Симметрично верхнему краю: клэмп в minW, а не в norm — иначе
+        // намеренно короткая переходная/экспозиционная сцена (промпт сам
+        // просит писать такие короче среднего) принудительно раздувалась
+        // до полного среднего объёма без предупреждения.
+        if(tw < minW) sc.targetWords = minW;
         else if(tw > maxW) sc.targetWords = maxW;
       });
       return v.skeleton;
@@ -253,6 +257,15 @@ export async function regenerateDownstream(state, pivotScene, hint){
       for(let i=0;i<Math.min(arr.length, downstream.length);i++){
         const sc = downstream[i], fr = arr[i];
         pushSceneVersion(sc);
+        // Тот же фикс, что и в regenerateChapter(): без сброса status/text уже
+        // написанная сцена оставалась «готово» со старым текстом, не подходящим
+        // под новый бриф после каскадной перегенерации — молча уходило в экспорт.
+        if(sc.status==='done' && sc.text){
+          sc.proseVersions = sc.proseVersions || [];
+          sc.proseVersions.unshift(sc.text);
+          if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+          sc.status = 'todo';
+        }
         sc.title=(fr.title||sc.title).trim();
         sc.brief=fr.brief.trim();
         sc.emotion=(fr.emotion||sc.emotion||'').trim();

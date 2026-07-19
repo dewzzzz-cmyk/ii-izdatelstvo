@@ -103,7 +103,10 @@ async function handleGenerate(req, res){
     if(!wantStream){
       let fullBody = '';
       const reader2 = up.body.getReader(); const dec2 = new TextDecoder();
-      try{ while(true){ const {value, done} = await reader2.read(); if(done) break; fullBody += dec2.decode(value, {stream:true}); } }
+      try{
+        while(true){ const {value, done} = await reader2.read(); if(done) break; fullBody += dec2.decode(value, {stream:true}); }
+        fullBody += dec2.decode(); // добить недокодированный хвост многобайтового символа
+      }
       catch(e){ return send(res, 502, 'READ_ERROR: '+e.message); }
       let content = '';
       try { content = JSON.parse(fullBody).choices?.[0]?.message?.content || ''; }
@@ -116,17 +119,24 @@ async function handleGenerate(req, res){
     }
     res.writeHead(200, { 'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'no-cache' });
     const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
+    const emitLine=(line)=>{
+      const s=line.trim(); if(!s.startsWith('data:')) return;
+      const data=s.slice(5).trim(); if(data==='[DONE]') return;
+      try{ const d=JSON.parse(data).choices?.[0]?.delta?.content; if(d) res.write(d); }catch{}
+    };
     try{
       while(true){
         const {value,done}=await reader.read(); if(done) break;
         buf += dec.decode(value,{stream:true});
         const lines=buf.split('\n'); buf=lines.pop();
-        for(const line of lines){
-          const s=line.trim(); if(!s.startsWith('data:')) continue;
-          const data=s.slice(5).trim(); if(data==='[DONE]') continue;
-          try{ const d=JSON.parse(data).choices?.[0]?.delta?.content; if(d) res.write(d); }catch{}
-        }
+        for(const line of lines) emitLine(line);
       }
+      // Апстрим закрыл соединение — добить недокодированный хвост многобайтового
+      // символа (финальный decode без {stream:true}) и обработать последнюю
+      // строку без завершающего \n: раньше оба случая молча теряли конец текста
+      // при обрыве ровно на границе символа/строки, неотличимо от штатного конца.
+      buf += dec.decode();
+      if(buf) emitLine(buf);
     }catch{}
     res.end();
   });
@@ -283,20 +293,25 @@ function indexEntry(d){
   return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length };
 }
 
+// Полное сканирование каталога проектов — дорогая операция (десериализует
+// каждый файл целиком), используется только для восстановления индекса,
+// когда его нет или он повреждён.
+function rebuildSyncIndex(){
+  const idx = {};
+  const files = fs.readdirSync(SYNC_DIR).filter(f=>f.endsWith('.json') && f!=='_index.json');
+  files.forEach(f=>{
+    try{ const d = JSON.parse(fs.readFileSync(path.join(SYNC_DIR,f),'utf8')); idx[d.id] = indexEntry(d); }catch{}
+  });
+  return idx;
+}
+
 function handleSyncList(req, res){
   ensureDir(SYNC_DIR);
   try{
-    let idx = readSyncIndex();
     // Индекса ещё нет (первый запуск после обновления, или файл потерялся) —
     // построить один раз старым (медленным) способом и закэшировать на диск.
-    if(!idx){
-      idx = {};
-      const files = fs.readdirSync(SYNC_DIR).filter(f=>f.endsWith('.json') && f!=='_index.json');
-      files.forEach(f=>{
-        try{ const d = JSON.parse(fs.readFileSync(path.join(SYNC_DIR,f),'utf8')); idx[d.id] = indexEntry(d); }catch{}
-      });
-      writeSyncIndex(idx);
-    }
+    let idx = readSyncIndex();
+    if(!idx){ idx = rebuildSyncIndex(); writeSyncIndex(idx); }
     send(res,200,JSON.stringify(Object.values(idx)),'application/json; charset=utf-8');
   }catch(e){ send(res,500,'LIST_ERROR: '+e.message); }
 }
@@ -312,9 +327,18 @@ function handleSyncSave(req, res, id){
     try{
       const parsed = JSON.parse(raw);
       if(!parsed.id) return send(res,400,'NO_ID');
+      // Файл пишется под id из URL, запись индекса — под id из тела: без этой
+      // проверки расхождение (например, будущая фича «дублировать проект»)
+      // создало бы «проект-призрак», видимый в списке, но недоступный по GET.
+      if(parsed.id !== id) return send(res,400,'ID_MISMATCH');
       ensureDir(SYNC_DIR);
       fs.writeFileSync(path.join(SYNC_DIR,safeFile(id)+'.json'), raw, 'utf8');
-      const idx = readSyncIndex() || {};
+      // Если индекс потерян/повреждён — пересобрать полным сканированием
+      // каталога, а не начинать с пустого объекта: иначе повреждение
+      // _index.json на любом обычном сохранении молча схлопывает список
+      // синхронизации до одной записи (сами файлы проектов остаются целы).
+      let idx = readSyncIndex();
+      if(!idx) idx = rebuildSyncIndex();
       idx[parsed.id] = indexEntry(parsed);
       writeSyncIndex(idx);
       send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
@@ -331,6 +355,18 @@ function handleSyncDelete(req, res, id){
   send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
 }
 
+// Сортировка файлов по РЕАЛЬНОМУ времени изменения, а не по имени: имя файла
+// — «Название_timestamp.json», и CHECKPOINT_DIR общий для всех проектов —
+// сортировка одной строкой .sort() шла по алфавиту названия книги, а не по
+// дате, из-за чего «оставить 30 последних» могло удалить только что созданный
+// чекпоинт одного проекта раньше, чем старые чекпоинты другого (см. аудит).
+function sortByMtimeDesc(dir, files){
+  return files
+    .map(f=>{ let mtime=0; try{ mtime=fs.statSync(path.join(dir,f)).mtimeMs; }catch{} return {f,mtime}; })
+    .sort((a,b)=>b.mtime-a.mtime)
+    .map(x=>x.f);
+}
+
 function handleCheckpointSave(req,res){
   readBody(req, res, 30e6, (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
@@ -340,8 +376,8 @@ function handleCheckpointSave(req,res){
     const filename=`${title}_${ts}.json`;
     try{
       fs.writeFileSync(path.join(CHECKPOINT_DIR,filename), typeof b.state==='string'?b.state:JSON.stringify(b.state),'utf8');
-      // prune to 30 most recent
-      const files=fs.readdirSync(CHECKPOINT_DIR).filter(f=>f.endsWith('.json')).sort().reverse();
+      // prune to 30 most recent (по реальному mtime, не по имени файла)
+      const files=sortByMtimeDesc(CHECKPOINT_DIR, fs.readdirSync(CHECKPOINT_DIR).filter(f=>f.endsWith('.json')));
       files.slice(30).forEach(f=>{ try{ fs.unlinkSync(path.join(CHECKPOINT_DIR,f)); }catch{} });
       send(res,200,JSON.stringify({ok:true,file:filename}),'application/json; charset=utf-8');
     }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
@@ -351,7 +387,7 @@ function handleCheckpointSave(req,res){
 function handleCheckpointList(req,res){
   ensureDir(CHECKPOINT_DIR);
   try{
-    const files=fs.readdirSync(CHECKPOINT_DIR).filter(f=>f.endsWith('.json')).sort().reverse().slice(0,50)
+    const files=sortByMtimeDesc(CHECKPOINT_DIR, fs.readdirSync(CHECKPOINT_DIR).filter(f=>f.endsWith('.json'))).slice(0,50)
       .map(f=>{ const st=fs.statSync(path.join(CHECKPOINT_DIR,f)); return {name:f,size:st.size,mtime:st.mtime.toISOString()}; });
     send(res,200,JSON.stringify({ok:true,files}),'application/json; charset=utf-8');
   }catch(e){ send(res,500,'READ_ERROR: '+e.message); }
