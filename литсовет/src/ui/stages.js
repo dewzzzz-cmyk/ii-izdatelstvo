@@ -1009,7 +1009,7 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
     // увидит вовсе. Кратко показываем и на самой кнопке.
     if(btnId){
       const b = document.getElementById(btnId);
-      if(b){ b.textContent = '⚠ ошибка'; b.title = e.message; setTimeout(()=>{ if(b.textContent==='⚠ ошибка') b.textContent = origBtnLabel; }, 3000); }
+      if(b){ b.textContent = '⚠ ошибка'; b.title = e.message; setTimeout(()=>{ if(b.textContent==='⚠ ошибка'){ b.textContent = origBtnLabel; b.title=''; } }, 3000); }
     }
   }finally{
     setBusy(false);
