@@ -284,7 +284,7 @@ export function restoreImageVersion(item, verIdx){
 // сцен ещё нет). Одна карта на проект — повторная генерация заменяет старую
 // запись массива, но её dataUrl/prompt переносится в versions[] новой (см.
 // carryVersions выше) — старая карта не пропадает, доступна через историю.
-export function saveMapItem(state, dataUrl, prompt=''){
+export function saveMapItem(state, dataUrl, prompt='', markerNames=[]){
   state.illustrations = state.illustrations || {};
   const old = (state.illustrations.items||[]).find(it=>it.type==='map');
   const versions = carryVersions(old);
@@ -293,7 +293,10 @@ export function saveMapItem(state, dataUrl, prompt=''){
   // генератора), labels — координатные подписи поверх неё (см. compositeMapLabels
   // ниже). Новая генерация — новая геометрия карты, старые координаты подписей
   // больше не имеют смысла, поэтому labels всегда сбрасываются здесь, не переносятся.
-  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, baseDataUrl:dataUrl, labels:[], createdAt:Date.now(), versions };
+  // markerNames — если карта сгенерирована с пронумерованными точками (см.
+  // mapAutoLabels в world.js), список названий по номеру метки, нужен
+  // detectMapMarkers() позже, чтобы сопоставить распознанный номер с именем.
+  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, baseDataUrl:dataUrl, labels:[], markerNames:markerNames||[], createdAt:Date.now(), versions };
   state.illustrations.items.push(item);
   return item;
 }

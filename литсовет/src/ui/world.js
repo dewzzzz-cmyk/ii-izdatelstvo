@@ -5,7 +5,7 @@
 
 import { getState, save } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
-import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix, estimateOverviewTokens } from '../world.js';
+import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix, estimateOverviewTokens, detectMapMarkers } from '../world.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -23,6 +23,7 @@ let _mapBusy = false;
 let _mapError = '';  // инлайн вместо блокирующего alert() — тот же подход, что в ui/illustrations.js
 let _mapLabelEdit = false; // режим расстановки текстовых подписей поверх карты (см. compositeMapLabels)
 let _mapLabelBusy = false; // идёт пересборка dataUrl (canvas) после добавления/правки/удаления подписи
+let _mapDetectBusy = false; // идёт vision-запрос распознавания пронумерованных меток (detectMapMarkers)
 // Порог для предупреждения о размере проверки глубины (см. estimateOverviewTokens
 // в world.js) — точечные проверки по категории физически не могут его достичь
 // (там нет otherFacts и facts одной категории), срабатывает только на общей
@@ -141,6 +142,7 @@ function renderMapBlock(s, geoCount){
       ${_mapLabelEdit ? `<div class="muted" style="font-size:11px;margin-bottom:8px">${_mapLabelBusy?'<span class="spinner"></span> Пересобираю картинку…':`Кликните по карте, чтобы поставить подпись (текст — настоящий, без риска кракозябр). ${labels.length}/${MAX_MAP_LABELS_UI}.`}</div>` : ''}
       <div class="row" style="gap:8px;margin-bottom:8px;flex-wrap:wrap">
         <button class="btn" id="wMapLabelToggle">${_mapLabelEdit?'✓ Готово с подписями':'🏷 Подписать места (настоящий текст)'}</button>
+        ${map.markerNames&&map.markerNames.length ? `<button class="btn" id="wMapDetect" ${(ic.provider||'gemini')!=='gemini'?'disabled':''} data-tip="${(ic.provider||'gemini')!=='gemini'?'Работает только с провайдером картинок Gemini':'Найдёт пронумерованные точки на карте и подпишет их настоящим текстом (заменит текущие подписи)'}">${_mapDetectBusy?'<span class="spinner"></span> Распознаю…':'🔍 Определить и подписать'}</button>` : ''}
         ${map.versions&&map.versions.length?`<button class="btn" id="wMapHistory" title="История версий карты (${map.versions.length}) — можно вернуться к прошлой">🕐 История (${map.versions.length})</button>`:''}
       </div>
       <div class="muted" style="font-size:11px;margin-bottom:8px">Также доступно в разделе «Иллюстрации» →</div>` : ''}
@@ -164,6 +166,7 @@ function renderMapBlock(s, geoCount){
           </select>
         </label>
         <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Совсем без подписей и текста на карте — только рисунок. То же самое, что выбрать «Без текста» в языке подписей выше, просто быстрее."><input type="checkbox" id="wMapNoLabels" ${mapLang==='none'?'checked':''}> Без подписей</label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px;${mapLang!=='none'?'opacity:.5':''}" data-tip="Вместо слов — маленькие пронумерованные значки (их надёжнее рисует любая image-модель). После генерации кнопка «Определить и подписать» распознает номера и поставит настоящий читаемый текст на их место. Только для провайдера Gemini."><input type="checkbox" id="wMapAutoLabels" ${mapLang!=='none'?'disabled':''} ${ic.mapAutoLabels?'checked':''}> 🎯 Пронумеровать точки для авто-подписи</label>
       </div>
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
@@ -829,9 +832,12 @@ function bindHandlers(els, s){
       s.illustrations.mapLanguage = 'none';
     } else {
       s.illustrations.mapLanguage = s.illustrations.mapLanguagePrev || 'ru';
+      s.illustrations.mapAutoLabels = false; // теряет смысл вне «Без текста»
     }
     save(); renderWorld(els);
   };
+  const wMapAutoLabels = document.getElementById('wMapAutoLabels');
+  if(wMapAutoLabels) wMapAutoLabels.onchange = ()=>{ s.illustrations.mapAutoLabels = wMapAutoLabels.checked; save(); renderWorld(els); };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
@@ -839,11 +845,30 @@ function bindHandlers(els, s){
     if(_mapBusy) return;
     _mapBusy = true; _mapError=''; renderWorld(els);
     try{
-      const { dataUrl, prompt } = await generateWorldMap(s);
-      saveMapItem(s, dataUrl, prompt);
+      const { dataUrl, prompt, markerNames } = await generateWorldMap(s);
+      saveMapItem(s, dataUrl, prompt, markerNames);
       save();
     }catch(e){ _mapError = e.message; }
     finally{ _mapBusy = false; renderWorld(els); }
+  };
+
+  const wmDetect = document.getElementById('wMapDetect');
+  if(wmDetect) wmDetect.onclick = async ()=>{
+    if(_mapDetectBusy) return;
+    const map = (s.illustrations?.items||[]).find(it=>it.type==='map'); if(!map) return;
+    _mapDetectBusy = true; _mapError=''; renderWorld(els);
+    try{
+      const found = await detectMapMarkers(s, map);
+      // Распознавание перезаписывает подписи целиком (не докладывает поверх
+      // старых) — предсказуемее для повторного запуска, если часть меток
+      // распозналась неточно; после этого любую подпись всё ещё можно
+      // подвинуть/переименовать вручную через «🏷 Подписать места».
+      map.labels = [];
+      found.forEach(f=>addMapLabel(map, f.name, f.xPct, f.yPct));
+      await applyMapLabels(map);
+      save();
+    }catch(e){ _mapError = e.message; }
+    finally{ _mapDetectBusy = false; renderWorld(els); }
   };
 
   const wmh = document.getElementById('wMapHistory');

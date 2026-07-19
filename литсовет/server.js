@@ -268,6 +268,40 @@ async function handleGenerateImage(req, res){
   });
 }
 
+// ── Анализ изображения (vision-вход, только Gemini) ──
+// В отличие от handleGenerateImage (картинка — результат), здесь картинка —
+// ВХОД запроса, а результат — обычный текст (JSON с координатами). Используется
+// для распознавания пронумерованных меток на карте мира (см. detectMapMarkers
+// в world.js) — тот же принцип проксирования, что и у остальных эндпоинтов:
+// ключ приходит в теле, сервер ничего не хранит.
+async function handleAnalyzeImage(req, res){
+  readBody(req, res, 8e6, async (raw)=>{
+    let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
+    if(process.env.PROXY_TOKEN && (b.proxyToken||'')!==process.env.PROXY_TOKEN) return send(res, 401, 'UNAUTHORIZED: неверный токен прокси.');
+    const apiKey = (b.apiKey||'').trim();
+    const prompt = (b.prompt||'').trim();
+    const dataUrl = (b.dataUrl||'').trim();
+    if(!apiKey) return send(res, 400, 'NO_KEY: не задан API-ключ для анализа изображения.');
+    if(!prompt) return send(res, 400, 'NO_PROMPT: пуст промпт для анализа.');
+    const m = /^data:([\w/+.-]+);base64,(.+)$/.exec(dataUrl);
+    if(!m) return send(res, 400, 'BAD_IMAGE: изображение должно быть data URL (base64).');
+    const [, mime, b64] = m;
+    const model = b.model || 'gemini-2.5-flash';
+    try{
+      const up = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ contents:[{ parts:[{ text: prompt }, { inlineData:{ mimeType: mime, data: b64 } }] }] }),
+      });
+      if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
+      const d = await up.json();
+      const text = (d?.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
+      if(!text.trim()) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул ответ.');
+      return send(res, 200, JSON.stringify({text}), 'application/json; charset=utf-8');
+    }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
+  });
+}
+
 function safeFile(name){ return (name||'').replace(/[/\\]/g,'').replace(/[^a-zA-Zа-яА-Я0-9_.-]/g,'_'); }
 
 // ── Синхронизация проектов между устройствами ──
@@ -408,6 +442,7 @@ http.createServer(async (req,res)=>{
   if(req.method==='OPTIONS') return send(res,204,'');
   if(req.method==='POST' && req.url==='/api/generate')    return handleGenerate(req,res);
   if(req.method==='POST' && req.url==='/api/generate-image') return handleGenerateImage(req,res);
+  if(req.method==='POST' && req.url==='/api/analyze-image')  return handleAnalyzeImage(req,res);
   if(req.method==='POST' && req.url==='/api/wiki')         return handleWiki(req,res);
   if(req.method==='POST' && req.url==='/api/checkpoint')  return handleCheckpointSave(req,res);
   if(req.method==='GET'  && req.url.startsWith('/api/checkpoints')) return handleCheckpointList(req,res);

@@ -5,7 +5,7 @@
 // TF-IDF-систему канона, отдельного хранилища нет (спека §4).
 
 import { callLLM, extractJSON } from './llm.js';
-import { generateImage } from './imagegen.js';
+import { generateImage, analyzeImage } from './imagegen.js';
 import { tokensOf, tfvec, cosine, bibleForPrompt } from './bible.js';
 import { estimateTokens } from './tokens.js';
 
@@ -434,6 +434,19 @@ export const MAP_LANGUAGES = {
 // artifacts", и "labeled" геообъекты в одном промпте (прямое противоречие
 // самому себе), и никогда не учитывала язык подписей, хотя карта — ровно то
 // место, где надписи (названия мест) есть чаще всего.
+// Общий список «что помечать» для генерации карты (mapPromptFor) и последующего
+// автораспознавания (detectMapMarkers) — оба обязаны видеть ОДИН И ТОТ ЖЕ
+// порядок/названия, иначе номер метки на картинке не совпадёт с тем, что потом
+// покажет распознавание. keys факта — уже короткий ключевой термин (для
+// TF-IDF-поиска в Bible, см. bible.js) — годится как есть, без доп. обработки
+// моделью (в отличие от текстовых подписей выше, где имя от строгает сама модель).
+function pickMarkerFacts(geoFacts, labelCount){
+  return geoFacts.slice(0, labelCount).map(f=>({
+    name: (f.keys||'').split(',')[0].trim() || f.text.slice(0,24).trim(),
+    text: f.text,
+  }));
+}
+
 export function mapPromptFor(state){
   const geoFacts = (state.bible||[]).filter(b=>b.source==='world' && b.category==='география');
   if(!geoFacts.length) throw new Error('Нужно хотя бы несколько фактов категории «География» в каноне.');
@@ -484,7 +497,17 @@ export function mapPromptFor(state){
     ? ' More labels means higher risk of garbled letters even with these precautions — accept that trade-off, and take extra care to spell each one correctly.'
     : ' Leave the rest of the geography unlabeled rather than cramming in more text — fewer, larger labels stay legible far more reliably than many small ones.')
     + ' Each name+type pair together is still just two short words — do not let the type line grow longer or more detailed than the name above it.';
-  const geoLine = noText
+  // «Пронумеровать точки для авто-подписи» (только вместе с «Без текста») —
+  // просим не слова, а простые пронумерованные значки: цифры image-модели
+  // рисуют НАМНОГО надёжнее слов (особенно кириллических составных названий),
+  // а реальный читаемый текст добавляется потом отдельным шагом — распознаванием
+  // номеров через vision-запрос (detectMapMarkers) и наложением настоящего
+  // текста тем же canvas-механизмом, что и у ручных подписей.
+  const autoLabels = noText && !!ic.mapAutoLabels;
+  const markerFacts = autoLabels ? pickMarkerFacts(geoFacts, labelCount) : [];
+  const geoLine = autoLabels
+    ? `Geography (must appear as visual features — ${facts}). Mark EXACTLY these ${markerFacts.length} locations, each with a small circled numeral (a bold, high-contrast digit inside a simple filled circle — thick blocky digit shapes, NOT thin or stylized) placed at the correct spot on the map: ${markerFacts.map((mf,i)=>`marker ${i+1} = ${mf.text}`).join('; ')}. The circled numeral is the ONLY marking allowed for these locations — no place names, no other words, no title, no caption, no scale bar anywhere on the map, the ONLY exception is a compass rose's single-letter N/S/E/W marks. A misplaced or unreadable numeral defeats the whole purpose here — take extra care that each numeral sits exactly on its named location and is legible at a glance.`
+    : noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
     // Автор явно попросил подписывать не только имя, но и ОБЩИЙ ТИП рельефа —
     // без этого «Кристальных Когтей»/«Забытых Часов» читаются как случайные
@@ -494,7 +517,7 @@ export function mapPromptFor(state){
     // на самом важном слове (названии).
     : `Geography (must appear as visual features — ${facts}). Label ONLY the ${labelCount} most important named place${labelCount>1?'s':''}, in LARGE, bold, hand-lettered text (${MAP_LANGUAGES[lang].instr}) styled as part of the map's decoration (not a printed caption). Each label must be SHORT — one word, or a two-word nickname, never the full name. ALWAYS strip the generic category word from the name, keeping only the distinctive part: "Пустыня Забытых Часов" → "Забытых Часов", "Хребет Кристальных Когтей" → "Кристальных Когтей", "Болото Ускользающих Огней" → "Ускользающих Огней", "Лес Шатких Теней" → "Шатких Теней" — this applies to EVERY label, not just some of them. This is not optional: the type line below already states that generic word (горы, пустыня, болото, лес...), so keeping it in the name too means saying the same thing twice on the same label. Never merge two different place names into one invented hybrid label — each label names exactly ONE place from the facts above. Directly under each name, add a SECOND, noticeably smaller line — exactly ONE plain Russian word naming its general terrain type (горы, пустыня, лес, болото, озеро, остров, город, река, побережье, долина, etc. — whichever matches the fact), so the kind of place is clear without guessing from the fantasy name alone. Do not add a title, banner, caption, scale bar, or any other text on the map beyond these ${labelCount} name+type pairs — the ONLY exception is a compass rose's single-letter N/S/E/W marks, nothing else. ${fontNote}${riskNote}`;
   return [
-    `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText ? ', no text artifacts' : ''}.`,
+    `Fantasy-style map, top-down bird's-eye view, cartography illustration${noText && !autoLabels ? ', no text artifacts' : ''}.`,
     `Art direction: ${flavor}.`,
     `Render the terrain richly and visibly, not as a bare outline: rivers winding to the sea or lakes, forests as clusters of tree symbols, mountain ranges with peak hatching, roads or trails connecting settlements, coastlines with texture — infer plausible terrain features even where the facts below don't specify every one, as long as they don't contradict the facts. Where a fact names a terrain TYPE (desert, swamp, forest, mountains, sea), draw that actual terrain there, not a generic or unrelated feature — a desert fact means visible dunes/sand, not open water.`,
     `Feel free to invent atmospheric cartographic flourishes NOT contradicting the facts below — a compass rose (single-letter N/S/E/W marks only, no other wording), sea monsters or ships in unmapped waters, decorative border, weathered texture, subtle terrain shading. Do NOT add a numbered scale bar — the small numerals on a scale bar are exactly the kind of tiny, dense text that reliably garbles; a decorative border or texture reads as authentic without it. The map should read as a real hand-drawn artifact, not a bare literal diagram of only what's listed.`,
@@ -516,7 +539,43 @@ export async function generateWorldMap(state){
     quality: ic.quality,
     proxyToken: state.global?.proxyToken,
   });
-  return { dataUrl, prompt };
+  // Тот же список и порядок, что mapPromptFor только что реально отправила в
+  // промпт (см. pickMarkerFacts) — сохраняется на самом item в saveMapItem,
+  // чтобы detectMapMarkers ниже сопоставляла номер метки с названием даже
+  // если канон успеет измениться между генерацией и распознаванием.
+  const geoFacts = (state.bible||[]).filter(b=>b.source==='world' && b.category==='география');
+  const labelCount = Math.max(1, Math.min(10, Math.round(Number(ic.mapLabelCount)) || 5));
+  const markerNames = (ic.mapLanguage==='none' && ic.mapAutoLabels)
+    ? pickMarkerFacts(geoFacts, labelCount).map(f=>f.name)
+    : [];
+  return { dataUrl, prompt, markerNames };
+}
+
+// Распознаёт координаты пронумерованных меток на уже сгенерированной карте
+// (см. mapAutoLabels выше) отдельным vision-запросом — картинка идёт ВХОДОМ, а
+// не результатом, поэтому только провайдер Gemini умеет так же принимать
+// картинку, как отдаёт (см. handleAnalyzeImage в server.js). Номер метки на
+// картинке сопоставляется с item.markerNames в ТОМ ЖЕ порядке, в котором они
+// были отправлены при генерации — результат передаётся в существующие
+// addMapLabel()/applyMapLabels() (illustrations.js), тот же механизм, что и у
+// подписей, расставленных вручную.
+export async function detectMapMarkers(state, item){
+  const ic = state.illustrations || {};
+  if(!ic.apiKey) throw new Error('Не задан API-ключ для генерации картинок (⚙).');
+  if((ic.provider||'gemini')!=='gemini') throw new Error('Автораспознавание меток пока работает только с провайдером Gemini.');
+  const names = item?.markerNames||[];
+  if(!names.length) throw new Error('Эта карта сгенерирована без пронумерованных меток — включите «Пронумеровать точки для авто-подписи» и сгенерируйте карту заново.');
+  const base = item.baseDataUrl || item.dataUrl;
+  const prompt = `На этой картинке — карта фэнтезийного мира с ${names.length} пронумерованными метками (маленькие кружки с цифрами от 1 до ${names.length}). Определи координаты ЦЕНТРА каждой метки в процентах от размера картинки: xPct — слева направо (0=левый край, 100=правый край), yPct — сверху вниз (0=верх, 100=низ). Если какую-то метку не удалось найти — просто пропусти её номер, не выдумывай координаты. Верни СТРОГО JSON без пояснений и без markdown-обвязки: {"markers":[{"number":1,"xPct":число,"yPct":число}]}.`;
+  const text = await analyzeImage({ apiKey: ic.apiKey, prompt, dataUrl: base, proxyToken: state.global?.proxyToken });
+  const j = extractJSON(text);
+  const raw = (j && Array.isArray(j.markers)) ? j.markers : [];
+  const found = raw
+    .map(m=>({ number: Number(m.number), xPct: Number(m.xPct), yPct: Number(m.yPct) }))
+    .filter(m=> m.number>=1 && m.number<=names.length && Number.isFinite(m.xPct) && Number.isFinite(m.yPct))
+    .map(m=>({ name: names[m.number-1], xPct: Math.max(0,Math.min(100,m.xPct)), yPct: Math.max(0,Math.min(100,m.yPct)) }));
+  if(!found.length) throw new Error('Не удалось распознать ни одной метки на карте — попробуйте перегенерировать карту (иногда модель рисует нечёткие значки) или расставьте подписи вручную.');
+  return found;
 }
 
 // ── Архитектор сверяет скелет с каноном (спека §7 — канал остаётся открытым,

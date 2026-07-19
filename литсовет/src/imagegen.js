@@ -62,3 +62,30 @@ export async function generateImage(opts){
   if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.images += estimateImageCost(opts.provider, opts.quality, 1); }
   return { dataUrl: j.dataUrl };
 }
+
+// analyzeImage({apiKey, model, prompt, dataUrl, proxyToken}) → text
+// Обратное направление к generateImage: картинка идёт ВХОДОМ запроса, а не
+// результатом — используется для распознавания пронумерованных меток на
+// карте мира (см. detectMapMarkers в world.js). Только Gemini умеет так же
+// принимать картинку на вход, как отдаёт на выход — единственный провайдер,
+// поддерживаемый здесь.
+export async function analyzeImage(opts){
+  const res = await fetch('/api/analyze-image', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({
+      apiKey: opts.apiKey,
+      model: opts.model,
+      prompt: opts.prompt,
+      dataUrl: opts.dataUrl,
+      proxyToken: opts.proxyToken,
+    }),
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=>'');
+    throw new Error(t || ('HTTP '+res.status));
+  }
+  const j = await res.json();
+  if(!j.text) throw new Error('Провайдер не вернул ответ.');
+  return j.text;
+}
