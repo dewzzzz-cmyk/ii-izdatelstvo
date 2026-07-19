@@ -952,7 +952,19 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
   // происходит». btnId уже передавался обоими вызывающими местами, но раньше
   // не читался: спиннер прямо на нажатой кнопке — тот же приём, что и у
   // остальных долгих действий в этом файле (ag-run, чекпоинты и т.п.).
-  const origBtnLabel = btnId ? (document.getElementById(btnId)?.textContent ?? '') : '';
+  // Не захватываем подпись кнопки ОДИН раз при входе — genSkeleton зависит от
+  // hasSkeleton (см. renderStructure), а первая же успешная итерация цикла
+  // (ниже) вызывает applySkeleton()+save(), меняя «Сгенерировать скелет» на
+  // «Перегенерировать». Захваченная один раз строка, восстановленная после
+  // ОШИБКИ НА 2-Й/3-Й итерации, откатывала бы уже созданный скелет обратно на
+  // подпись «ещё не создан», хотя главы/сцены уже видны на экране. Пересчитываем
+  // «родную» подпись заново в момент восстановления (те же литералы, что и в
+  // разметке кнопок выше), а не когда-то раньше.
+  const restLabel = ()=>{
+    if(btnId==='genSkeleton') return (s.structure||[]).some(n=>n.type==='chapter') ? 'Перегенерировать' : 'Сгенерировать скелет';
+    if(btnId==='regenWithEval') return '♻ Улучшить структуру по замечаниям';
+    return '';
+  };
   const setClickedBtnBusy = (label)=>{
     if(!btnId) return;
     const b = document.getElementById(btnId);
@@ -1009,7 +1021,7 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
     // увидит вовсе. Кратко показываем и на самой кнопке.
     if(btnId){
       const b = document.getElementById(btnId);
-      if(b){ b.textContent = '⚠ ошибка'; b.title = e.message; setTimeout(()=>{ if(b.textContent==='⚠ ошибка'){ b.textContent = origBtnLabel; b.title=''; } }, 3000); }
+      if(b){ b.textContent = '⚠ ошибка'; b.title = e.message; setTimeout(()=>{ if(b.textContent==='⚠ ошибка'){ b.textContent = restLabel(); b.title=''; } }, 3000); }
     }
   }finally{
     setBusy(false);
@@ -1018,7 +1030,7 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
     // тогда трогать не нужно), возвращаем исходную подпись.
     if(btnId){
       const b = document.getElementById(btnId);
-      if(b && b.querySelector('.spinner')) b.textContent = origBtnLabel;
+      if(b && b.querySelector('.spinner')) b.textContent = restLabel();
     }
   }
 }
