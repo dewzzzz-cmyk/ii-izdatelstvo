@@ -204,7 +204,10 @@ function renderGallery(items, s){
 // (сгенерированной или своей). #modalRoot — общий контейнер модалок на всё
 // приложение (см. index.html), используется так же напрямую в ui/memory.js,
 // ui/diagnostics.js, ui/rule-modal.js — отдельный экспорт под это не заводили.
-function openImagePreview(dataUrl, label){
+// Экспортирована — переиспользуется из ui/world.js для клика по превью карты
+// (на «Мир» превью карты было мельче полноразмерного и без способа рассмотреть
+// вблизи — та же проблема, что уже была у остальной галереи до задачи #97).
+export function openImagePreview(dataUrl, label){
   const root = document.getElementById('modalRoot');
   const ext = (dataUrl.match(/^data:image\/(\w+)/)||[])[1] || 'png';
   // ё/Ё вне диапазона а-я/А-Я в Unicode (не примыкают к нему) — без явного

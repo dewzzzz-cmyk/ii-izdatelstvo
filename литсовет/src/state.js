@@ -334,6 +334,29 @@ export function setState(s){ _state = s; emit(); }
 export function subscribe(fn){ _subs.add(fn); return ()=>_subs.delete(fn); }
 function emit(){ _subs.forEach(fn=>{ try{ fn(_state); }catch(e){ console.error(e); } }); }
 
+function persistToServer(){
+  return saveProject(_state)
+    .then(()=>pushToServer(_state))
+    // pushToServer возвращает false при любой сетевой/HTTP-ошибке (см. её
+    // комментарий в storage.js) — раньше результат не проверялся вообще,
+    // индикатор синхронизации всегда показывал «●», даже если сцена никогда
+    // не доходила до сервера. Локальные данные (IndexedDB) при этом целы —
+    // это именно сигнал «сервер не видит последних правок», не потеря данных.
+    .then(ok=>{ setSyncStatus(ok ? 'ok' : 'err'); return ok; })
+    .catch(e=>{
+      console.error('save failed', e);
+      setSyncStatus('err');
+      let b = document.getElementById('_saveBanner');
+      if(!b){
+        b = document.createElement('div'); b.id='_saveBanner';
+        b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
+        b.onclick=()=>b.remove(); document.body?.appendChild(b);
+      }
+      b.textContent='⚠ Не удалось сохранить: '+e.message+' · нажмите чтобы скрыть';
+      return false;
+    });
+}
+
 let _saveTimer = null;
 export function save(){
   if(!_state) return;
@@ -345,27 +368,29 @@ export function save(){
   if(typeof ik === 'string') lsSet('litsovet_ic_apikey', ik);
   emit();
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(()=>{
-    saveProject(_state)
-      .then(()=>pushToServer(_state))
-      // pushToServer возвращает false при любой сетевой/HTTP-ошибке (см. её
-      // комментарий в storage.js) — раньше результат не проверялся вообще,
-      // индикатор синхронизации всегда показывал «●», даже если сцена никогда
-      // не доходила до сервера. Локальные данные (IndexedDB) при этом целы —
-      // это именно сигнал «сервер не видит последних правок», не потеря данных.
-      .then(ok=>setSyncStatus(ok ? 'ok' : 'err'))
-      .catch(e=>{
-        console.error('save failed', e);
-        setSyncStatus('err');
-        let b = document.getElementById('_saveBanner');
-        if(!b){
-          b = document.createElement('div'); b.id='_saveBanner';
-          b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
-          b.onclick=()=>b.remove(); document.body?.appendChild(b);
-        }
-        b.textContent='⚠ Не удалось сохранить: '+e.message+' · нажмите чтобы скрыть';
-      });
-  }, 400);
+  _saveTimer = setTimeout(persistToServer, 400);
+}
+
+// Тот же save(), но пуш на сервер не ждёт 400мс дебаунса — для результатов
+// дорогих платных операций (генерация картинки и т.п.), где цена гонки
+// «автор обновил страницу раньше, чем дошёл отложенный пуш» ощутимо выше,
+// чем у обычной текстовой правки: без этого результат генерации оставался
+// только в IndexedDB этой вкладки, и обновление страницы (или открытие с
+// другого устройства) до истечения дебаунса показывало старую картинку —
+// не потеря данных (IndexedDB цел), но выглядит именно как потеря.
+export async function saveNow(){
+  if(!_state) return false;
+  clearTimeout(_saveTimer);
+  // Та же синхронная часть, что и в save() — но без повторного
+  // planning'а отложенного таймера (иначе persistToServer() ушёл бы дважды:
+  // сразу и снова через 400мс).
+  _state.updated = Date.now();
+  const k = _state.global?.apiKey;
+  if(typeof k === 'string') lsSet('litsovet_apikey', k);
+  const ik = _state.illustrations?.apiKey;
+  if(typeof ik === 'string') lsSet('litsovet_ic_apikey', ik);
+  emit();
+  return persistToServer();
 }
 
 function lsGet(k){ try{ return localStorage.getItem(k); }catch{ return null; } }

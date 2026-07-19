@@ -3,14 +3,14 @@
 // одобряет, факты уходят в общую Библию. Карта — отдельная кнопка, платный
 // image-API, только по явному клику (спека §5, §6, §9).
 
-import { getState, save } from '../state.js';
+import { getState, save, saveNow } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
 import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix, estimateOverviewTokens, detectMapMarkers } from '../world.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
 import { openFactModal } from './rule-modal.js';
-import { openVersionHistoryModal } from './illustrations.js';
+import { openVersionHistoryModal, openImagePreview } from './illustrations.js';
 
 let _candidates = [];        // предложенные, ещё не одобренные факты (все категории вместе, у каждого своё .category)
 let _selected = new Set();   // id одобренных чекбоксом
@@ -133,7 +133,7 @@ function renderMapBlock(s, geoCount){
   return `<div class="ph">Карта мира (референс)</div>
     <div class="pad">
       ${map ? `<div class="wmap-wrap" id="wMapWrap" style="position:relative;display:inline-block;max-width:280px;margin-bottom:8px;${_mapLabelEdit?'cursor:crosshair':''}">
-        <img src="${labelImgSrc}" style="max-width:280px;width:100%;border-radius:var(--radius);display:block;user-select:none;pointer-events:none">
+        <img id="wMapImg" src="${labelImgSrc}" title="Открыть в полном размере" style="max-width:280px;width:100%;border-radius:var(--radius);display:block;user-select:none;${_mapLabelEdit?'pointer-events:none':'cursor:zoom-in'}">
         ${_mapLabelEdit ? labels.map(l=>`<div class="wmap-pin" data-id="${esc(l.id)}" style="position:absolute;left:${l.xPct}%;top:${l.yPct}%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:2px;background:rgba(20,14,8,0.85);border-radius:12px;padding:2px 4px;white-space:nowrap">
           <input type="text" class="wmap-pin-text" data-id="${esc(l.id)}" value="${esc(l.text)}" placeholder="название" style="width:80px;font-size:11px;border:none;background:transparent;color:#f7edd8;padding:1px 3px">
           <button class="wmap-pin-del" data-id="${esc(l.id)}" title="Удалить подпись" style="border:none;background:none;color:#f7edd8;cursor:pointer;font-size:12px;line-height:1;padding:0 3px">✕</button>
@@ -166,7 +166,7 @@ function renderMapBlock(s, geoCount){
           </select>
         </label>
         <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Совсем без подписей и текста на карте — только рисунок. То же самое, что выбрать «Без текста» в языке подписей выше, просто быстрее."><input type="checkbox" id="wMapNoLabels" ${mapLang==='none'?'checked':''}> Без подписей</label>
-        <label class="row" style="gap:6px;align-items:center;font-size:12px;${mapLang!=='none'?'opacity:.5':''}" data-tip="Вместо слов — маленькие пронумерованные значки (их надёжнее рисует любая image-модель). После генерации кнопка «Определить и подписать» распознает номера и поставит настоящий читаемый текст на их место. Только для провайдера Gemini."><input type="checkbox" id="wMapAutoLabels" ${mapLang!=='none'?'disabled':''} ${ic.mapAutoLabels?'checked':''}> 🎯 Пронумеровать точки для авто-подписи</label>
+        <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Включает и «Без текста»: вместо слов — маленькие пронумерованные значки (их надёжнее рисует любая image-модель). После генерации кнопка «Определить и подписать» распознает номера и поставит настоящий читаемый текст на их место. Только для провайдера Gemini."><input type="checkbox" id="wMapAutoLabels" ${ic.mapAutoLabels?'checked':''}> 🎯 Пронумеровать точки для авто-подписи</label>
       </div>
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
@@ -837,7 +837,19 @@ function bindHandlers(els, s){
     save(); renderWorld(els);
   };
   const wMapAutoLabels = document.getElementById('wMapAutoLabels');
-  if(wMapAutoLabels) wMapAutoLabels.onchange = ()=>{ s.illustrations.mapAutoLabels = wMapAutoLabels.checked; save(); renderWorld(els); };
+  if(wMapAutoLabels) wMapAutoLabels.onchange = ()=>{
+    s.illustrations.mapAutoLabels = wMapAutoLabels.checked;
+    // Самодостаточная галочка: включение сразу ставит и «Без текста» — раньше
+    // галочка была задизейблена, пока автор не поставит «Без подписей» сам
+    // отдельным первым кликом; клик по задизейбленному чекбоксу в браузере
+    // молча ничего не делает — автор решал, что «включил», карта уходила в
+    // генерацию с прежним mapLanguage, и результат выглядел как «не сработало».
+    if(wMapAutoLabels.checked && s.illustrations.mapLanguage!=='none'){
+      s.illustrations.mapLanguagePrev = s.illustrations.mapLanguage;
+      s.illustrations.mapLanguage = 'none';
+    }
+    save(); renderWorld(els);
+  };
 
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
@@ -847,7 +859,11 @@ function bindHandlers(els, s){
     try{
       const { dataUrl, prompt, markerNames } = await generateWorldMap(s);
       saveMapItem(s, dataUrl, prompt, markerNames);
-      save();
+      // saveNow (не save) — результат платной генерации; обычный save()
+      // откладывает пуш на сервер на 400мс, и обновление страницы раньше
+      // этого срока показывало старую картинку (данные не терялись — лежали
+      // в IndexedDB этой вкладки, — но выглядело именно как «карта откатилась»).
+      await saveNow();
     }catch(e){ _mapError = e.message; }
     finally{ _mapBusy = false; renderWorld(els); }
   };
@@ -866,7 +882,7 @@ function bindHandlers(els, s){
       map.labels = [];
       found.forEach(f=>addMapLabel(map, f.name, f.xPct, f.yPct));
       await applyMapLabels(map);
-      save();
+      await saveNow(); // тот же довод, что и у генерации выше — тоже платный вызов
     }catch(e){ _mapError = e.message; }
     finally{ _mapDetectBusy = false; renderWorld(els); }
   };
@@ -875,6 +891,17 @@ function bindHandlers(els, s){
   if(wmh) wmh.onclick = ()=>{
     const map = (s.illustrations?.items||[]).find(it=>it.type==='map');
     if(map) openVersionHistoryModal(map, s, ()=>renderWorld(els));
+  };
+
+  // Превью карты на «Мир» было мельче полноразмерной картинки и без способа
+  // рассмотреть вблизи — та же полноразмерная модалка+скачивание, что уже
+  // есть у остальной галереи «Иллюстрации» (см. openImagePreview). Не
+  // активна в режиме расстановки подписей (там клик по картинке ставит метку —
+  // img там и так непрозрачен для кликов, pointer-events:none в разметке выше).
+  const wMapImg = document.getElementById('wMapImg');
+  if(wMapImg && !_mapLabelEdit) wMapImg.onclick = ()=>{
+    const map = (s.illustrations?.items||[]).find(it=>it.type==='map');
+    if(map) openImagePreview(map.dataUrl, 'Карта мира');
   };
 
   // ── Подписи мест на карте (настоящий текст поверх картинки, см. illustrations.js) ──
