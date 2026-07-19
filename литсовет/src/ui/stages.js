@@ -1327,6 +1327,7 @@ export function renderWrite(els){
       </div>`:''}
       <button class="iconbtn" id="edUndo" data-tip="Отменить изменение в тексте (Ctrl+Z)">↶</button>
       <button class="iconbtn" id="edRedo" data-tip="Вернуть изменение (Ctrl+Shift+Z)">↷</button>
+      ${scene.text?`<button class="chat-clear" id="clearScene" data-tip="Стереть текст сцены и сбросить статус на «не написана». Прошлый текст остаётся в истории — можно вернуть кнопкой ↶ ниже, как после обычной перегенерации.">🗑 Очистить сцену</button>`:''}
     </div>
     <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${_edReviewOn?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):esc(scene.text)):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
@@ -1376,6 +1377,14 @@ export function renderWrite(els){
       if(!chBtn && !bookBtn) return '';
       return `${_autoError ? `<div class="run-row" style="margin-top:6px"><div style="color:var(--err);font-size:12px;flex:1">⚠ ${esc(_autoError)}</div></div>` : ''}<div class="run-row" style="margin-top:6px;gap:8px">${chBtn}${bookBtn}</div>`;
     })()}
+    ${// «Очистить главу» — намеренно ОТДЕЛЬНО от автопилот-блока выше: тот рано
+      // возвращает '', если в главе не осталось несделанных сцен — а это как раз
+      // случай, когда автору чаще всего и хочется стереть уже готовую главу
+      // целиком и переписать. Не зависит от _autoChapter (во время автопилота
+      // стирать главу из-под него не даём — !_autoChapter).
+      ch && !_autoChapter && !locked && scenesOfChapter(s, ch.id).some(x=>x.text)
+      ? `<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="chat-clear" id="clearChapter" data-tip="Стереть тексты всех сцен главы «${esc(ch.title)}» и сбросить их статус. Если глава была закрыта — откроется заново. Каждую сцену можно вернуть по отдельности кнопкой ↶ на её странице.">🗑 Очистить главу</button></div>`
+      : ''}
     ${(()=>{ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nx=idx>=0&&idx<scenes.length-1?scenes[idx+1]:null; return nx?`<div class="run-row" style="margin-top:6px;justify-content:flex-end"><button class="btn" id="nextScene">→ ${esc(nx.title)}</button></div>`:''; })()}`;
   document.getElementById('brief').addEventListener('input', e=>{ scene.brief=e.target.value; });
   document.querySelectorAll('.pc-cb').forEach(cb=>cb.addEventListener('change', ()=>{
@@ -1439,6 +1448,35 @@ export function renderWrite(els){
     scene.handDone=false;
     // Оценка/флаги относились к отменяемому тексту — теперь они не про то, что на экране.
     scene.lastEval=null; scene.flags={};
+    save();
+  };
+
+  // «Очистить сцену»/«Очистить главу» — стереть уже написанную прозу и
+  // сбросить статус, не трогая бриф/структуру. Прежний текст уходит в
+  // proseVersions тем же способом, что и при обычной перегенерации (см.
+  // scene.proseVersions.unshift чуть выше в файле) — «очистка» отменяется
+  // тем же ↶, к которому автор уже привык, отдельного механизма не завели.
+  function clearSceneText(sc){
+    if(sc.text){
+      sc.proseVersions = sc.proseVersions || [];
+      sc.proseVersions.unshift(sc.text);
+      if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+    }
+    sc.text=''; sc.words=0; sc.status='todo'; sc.handDone=false;
+    sc.lastEval=null; sc.flags={};
+  }
+  const clearSc=document.getElementById('clearScene');
+  if(clearSc) clearSc.onclick = ()=>{
+    if(!confirm(`Очистить сцену «${scene.title}»? Текст будет стёрт (можно вернуть кнопкой ↶).`)) return;
+    clearSceneText(scene);
+    save();
+  };
+  const clearCh=document.getElementById('clearChapter');
+  if(clearCh) clearCh.onclick = ()=>{
+    const chScenes = scenesOfChapter(s, ch.id);
+    if(!confirm(`Очистить главу «${ch.title}» (${chScenes.length} сц.)? Тексты будут стёрты (каждую сцену можно вернуть по отдельности кнопкой ↶).`)) return;
+    chScenes.forEach(clearSceneText);
+    ch.closed = false;
     save();
   };
 
