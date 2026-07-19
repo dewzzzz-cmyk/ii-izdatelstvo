@@ -168,6 +168,7 @@ function renderMapBlock(s, geoCount){
         <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Совсем без подписей и текста на карте — только рисунок. То же самое, что выбрать «Без текста» в языке подписей выше, просто быстрее."><input type="checkbox" id="wMapNoLabels" ${mapLang==='none'?'checked':''}> Без подписей</label>
         <label class="row" style="gap:6px;align-items:center;font-size:12px" data-tip="Включает и «Без текста»: вместо слов — маленькие пронумерованные значки (их надёжнее рисует любая image-модель). После генерации кнопка «Определить и подписать» распознает номера и поставит настоящий читаемый текст на их место. Только для провайдера Gemini."><input type="checkbox" id="wMapAutoLabels" ${ic.mapAutoLabels?'checked':''}> 🎯 Пронумеровать точки для авто-подписи</label>
       </div>
+      ${ic.mapAutoLabels && (ic.provider||'gemini')!=='gemini' ? `<div class="muted" style="font-size:11px;margin-bottom:8px;color:var(--err)">⚠ Нужен провайдер Gemini (сейчас «${esc(ic.provider||'gemini')}») — переключите в настройках (⚙), иначе номера на карте некому будет распознать.</div>` : ''}
       ${promptBlock(map?'Промпт, которым сгенерирована текущая карта:':'', map?.prompt)}
       ${promptBlock(`Промпт для ${map?'следующей генерации':'генератора'} (стиль каждый раз меняется случайно):`, previewPrompt)}
       ${_mapError?`<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ Карта: ${esc(_mapError)}</div>`:''}
@@ -854,6 +855,15 @@ function bindHandlers(els, s){
   const wm = document.getElementById('wMap');
   if(wm) wm.onclick = async ()=>{
     if(!s.illustrations?.apiKey){ alert('Задайте ключ для генерации картинок в настройках (⚙).'); return; }
+    // Пронумерованные точки распознаёт только Gemini (см. detectMapMarkers в
+    // world.js) — раньше чекбокс включался при любом провайдере, деньги на
+    // генерацию тратились, а результат навсегда оставался с голыми цифрами:
+    // кнопка «Определить и подписать» дизейблена для не-Gemini, заменить
+    // цифры на текст было нечем. Проверяем ДО платного вызова.
+    if(s.illustrations.mapAutoLabels && (s.illustrations.provider||'gemini')!=='gemini'){
+      _mapError = 'Пронумерованные точки распознаёт только провайдер Gemini (сейчас выбран «'+(s.illustrations.provider||'gemini')+'»). Переключите провайдера в настройках (⚙) или снимите галочку «Пронумеровать точки для авто-подписи» — иначе на карте останутся нечитаемые цифры.';
+      renderWorld(els); return;
+    }
     if(_mapBusy) return;
     _mapBusy = true; _mapError=''; renderWorld(els);
     try{
