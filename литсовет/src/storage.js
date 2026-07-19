@@ -38,17 +38,40 @@ export function safeReplacer(key, value){
   return value;
 }
 
+// Лёгкий индекс проектов в META (ключ 'projectsIndex') — listProjects() раньше
+// делала store.getAll() на STORE, десериализуя ПОЛНЫЕ объекты всех локальных
+// проектов (у книги с историей прогонов — 15-20+ МБ на проект) только чтобы
+// достать id/title/updated. Из-за этого открытие настроек ⚙ ощутимо
+// подвисало на каждый клик. Индекс обновляется инкрементально при каждом
+// saveProject() — сам он маленький, десериализовать его дёшево.
+async function updateProjectIndexEntry(entry){
+  const store = await tx(META, 'readwrite');
+  const idx = await new Promise(resolve=>{
+    const r = store.get('projectsIndex');
+    r.onsuccess = ()=>resolve(r.result?.value || []);
+    r.onerror = ()=>resolve([]);
+  });
+  const i = idx.findIndex(p=>p.id===entry.id);
+  if(i>=0) idx[i]=entry; else idx.push(entry);
+  return new Promise(resolve=>{
+    const r = store.put({key:'projectsIndex', value:idx});
+    r.onsuccess = ()=>resolve();
+    r.onerror = ()=>resolve();
+  });
+}
+
 export async function saveProject(state){
   const store = await tx(STORE, 'readwrite');
   // Глубокая копия без секретов/приватных полей, но с сохранением apiKey ТОЛЬКО в памяти —
   // здесь намеренно сериализуем через safeReplacer, поэтому ключ на диск не попадёт.
   const clean = JSON.parse(JSON.stringify(state, safeReplacer));
   clean.id = state.id;
-  return new Promise((resolve, reject)=>{
+  await new Promise((resolve, reject)=>{
     const r = store.put(clean);
     r.onsuccess = ()=>resolve();
     r.onerror = ()=>reject(r.error);
   });
+  await updateProjectIndexEntry({ id:clean.id, title:clean.project?.title||'(без названия)', updated:clean.updated });
 }
 
 export async function loadProject(id){
@@ -61,21 +84,41 @@ export async function loadProject(id){
 }
 
 export async function listProjects(){
+  const metaStore = await tx(META);
+  const idx = await new Promise(resolve=>{
+    const r = metaStore.get('projectsIndex');
+    r.onsuccess = ()=>resolve(r.result?.value ?? null);
+    r.onerror = ()=>resolve(null);
+  });
+  if(idx) return idx;
+  // Индекса ещё нет (первый запуск после обновления) — построить один раз
+  // старым (медленным) способом и закэшировать, дальше будет быстро.
   const store = await tx(STORE);
-  return new Promise((resolve, reject)=>{
+  const full = await new Promise((resolve, reject)=>{
     const r = store.getAll();
-    r.onsuccess = ()=>resolve((r.result||[]).map(p=>({id:p.id, title:p.project?.title||'(без названия)', updated:p.updated})));
+    r.onsuccess = ()=>resolve(r.result||[]);
     r.onerror = ()=>reject(r.error);
   });
+  const built = full.map(p=>({id:p.id, title:p.project?.title||'(без названия)', updated:p.updated}));
+  const idxStore = await tx(META, 'readwrite');
+  idxStore.put({key:'projectsIndex', value:built});
+  return built;
 }
 
 export async function deleteProject(id){
   const store = await tx(STORE, 'readwrite');
-  return new Promise((resolve, reject)=>{
+  await new Promise((resolve, reject)=>{
     const r = store.delete(id);
     r.onsuccess = ()=>resolve();
     r.onerror = ()=>reject(r.error);
   });
+  const metaStore = await tx(META, 'readwrite');
+  const idx = await new Promise(resolve=>{
+    const r = metaStore.get('projectsIndex');
+    r.onsuccess = ()=>resolve(r.result?.value || []);
+    r.onerror = ()=>resolve([]);
+  });
+  metaStore.put({key:'projectsIndex', value: idx.filter(p=>p.id!==id)});
 }
 
 export async function getMeta(key){

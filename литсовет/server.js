@@ -264,17 +264,40 @@ function safeFile(name){ return (name||'').replace(/[/\\]/g,'').replace(/[^a-zA-
 // Данные хранятся в ./data/projects/{id}.json
 // Без Railway Volume сбрасываются при рестарте контейнера (настройте Volume на /app/data)
 
+// Лёгкий индекс {id: {id,title,updated,scenes}} рядом с самими проектами —
+// GET /api/sync раньше читал и разбирал ПОЛНЫЙ JSON каждого проекта на диске
+// только чтобы достать 4 коротких поля (список проектов для настроек). На
+// книге с историей прогонов (diagnostics.runs) один файл — 15-20+ МБ, и это
+// читалось целиком при КАЖДОМ открытии настроек ⚙ в браузере — заметное
+// подвисание интерфейса на ровном месте. Теперь список читает один маленький
+// файл; полные файлы проектов трогаются только там, где реально нужны
+// (GET одного проекта, сохранение).
+const SYNC_INDEX_FILE = path.join(SYNC_DIR, '_index.json');
+function readSyncIndex(){
+  try{ return JSON.parse(fs.readFileSync(SYNC_INDEX_FILE,'utf8')); }catch{ return null; }
+}
+function writeSyncIndex(idx){
+  try{ fs.writeFileSync(SYNC_INDEX_FILE, JSON.stringify(idx), 'utf8'); }catch{}
+}
+function indexEntry(d){
+  return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length };
+}
+
 function handleSyncList(req, res){
   ensureDir(SYNC_DIR);
   try{
-    const files = fs.readdirSync(SYNC_DIR).filter(f=>f.endsWith('.json'));
-    const list = files.map(f=>{
-      try{
-        const d = JSON.parse(fs.readFileSync(path.join(SYNC_DIR,f),'utf8'));
-        return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length };
-      }catch{ return null; }
-    }).filter(Boolean);
-    send(res,200,JSON.stringify(list),'application/json; charset=utf-8');
+    let idx = readSyncIndex();
+    // Индекса ещё нет (первый запуск после обновления, или файл потерялся) —
+    // построить один раз старым (медленным) способом и закэшировать на диск.
+    if(!idx){
+      idx = {};
+      const files = fs.readdirSync(SYNC_DIR).filter(f=>f.endsWith('.json') && f!=='_index.json');
+      files.forEach(f=>{
+        try{ const d = JSON.parse(fs.readFileSync(path.join(SYNC_DIR,f),'utf8')); idx[d.id] = indexEntry(d); }catch{}
+      });
+      writeSyncIndex(idx);
+    }
+    send(res,200,JSON.stringify(Object.values(idx)),'application/json; charset=utf-8');
   }catch(e){ send(res,500,'LIST_ERROR: '+e.message); }
 }
 
@@ -291,6 +314,9 @@ function handleSyncSave(req, res, id){
       if(!parsed.id) return send(res,400,'NO_ID');
       ensureDir(SYNC_DIR);
       fs.writeFileSync(path.join(SYNC_DIR,safeFile(id)+'.json'), raw, 'utf8');
+      const idx = readSyncIndex() || {};
+      idx[parsed.id] = indexEntry(parsed);
+      writeSyncIndex(idx);
       send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
     }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
   });
@@ -300,6 +326,8 @@ function handleSyncDelete(req, res, id){
   const fp = path.join(SYNC_DIR, safeFile(id)+'.json');
   if(!fp.startsWith(SYNC_DIR)) return send(res,403,'FORBIDDEN');
   try{ fs.unlinkSync(fp); }catch{}
+  const idx = readSyncIndex();
+  if(idx){ delete idx[id]; writeSyncIndex(idx); }
   send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
 }
 
