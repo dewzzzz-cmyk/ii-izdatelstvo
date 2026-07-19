@@ -506,7 +506,15 @@ export function mapPromptFor(state){
   const autoLabels = noText && !!ic.mapAutoLabels;
   const markerFacts = autoLabels ? pickMarkerFacts(geoFacts, labelCount) : [];
   const geoLine = autoLabels
-    ? `Geography (must appear as visual features — ${facts}). Mark EXACTLY these ${markerFacts.length} locations, each with a small circled numeral (a bold, high-contrast digit inside a simple filled circle — thick blocky digit shapes, NOT thin or stylized) placed at the correct spot on the map: ${markerFacts.map((mf,i)=>`marker ${i+1} = ${mf.text}`).join('; ')}. The circled numeral is the ONLY marking allowed for these locations — no place names, no other words, no title, no caption, no scale bar anywhere on the map, the ONLY exception is a compass rose's single-letter N/S/E/W marks. A misplaced or unreadable numeral defeats the whole purpose here — take extra care that each numeral sits exactly on its named location and is legible at a glance.`
+    // «no text» раньше стояло ПОСЛЕ дампа лора всех фактов и списка маркеров —
+    // живой прогон (Recraft) показал, что модель это игнорирует: подписывает
+    // словами и немаркерные локации (проговорены в фактах выше по тексту), и
+    // даже маркерные — вперемешку с кружком-номером. Перенесли запрет текста
+    // на текст В НАЧАЛО, вплотную к самому дампу фактов (as visual features
+    // ONLY — тот же приём уже работал в ветке noText ниже) и явно сказали
+    // про НЕмаркерные локации отдельно — раньше "no place names ... anywhere
+    // on the map" грамматически читалось как относящееся только к маркерным.
+    ? `Geography — visual terrain features ONLY, ABSOLUTELY NO text, place names, captions or labels anywhere on the map for any of them: ${facts}. The ONLY marks allowed anywhere on the entire map are exactly ${markerFacts.length} small circled numerals (a bold, high-contrast digit inside a simple filled circle — thick blocky digit shapes, NOT thin or stylized) placed at these ${markerFacts.length} locations, and nowhere else: ${markerFacts.map((mf,i)=>`marker ${i+1} = ${mf.text}`).join('; ')}. Every OTHER location named above gets NO marking of any kind — draw its terrain, write nothing. Even the ${markerFacts.length} marked locations get the numeral ONLY — no place names, no other words, no title, no caption, no scale bar anywhere on the map, the ONLY exception is a compass rose's single-letter N/S/E/W marks. A misplaced or unreadable numeral defeats the whole purpose here — take extra care that each numeral sits exactly on its named location and is legible at a glance.`
     : noText
     ? `Geography (must appear as visual features only — NO text, no labels, no writing anywhere): ${facts}`
     // Автор явно попросил подписывать не только имя, но и ОБЩИЙ ТИП рельефа —
