@@ -930,7 +930,7 @@ function currentSkeletonAsPrevious(s){
     }))
   } : null;
 }
-async function runIterativeArchitect(s, { chCount, seedEval }){
+async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
   const maxIter = Math.max(1, s.global.structureMaxIter ?? 3);
   let prevEval = seedEval || null;
   let prevScore = prevEval ? prevEval.score : null;
@@ -945,12 +945,26 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
   // и текст статуса к свежим элементам, а не к ссылкам, взятым до первого save().
   const setBusy = (busy)=>{ ['genSkeleton','regenWithEval'].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=busy; }); };
   const setStatus = (html)=>{ const st=document.getElementById('genStatus'); if(st) st.innerHTML=html; };
+  // #genStatus рендерится наверху, рядом с карточкой «Книжный архитектор» — а
+  // «♻ Улучшить структуру по замечаниям» лежит в самом низу списка сцен (может
+  // быть далеко за 3000px вниз). Автор жал кнопку внизу и не видел вообще
+  // никакой реакции, пока не проскроллит наверх — выглядело как «ничего не
+  // происходит». btnId уже передавался обоими вызывающими местами, но раньше
+  // не читался: спиннер прямо на нажатой кнопке — тот же приём, что и у
+  // остальных долгих действий в этом файле (ag-run, чекпоинты и т.п.).
+  const origBtnLabel = btnId ? (document.getElementById(btnId)?.textContent ?? '') : '';
+  const setClickedBtnBusy = (label)=>{
+    if(!btnId) return;
+    const b = document.getElementById(btnId);
+    if(b) b.innerHTML = `<span class="spinner"></span> ${label}`;
+  };
   setBusy(true);
   try{
     for(let iter=1; iter<=maxIter; iter++){
       lastIter = iter;
       const label = maxIter>1 ? `Прогон ${iter}/${maxIter}: ` : '';
       setStatus(`<span class="spinner"></span> ${label}Архитектор ${prevEval?'перерабатывает':'проектирует'} структуру…`);
+      setClickedBtnBusy(`${label}Архитектор ${prevEval?'перерабатывает':'проектирует'}…`);
       const hint = prevEval ? hintFromStructureEval(prevEval) : '';
       const previousSkeleton = prevEval ? currentSkeletonAsPrevious(s) : null;
       skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
@@ -960,6 +974,7 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
       save();
       setBusy(true);
       setStatus(`<span class="spinner"></span> ${label}Оценщик проверяет структуру…`);
+      setClickedBtnBusy(`${label}Оценщик проверяет…`);
       evalResult = await runStructureEval(s, skeleton, prevEval);
       if(evalResult && prevScore!=null) evalResult.prevScore = prevScore;
       s.structureEval = evalResult;
@@ -989,8 +1004,22 @@ async function runIterativeArchitect(s, { chCount, seedEval }){
     setStatus('');
     const stE = document.getElementById('genStatus');
     if(stE) stE.textContent = 'Ошибка: '+e.message;
+    // Та же причина, что и у спиннера выше: если ошибка (например, не задан
+    // API-ключ) видна только в #genStatus наверху, автор внизу страницы её не
+    // увидит вовсе. Кратко показываем и на самой кнопке.
+    if(btnId){
+      const b = document.getElementById(btnId);
+      if(b){ b.textContent = '⚠ ошибка'; b.title = e.message; setTimeout(()=>{ if(b.textContent==='⚠ ошибка') b.textContent = origBtnLabel; }, 3000); }
+    }
   }finally{
     setBusy(false);
+    // Если кнопка ещё существует и до сих пор показывает наш спиннер (свежий
+    // ре-рендер панели после save() уже мог вернуть ей родной текст сам —
+    // тогда трогать не нужно), возвращаем исходную подпись.
+    if(btnId){
+      const b = document.getElementById(btnId);
+      if(b && b.querySelector('.spinner')) b.textContent = origBtnLabel;
+    }
   }
 }
 
