@@ -637,7 +637,16 @@ function renderResultBody(r){
       return `<div class="ares-axis"><span>${a.label}</span><b style="color:${col}">${val}</b></div>`; }).join('');
     const cl=(v.cliches||[]).length?`<div class="ares-h">Клише в тексте</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}» <button class="ares-rule" data-rule="${esc('избегай штампа «'+c+'» и подобных шаблонных оборотов')}" data-tip="Сделать правилом — впредь избегать">⊕ В правило</button></div>`).join('')}`:'';
     const rp=(v.repetition||[]).length?`<div class="ares-h">Повтор имени вместо местоимения</div>${v.repetition.map(c=>`<div class="ares-cl">«${esc(c)}» <button class="ares-rule" data-rule="${esc('не повторяй имя персонажа подряд — через предложение-два заменяй на местоимение или эпитет')}" data-tip="Сделать правилом — впредь избегать">⊕ В правило</button></div>`).join('')}`:'';
-    const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span>${fixActions(n)}</div>`).join('')}`:'';
+    // Групповой выбор — тот же паттерн, что у «Флаги сцены» (renderFlags):
+    // чекбоксы + «Выбрать все» + одна кнопка, которая шлёт все отмеченные
+    // замечания ОДНИМ вызовом patchScene() — та же точечная правка, что и у
+    // одиночной кнопки «Прозаику» ниже, просто на несколько замечаний сразу.
+    const notesToolbar = (v.notes||[]).length>1 ? `<div class="flags-toolbar" id="aresNotesToolbar">
+      <label class="fl-selall"><input type="checkbox" id="aresNoteSelAll"> Выбрать все (${v.notes.length})</label>
+      <span id="aresNoteSelCount" class="muted" style="font-size:12px"></span>
+      <button class="btn" id="aresNoteMultiFix" style="display:none" data-tip="Точечная правка сразу по всем выбранным замечаниям">→ Прозаику</button>
+    </div>` : '';
+    const nt=(v.notes||[]).length?`<div class="ares-h">Замечания и что исправить</div>${notesToolbar}${v.notes.map(n=>`<div class="ares-note">${(v.notes.length>1)?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="ares-note-cb" data-note="${esc(n)}"></label>`:''}<span>${esc(n)}</span>${fixActions(n)}</div>`).join('')}`:'';
     const all=((v.notes||[]).length||(v.cliches||[]).length)
       ? `<button class="btn btn-primary ares-all" style="margin-top:12px;width:100%">Все замечания → переписать сцену</button>`
       : `<div class="muted" style="margin-top:8px">Серьёзных замечаний нет — можно принимать.</div>`;
@@ -700,6 +709,40 @@ function openAgentResult(agent, result, scene){
       b.textContent='✓ применено'; b.classList.add('done'); b.disabled=true;
     }catch(e){ b.textContent=prev; b.disabled=false; alert('Не удалось: '+e.message); }
   });
+  // Групповой выбор замечаний Оценщика: чекбоксы → «Выбрать все» → одна
+  // точечная правка (patchScene, тот же вызов, что у одиночной кнопки выше)
+  // сразу по всем отмеченным — без полного цикла Прозаик⇄Оценщик⇄Стражи.
+  {
+    const noteCbs=[...document.querySelectorAll('.ares-note-cb')];
+    const multiFixBtn=document.getElementById('aresNoteMultiFix');
+    const selAllCb=document.getElementById('aresNoteSelAll');
+    const countEl=document.getElementById('aresNoteSelCount');
+    const updateNoteMultiBar=()=>{
+      if(!multiFixBtn) return;
+      const n=noteCbs.filter(c=>c.checked).length;
+      if(n>0){ countEl.textContent=`${n} выбрано`; multiFixBtn.style.display=''; multiFixBtn.textContent=`→ Прозаику (${n})`; }
+      else { countEl.textContent=''; multiFixBtn.style.display='none'; }
+      if(selAllCb){ selAllCb.checked=n===noteCbs.length && n>0; selAllCb.indeterminate=n>0&&n<noteCbs.length; }
+    };
+    noteCbs.forEach(cb=>cb.addEventListener('change', updateNoteMultiBar));
+    if(selAllCb) selAllCb.onchange=()=>{ noteCbs.forEach(cb=>cb.checked=selAllCb.checked); updateNoteMultiBar(); };
+    if(multiFixBtn) multiFixBtn.onclick=async()=>{
+      const checked=noteCbs.filter(c=>c.checked); if(!checked.length) return;
+      const s=getState(); const sc=(s.structure||[]).find(n=>n.id===scene.id); if(!sc) return;
+      const combined=checked.map((c,i)=>`${i+1}. ${c.dataset.note}`).join('\n');
+      const prev=multiFixBtn.textContent; multiFixBtn.textContent='…'; multiFixBtn.disabled=true;
+      try{
+        const fixed=await patchScene(s, sc, combined);
+        sc.proseVersions=sc.proseVersions||[]; sc.proseVersions.unshift(sc.text);
+        if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+        sc.text=fixed; sc.words=(fixed.match(/\S+/g)||[]).length;
+        sc.lastEval=null; sc.flags={};   // оценка/флаги относились к тексту до правки
+        save(); // перерисует редактор за модалкой
+        multiFixBtn.textContent='✓ применено'; multiFixBtn.disabled=true;
+        checked.forEach(c=>{ c.disabled=true; c.closest('.ares-note')?.classList.add('done'); });
+      }catch(e){ multiFixBtn.textContent=prev; multiFixBtn.disabled=false; alert('Не удалось: '+e.message); }
+    };
+  }
   const all=document.querySelector('.ares-all');
   if(all) all.onclick=()=>{ const v=result.verdict;
     const parts=[...(v.notes||[]), ...((v.cliches||[]).length?['убрать клише: '+v.cliches.join(', ')]:[])];
