@@ -188,6 +188,22 @@ function sequelConnectionNote(opts, prevSceneNode){
   return '';
 }
 
+// Тот же якорь, что и у секвеля выше, но для обычной СЦЕНЫ — раньше был только
+// у секвелей (opts.prevSceneText передавался в контекст как справочный блок
+// «ПРЕДЫДУЩАЯ СЦЕНА», но explicit-инструкции продолжать РОВНО с её конца не
+// было). Живой пример на «Разломе»: сцена 2 заканчивалась тем, что герой уже
+// встал, засмеялся и пошёл в лес на полном заряде — а сцена 3 заново сажала
+// его на колени и заново поднимала на 94% заряда, будто конец сцены 2 не
+// случился. Без явного «начни ровно с этой точки» модель вольна слегка
+// отмотать назад к уже пройденному биту вместо чистого продолжения.
+function sceneContinuityNote(opts, prevSceneNode){
+  if(opts.prevSceneText){
+    const tail = opts.prevSceneText.trim().slice(-400);
+    return `Сцена идёт СРАЗУ после сцены${prevSceneNode?` «${prevSceneNode.title}»`:''}, вот чем она закончилась:\n«…${tail}»\nНачни РОВНО с этой точки — не повторяй и не отматывай назад уже случившееся действие (герой уже мог встать, пойти, договорить реплику и т.п.), продолжай вперёд оттуда, где предыдущая сцена его оставила.`;
+  }
+  return '';
+}
+
 function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style){
   const lines = [];
   const revising = !!opts.prevDraft;
@@ -212,8 +228,10 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style){
   lines.push(scene.sceneType==='sequel'
     ? 'Тип сцены: СЕКВЕЛЬ (передышка). Структура: реакция героя на произошедшее → дилемма (взвешивание вариантов) → решение, которое ставит новую цель. Меньше внешнего действия, больше внутренней обработки. НЕ заканчивай новым потрясением — заканчивай принятым решением или ясным намерением.'
     : 'Тип сцены: СЦЕНА (растущее напряжение). Структура: цель героя ясна в начале → конфликт/препятствие мешает её достичь → сцена кончается ХУЖЕ, чем начиналась (поражение, осложнение, неожиданность). Не разрешай конфликт слишком легко и не смягчай финал сцены.');
-  if(scene.sceneType==='sequel' && !revising){
-    const note = sequelConnectionNote(opts, prevSceneNode);
+  if(!revising){
+    const note = scene.sceneType==='sequel'
+      ? sequelConnectionNote(opts, prevSceneNode)
+      : sceneContinuityNote(opts, prevSceneNode);
     if(note) lines.push(note);
   }
   if(isFirstScene && !revising){
