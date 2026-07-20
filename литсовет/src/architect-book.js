@@ -27,8 +27,18 @@ export function bookArchitectMessages(state, opts={}){
     ? Math.max(300, Math.min(4000, p.sceneWords))
     : Math.max(700, Math.min(2000, Math.round(totalWords / 60)));
   const targetScenes = Math.max(6, Math.round(totalWords / wPerScene));
-  const targetChapters = opts.chapters || Math.max(3, Math.min(25, Math.round(targetScenes / 3.5)));
-  const scenesPerCh = Math.max(2, Math.round(targetScenes / targetChapters));
+  // При «Улучшении» (opts.previousSkeleton) книга уже разбита на реальные
+  // главы/сцены — просить «раздели на N глав» по формуле общего объёма
+  // (которая может предсказать совсем другое число, напр. 17 вместо
+  // фактических 12) прямо противоречит соседней инструкции «сохрани рабочие
+  // элементы, точечно исправь проблемы» несколькими строками ниже. Модель
+  // получает два взаимоисключающих указания сразу — раздели заново ИЛИ
+  // сохрани. Берём фактические числа из previousSkeleton, когда они есть.
+  const prevChapterCount = opts.previousSkeleton ? opts.previousSkeleton.chapters.length : 0;
+  const prevSceneCount = opts.previousSkeleton
+    ? opts.previousSkeleton.chapters.reduce((n,ch)=>n+(ch.scenes||[]).length, 0) : 0;
+  const targetChapters = opts.chapters || prevChapterCount || Math.max(3, Math.min(25, Math.round(targetScenes / 3.5)));
+  const scenesPerCh = Math.max(2, Math.round((prevSceneCount || targetScenes) / targetChapters));
 
   const wMin = Math.round(wPerScene * 0.80);
   const wMax = Math.round(wPerScene * 1.20);
@@ -101,7 +111,7 @@ export function bookArchitectMessages(state, opts={}){
     '',
     opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. В том числе сохрани sceneType (сцена/секвель) у сцен, которых правка не касается напрямую, — не перетасовывай ритм сцена/секвель заново без причины, только потому что переписываешь скелет. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
     '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
-    `Итого ${targetChapters} глав, ~${targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
+    `Итого ${targetChapters} глав, ~${prevSceneCount || targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
@@ -158,7 +168,19 @@ export async function runBookArchitect(state, opts={}){
     ? Math.max(300, Math.min(4000, p.sceneWords))
     : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
   const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / wPerScene));
-  const archMaxTokens = Math.max(4000, Math.min(16000, targetScenes * 140 + 1500));
+  // При «Улучшении» формула-предсказание может недооценить фактический размер
+  // книги — живой пример: формула по общему объёму предсказала 60 сцен
+  // (9900 ток. бюджета), а книга уже реально разрослась до 47 сцен с
+  // РАЗВЁРНУТЫМИ брифами (2-3 предложения, не черновые 1-2, как при первой
+  // генерации — сама инструкция «улучши» требует сохранить детализацию, не
+  // урезать её). 9900 токенов не хватило, JSON обрывался на середине и не
+  // парсился. Берём максимум из формулы и фактического числа сцен, и щедрее
+  // считаем токены на сцену именно для improve (там брифы длиннее черновых).
+  const prevSceneCountForBudget = opts.previousSkeleton
+    ? opts.previousSkeleton.chapters.reduce((n,ch)=>n+(ch.scenes||[]).length, 0) : 0;
+  const effectiveScenes = Math.max(targetScenes, prevSceneCountForBudget);
+  const perSceneTokens = opts.previousSkeleton ? 250 : 140;
+  const archMaxTokens = Math.max(4000, Math.min(24000, effectiveScenes * perSceneTokens + 1500));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens });
