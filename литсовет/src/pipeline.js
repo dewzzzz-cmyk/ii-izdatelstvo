@@ -169,7 +169,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       agentEnabled('resolution') || agentEnabled('atmosphere') || (agentEnabled('humor') && wantsHumor) ||
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
-    let best = null, bestEval = null, bestClean = false, bestFlags = {};
+    let best = null, bestEval = null, bestClean = false, bestFlags = {}, bestLiteraryChecked = false;
     let directive = opts.directive || '';
     let prevDraft = opts.initialDraft || '';
     let lastGenerated = ''; // последний РЕАЛЬНО сгенерированный текст — переживает
@@ -311,6 +311,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       let criticals = [];
       let factualQuestions = [];
       let literaryNotes = [];
+      // true, если ЭТА итерация прошла полный набор литературных стражей
+      // (голос/стиль/юмор/POV/диалог/развязка/атмосфера/читатель) — они
+      // намеренно запускаются не на каждой итерации (дорого), только когда
+      // evalAccepted или до конца цикла осталась 1 итерация (см. ниже). Нужно
+      // для best-сравнения дальше — иначе непроверенный ранний черновик может
+      // обойти проверенный поздний просто по случайному баллу Оценщика.
+      let literaryChecked = false;
       const voiceExamples = (state.voice?.examples||[]).filter(Boolean);
 
       // Проверка механических повторов (не LLM, см. guards.js) — не завязана на
@@ -338,6 +345,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // (не строго на последней): иначе их находки физически некому применить —
         // после последней итерации Прозаик уже не переписывает черновик.
         if(evalAccepted || iter >= maxIter - 1){
+          literaryChecked = true;
           if(agentEnabled('voiceguard')){
             if(voiceExamples.length > 0)
               guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags, onProgress));
@@ -435,17 +443,30 @@ export async function runScene(state, scene, opts={}, onProgress){
       // ── best/bestEval: черновик БЕЗ критических замечаний Стражей побеждает
       // черновик с ними, даже если у второго выше литературный балл Оценщика —
       // иначе в финал уйдёт более «гладкий», но логически бракованный текст.
-      // Среди двух одинаково (не)чистых — выше балл.
+      // Среди двух одинаково (не)чистых — сначала проверенный литературными
+      // стражами побеждает непроверенный, и только среди одинаковых по этому
+      // признаку — выше балл. Раньше сравнение шло сразу по баллу: живой
+      // прогон показал, что ранняя итерация (никогда не видевшая стража
+      // развязки/читателя/юмора, потому что они запускаются только на
+      // evalAccepted/последних итерациях) выигрывала по баллу Оценщика
+      // (шум субъективных осей freshness/rhythm/±1) у поздней итерации,
+      // где эти же стражи реально нашли и Прозаик реально исправил пассивную
+      // победу героя и неуместный пафос — правки тихо терялись, потому что
+      // непроверенный черновик выглядел «чище» просто за счёт того, что его
+      // никто не проверял.
       const thisClean = criticals.length === 0;
       if(!bestEval || (thisClean && !bestClean) ||
-         (thisClean === bestClean && (!agentEnabled('evaluator') || (verdict.ok && verdict.weighted > (bestEval.weighted||0))))){
+         (thisClean === bestClean && (
+           (literaryChecked && !bestLiteraryChecked) ||
+           (literaryChecked === bestLiteraryChecked && (!agentEnabled('evaluator') || (verdict.ok && verdict.weighted > (bestEval.weighted||0))))
+         ))){
         // bestFlags — снимок flags ИМЕННО этой итерации (flags — общая переменная,
         // сбрасывается и переписывается на каждой итерации; без снимка возвращённые
         // флаги могли бы описывать текст из ДРУГОЙ, не победившей итерации —
         // например, дубль фразы, исправленный на итерации 2 (best), но снова
         // возникший на итерации 3 (не выигравшей) — так итог показывал бы
         // критическую находку для текста, которого в возвращённом best уже нет.
-        best = pRes.text; bestEval = verdict; bestClean = thisClean; bestFlags = {...flags};
+        best = pRes.text; bestEval = verdict; bestClean = thisClean; bestFlags = {...flags}; bestLiteraryChecked = literaryChecked;
       }
 
       if(!agentEnabled('evaluator')){
