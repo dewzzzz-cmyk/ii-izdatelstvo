@@ -925,8 +925,14 @@ function currentSkeletonAsPrevious(s){
   return chapters.length ? {
     chapters: chapters.map(ch=>({
       title: ch.title, arc: ch.arc,
+      // sceneType (сцена/секвель) — БЕЗ него Архитектор при «улучшении» не видит,
+      // какой ритм сцена/секвель уже был в книге, и расставляет его заново вслепую
+      // (runBookArchitect, temp 0.6) — а Оценщик структуры судит именно по этой
+      // оси (architect-book.js structureEvalMessages, «Ритм сцена/секвель»). Из-за
+      // этого точечное исправление одной проблемы могло случайно перетасовать
+      // весь ритм книги и уронить итоговый балл, хотя целевая проблема решена.
       scenes: (s.structure||[]).filter(n=>n.type==='scene' && n.chapterId===ch.id)
-        .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, targetWords:sc.targetWords }))
+        .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, targetWords:sc.targetWords, sceneType:sc.sceneType }))
     }))
   } : null;
 }
