@@ -10,7 +10,7 @@ import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './d
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
-import { runBookArchitect, applySkeleton, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter, isChapterLocked } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -981,12 +981,26 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
     for(let iter=1; iter<=maxIter; iter++){
       lastIter = iter;
       const label = maxIter>1 ? `Прогон ${iter}/${maxIter}: ` : '';
-      setStatus(`<span class="spinner"></span> ${label}Архитектор ${prevEval?'перерабатывает':'проектирует'} структуру…`);
-      setClickedBtnBusy(`${label}Архитектор ${prevEval?'перерабатывает':'проектирует'}…`);
+      // Точечная правка (structurePatchMode) — только когда есть предыдущая оценка
+      // С реальными affectedChapters. Первая генерация (prevEval==null) и обычный
+      // режим (тумблер выключен) всегда идут старым путём — полной пересборкой.
+      const affected = prevEval && prevEval.affectedChapters;
+      const usePatch = !!(s.global.structurePatchMode && affected && affected.length);
+      setStatus(`<span class="spinner"></span> ${label}Архитектор ${usePatch?`правит главы ${affected.join(', ')}`:(prevEval?'перерабатывает':'проектирует')} структуру…`);
+      setClickedBtnBusy(`${label}Архитектор ${usePatch?`правит ${affected.length} гл.`:(prevEval?'перерабатывает':'проектирует')}…`);
       const hint = prevEval ? hintFromStructureEval(prevEval) : '';
-      const previousSkeleton = prevEval ? currentSkeletonAsPrevious(s) : null;
-      skeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
-      applySkeleton(s, skeleton, uid);
+      if(usePatch){
+        const patchChapters = await runBookArchitectPatch(s, { affectedChapters:affected, hint });
+        applySkeletonPatch(s, patchChapters, uid);
+      } else {
+        const previousSkeleton = prevEval ? currentSkeletonAsPrevious(s) : null;
+        const freshSkeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
+        applySkeleton(s, freshSkeleton, uid);
+      }
+      // И полный, и точечный путь сходятся здесь: skeleton всегда пересобирается
+      // из АКТУАЛЬНОГО state.structure (не из ответа LLM напрямую) — Оценщику и
+      // refreshMissingFacts нужен один и тот же формат независимо от режима.
+      skeleton = currentSkeletonAsPrevious(s);
       s.structureEval = null;
       clearMissingFacts();
       save();
@@ -1071,6 +1085,10 @@ export function renderStructure(els){
           ${(s.skeletonVersions&&s.skeletonVersions.length)?`<button class="btn" id="revertSkeleton" title="Вернуть прошлый скелет">↶ скелет (${s.skeletonVersions.length})</button>`:''}
           <span class="muted" id="genStatus"></span>
         </div>
+        <label class="row" style="gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:var(--text-2)">
+          <input type="checkbox" id="structurePatchMode" ${s.global.structurePatchMode?'checked':''}>
+          Точечные правки при «Улучшить» — не трогать главы без замечаний Оценщика
+        </label>
       </div>
 
       ${hasSkeleton ? renderSkeletonEditor(s) : `
@@ -1114,6 +1132,9 @@ export function renderStructure(els){
     s.structureStale = false;
     await runIterativeArchitect(s, { chCount, seedEval:null, btnId:'genSkeleton' });
   };
+
+  const patchToggle = document.getElementById('structurePatchMode');
+  if(patchToggle) patchToggle.onchange = ()=>{ s.global.structurePatchMode = patchToggle.checked; save(); };
 
   const rs=document.getElementById('revertSkeleton');
   if(rs) rs.onclick = ()=>{

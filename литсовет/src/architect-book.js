@@ -116,6 +116,29 @@ export function bookArchitectMessages(state, opts={}){
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
+// Нормализация одной главы из сырого ответа LLM — общая часть validateSkeleton
+// и validateSkeletonPatch (точечные правки, см. ниже). Возвращает null, если
+// глава без title или без единой валидной сцены.
+function normalizeChapterRaw(ch){
+  if(!ch || typeof ch.title!=='string') return null;
+  // Принимаем любую сцену, у которой есть title (brief может быть null/undefined — LLM иногда
+  // использует "description" или вовсе не заполняет поле; не выбрасываем главу из-за этого).
+  const scenes = Array.isArray(ch.scenes) ? ch.scenes.filter(s=>s && s.title) : [];
+  if(!scenes.length) return null;
+  return {
+    title: ch.title.trim(),
+    arc: ARCS.includes(ch.arc) ? ch.arc : 'развитие',
+    scenes: scenes.map(s=>({
+      title: (s.title||'Без названия').trim(),
+      // Fallback: brief → description → summary → пустая строка
+      brief: (typeof s.brief==='string' ? s.brief : typeof s.description==='string' ? s.description : typeof s.summary==='string' ? s.summary : '').trim(),
+      emotion: (s.emotion||'').trim(),
+      targetWords: Number(s.targetWords)>0 ? Math.round(Number(s.targetWords)) : 700,
+      sceneType: s.sceneType==='sequel' ? 'sequel' : 'scene',
+    })),
+  };
+}
+
 // Валидация + нормализация скелета. Возвращает {ok, skeleton|error}.
 export function validateSkeleton(raw){
   let j = extractJSON(raw);
@@ -128,28 +151,36 @@ export function validateSkeleton(raw){
   if(!Array.isArray(j.chapters) || !j.chapters.length){
     return { ok:false, error:'нет массива chapters' };
   }
-  const chapters = [];
-  for(const ch of j.chapters){
-    if(!ch || typeof ch.title!=='string') continue;
-    // Принимаем любую сцену, у которой есть title (brief может быть null/undefined — LLM иногда
-    // использует "description" или вовсе не заполняет поле; не выбрасываем главу из-за этого).
-    const scenes = Array.isArray(ch.scenes) ? ch.scenes.filter(s=>s && s.title) : [];
-    if(!scenes.length) continue;
-    chapters.push({
-      title: ch.title.trim(),
-      arc: ARCS.includes(ch.arc) ? ch.arc : 'развитие',
-      scenes: scenes.map(s=>({
-        title: (s.title||'Без названия').trim(),
-        // Fallback: brief → description → summary → пустая строка
-        brief: (typeof s.brief==='string' ? s.brief : typeof s.description==='string' ? s.description : typeof s.summary==='string' ? s.summary : '').trim(),
-        emotion: (s.emotion||'').trim(),
-        targetWords: Number(s.targetWords)>0 ? Math.round(Number(s.targetWords)) : 700,
-        sceneType: s.sceneType==='sequel' ? 'sequel' : 'scene',
-      })),
-    });
-  }
+  const chapters = j.chapters.map(normalizeChapterRaw).filter(Boolean);
   if(!chapters.length) return { ok:false, error:'ни одной валидной главы со сценами' };
   return { ok:true, skeleton:{ chapters } };
+}
+
+// Валидация ответа ТОЧЕЧНОЙ правки (bookArchitectPatchMessages) — модель
+// обязана вернуть только главы из allowedNumbers (1-based позиция главы в
+// текущей книге), помеченные полем "number". Контекстные главы, которые ей
+// показали для стыка ритма, но просили не редактировать, отфильтровываются
+// здесь же — если модель всё равно их вернула, просто игнорируем.
+export function validateSkeletonPatch(raw, allowedNumbers){
+  let j = extractJSON(raw);
+  if(!j) return { ok:false, error:'не удалось распарсить JSON' };
+  if(!Array.isArray(j.chapters)){
+    const nested = Object.values(j).find(v => v && Array.isArray(v.chapters));
+    if(nested) j = nested;
+  }
+  if(!Array.isArray(j.chapters) || !j.chapters.length){
+    return { ok:false, error:'нет массива chapters' };
+  }
+  const allowed = new Set(allowedNumbers);
+  const chapters = [];
+  for(const ch of j.chapters){
+    const number = Number(ch && ch.number);
+    if(!allowed.has(number)) continue;
+    const norm = normalizeChapterRaw(ch);
+    if(norm) chapters.push({ number, ...norm });
+  }
+  if(!chapters.length) return { ok:false, error:'ни одной валидной главы из запрошенных номеров' };
+  return { ok:true, chapters };
 }
 
 // Запуск с ретраем при невалидном JSON (спека 11: кривой JSON ломает пайплайн).
@@ -215,6 +246,93 @@ export async function runBookArchitect(state, opts={}){
     }
   }
   throw new Error(`Книжный архитектор вернул невалидный скелет: ${lastErr}`);
+}
+
+// ── Точечная правка скелета (structurePatchMode) ──
+// Вместо пересборки ВСЕЙ книги (bookArchitectMessages — даже нетронутые главы
+// неизбежно немного переписываются моделью при temp 0.6, что и уронило балл
+// на живом прогоне на «Разломе»: 4 проблемы 3 итерации подряд помечались
+// «не устранено», хотя формулировки сцен каждый раз менялись) — отдаём модели
+// ТОЛЬКО главы, которые Оценщик назвал в affectedChapters, плюс по одной
+// соседней с каждого края КАК КОНТЕКСТ (не редактировать — нужен только чтобы
+// модель видела стык ритма сцена/секвель на границе). Все остальные главы,
+// включая уже написанные сцены, вообще не попадают в запрос.
+export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
+  const p = state.project;
+  const chapterNodes = (state.structure||[]).filter(n=>n.type==='chapter');
+  const structure = state.structure||[];
+  const targets = new Set(affectedChapters);
+  const contextOnly = new Set();
+  affectedChapters.forEach(n=>{
+    if(n-1>=1 && !targets.has(n-1)) contextOnly.add(n-1);
+    if(n+1<=chapterNodes.length && !targets.has(n+1)) contextOnly.add(n+1);
+  });
+  const wanted = [...targets, ...contextOnly].sort((a,b)=>a-b);
+
+  const wPerScene = p.sceneWords>0
+    ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
+  const wMin = Math.round(wPerScene*0.80), wMax = Math.round(wPerScene*1.20);
+
+  const sys = [
+    'Ты — книжный архитектор. Тебе показан ФРАГМЕНТ скелета книги — несколько глав, не вся книга.',
+    `Перепроектируй ТОЛЬКО главы с номерами: ${affectedChapters.join(', ')}. Главы с пометкой «(КОНТЕКСТ — НЕ редактировать)» показаны только чтобы ты видел стык ритма сцена/секвель на границе — не включай их в ответ и не меняй.`,
+    `Базовый объём сцены: ${wPerScene} слов. Диапазон: ${wMin}–${wMax} слов (±20%). НЕ выходи за пределы.`,
+    'Классифицируй КАЖДУЮ сцену по sceneType (техника Дуайта Свейна):',
+    '  "scene" — сцена действия: цель героя → конфликт/препятствие → поражение или осложнение. Растущее напряжение.',
+    '  "sequel" — секвель: реакция героя на произошедшее → дилемма → решение, ставящее новую цель. Передышка, меньше внешнего действия.',
+    genreWantsHumor(p.genre)
+      ? 'Ирония жанра касается ВСЕХ сцен, не только явно магических/жанровых — сохраняй приём снижения пафоса и там, где он не был явно указан раньше.'
+      : '',
+  ].filter(Boolean).join('\n');
+
+  const chText = wanted.map(n=>{
+    const chNode = chapterNodes[n-1];
+    const isTarget = targets.has(n);
+    const scenes = structure.filter(s=>s.type==='scene' && s.chapterId===chNode.id);
+    const scList = scenes.map((sc,si)=>`    ${n}.${si+1}. (${sc.sceneType==='sequel'?'секвель':'сцена'}) «${sc.title}» [${sc.targetWords||700}сл] — ${sc.brief||'(без брифа)'}`).join('\n');
+    return `Глава ${n}${isTarget?'':' (КОНТЕКСТ — НЕ редактировать)'} [${chNode.arc||'?'}]: «${chNode.title}»\n${scList}`;
+  }).join('\n\n');
+
+  const user = [
+    `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
+    'ФРАГМЕНТ СКЕЛЕТА:',
+    chText,
+    hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${hint}` : '',
+    '',
+    `Верни ТОЛЬКО главы ${affectedChapters.join(', ')} (без контекстных), в том же порядке, в JSON:`,
+    '{ "chapters": [ { "number": номер_главы, "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
+    'Брифы конкретные. Только JSON.',
+  ].filter(Boolean).join('\n');
+
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export async function runBookArchitectPatch(state, opts={}){
+  const g = state.global;
+  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  const architectAgent = ag(state, 'bookArchitect');
+  const { affectedChapters } = opts;
+  const msgs = bookArchitectPatchMessages(state, opts);
+  // Бюджет только под затронутые главы — тот же тариф на сцену (250 ток.),
+  // что и полный improve-режим в runBookArchitect, но без раздутия под всю книгу.
+  const chapterNodes = (state.structure||[]).filter(n=>n.type==='chapter');
+  const structure = state.structure||[];
+  const sceneCountInTargets = affectedChapters.reduce((n,num)=>{
+    const chNode = chapterNodes[num-1];
+    return chNode ? n + structure.filter(s=>s.type==='scene' && s.chapterId===chNode.id).length : n;
+  }, 0);
+  const maxTokens = Math.max(2000, Math.min(12000, sceneCountInTargets*250 + 800));
+  let lastErr = '';
+  for(let attempt=0; attempt<=(g.retries??2); attempt++){
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
+    const v = validateSkeletonPatch(res.text, affectedChapters);
+    if(v.ok) return v.chapters;
+    lastErr = v.error;
+    const preview = (res.text||'').slice(0, 120).replace(/\n/g,' ');
+    msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[{"number":...,...}]} только для глав ${affectedChapters.join(', ')}, без лишнего текста.` });
+  }
+  throw new Error(`Архитектор (точечная правка) вернул невалидный ответ: ${lastErr}`);
 }
 
 // Перегенерация ОДНОЙ сцены скелета с подсказкой автора о направлении.
@@ -350,6 +468,37 @@ export function applySkeleton(state, skeleton, uid){
   state.structure = nodes;
 }
 
+// Слияние ТОЧЕЧНОЙ правки (structurePatchMode) обратно в state.structure —
+// в отличие от applySkeleton() (полная пересборка ВСЕХ глав), здесь заменяются
+// только главы из patchChapters (см. runBookArchitectPatch/validateSkeletonPatch).
+// Остальные главы и их сцены — ТЕ ЖЕ объекты с теми же id, тем же текстом и
+// status: они вообще не участвовали в запросе к LLM, поэтому не могут быть
+// случайно переписаны дрейфом формулировок (см. комментарий у applySkeleton
+// про "точечно исправь" — инструкция не гарантия, полная регенерация всё
+// равно слегка меняет нетронутые места). Побочный плюс: уже написанные сцены
+// в незатронутых главах не стираются каждым «Улучшить», как раньше.
+export function applySkeletonPatch(state, patchChapters, uid){
+  pushSkeletonVersion(state);
+  const chapterNodes = (state.structure||[]).filter(n=>n.type==='chapter');
+  const byNumber = new Map(patchChapters.map(pc=>[pc.number, pc]));
+  const nodes = [];
+  chapterNodes.forEach((chNode, idx)=>{
+    const patch = byNumber.get(idx+1);
+    if(!patch){
+      nodes.push(chNode);
+      (state.structure||[]).filter(s=>s.type==='scene' && s.chapterId===chNode.id).forEach(sc=>nodes.push(sc));
+      return;
+    }
+    const chId = uid('ch');
+    nodes.push({ id:chId, type:'chapter', title:patch.title, arc:patch.arc });
+    patch.scenes.forEach(sc=>{
+      nodes.push({ id:uid('sc'), type:'scene', chapterId:chId, title:sc.title, brief:sc.brief,
+        emotion:sc.emotion, targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
+    });
+  });
+  state.structure = nodes;
+}
+
 // ── История полного скелета (откат неудачной перегенерации) ──
 // Каждая версия хранит вместе со срезом structure[] и оценку Оценщика, которая
 // была актуальна для НЕЁ (state.structureEval на момент вызова — это оценка
@@ -401,6 +550,7 @@ export function structureEvalMessages(state, skeleton, prevEval){
     prevEval && (prevEval.issues||[]).length
       ? 'Тебе дана ПРЕДЫДУЩАЯ ОЦЕНКА этой же книги до правки. По каждой прошлой проблеме явно реши: устранена или нет. Не подменяй устранённую проблему похожей, но другой критикой того же места — если правка решила именно то, что было заявлено, значит проблема закрыта, даже если место ещё не идеально. Для неустранённых — объясни, что конкретно осталось, и включи в issues с пометкой «(не устранено)».'
       : '',
+    'Для КАЖДОЙ проблемы в issues укажи номер(а) главы (1-based, по порядку в СКЕЛЕТЕ ниже), где её нужно чинить, и собери все такие номера в affectedChapters — только главы, которые ДЕЙСТВИТЕЛЬНО нужно менять, чтобы устранить issues. Если проблема на стыке двух глав (например, ритм сцена/секвель ломается на переходе) — укажи обе.',
   ].filter(Boolean).join('\n');
 
   // Компактный скелет для промпта — тип сцены в скобках, иначе Оценщик физически
@@ -424,7 +574,7 @@ export function structureEvalMessages(state, skeleton, prevEval){
     skeletonText,
     '',
     'Оцени структуру. Верни JSON:',
-    '{ "score": среднее_float_0-10, "axes": { "arc": 0-10, "pacing": 0-10, "conflict": 0-10, "balance": 0-10, "ending": 0-10 }, "issues": ["до 4 реальных проблем, кратко и конкретно"], "suggestions": ["до 4 конкретных улучшений со ссылками на главы/сцены"] }',
+    '{ "score": среднее_float_0-10, "axes": { "arc": 0-10, "pacing": 0-10, "conflict": 0-10, "balance": 0-10, "ending": 0-10 }, "issues": ["до 4 реальных проблем, кратко и конкретно"], "suggestions": ["до 4 конкретных улучшений со ссылками на главы/сцены"], "affectedChapters": [номера глав (1-based) из issues выше, без соседних непроблемных] }',
     'Если структура хороша — скажи это в suggestions. issues может быть пустым. Только JSON.',
   ].filter(Boolean).join('\n');
 
@@ -453,6 +603,12 @@ export async function runStructureEval(state, skeleton, prevEval){
     },
     issues:      Array.isArray(j.issues)      ? j.issues.slice(0,4).map(String)      : [],
     suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4).map(String) : [],
+    // Номера глав (1-based), которые реально нужно трогать, чтобы устранить issues —
+    // источник для точечных правок (structurePatchMode, см. bookArchitectPatchMessages).
+    // Клэмп к реальному числу глав скелета — модель иногда придумывает номер за пределами книги.
+    affectedChapters: Array.isArray(j.affectedChapters)
+      ? [...new Set(j.affectedChapters.map(Number).filter(n=>Number.isInteger(n) && n>=1 && n<=skeleton.chapters.length))]
+      : [],
   };
 }
 
