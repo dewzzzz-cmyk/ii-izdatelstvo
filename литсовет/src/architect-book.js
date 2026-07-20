@@ -351,10 +351,19 @@ export function applySkeleton(state, skeleton, uid){
 }
 
 // ── История полного скелета (откат неудачной перегенерации) ──
+// Каждая версия хранит вместе со срезом structure[] и оценку Оценщика, которая
+// была актуальна для НЕЁ (state.structureEval на момент вызова — это оценка
+// именно той структуры, что сейчас архивируется, а не новой: applySkeleton
+// зовёт push ДО перезаписи state.structure и ДО сброса state.structureEval).
+// Раньше версия хранила только structure[], поэтому откат не мог восстановить
+// оценку — приходилось молча сбрасывать её в null (см. revertSkeleton ниже).
 export function pushSkeletonVersion(state){
   if(!state.structure || !state.structure.length) return; // нечего сохранять на первой генерации
   state.skeletonVersions = state.skeletonVersions || [];
-  state.skeletonVersions.unshift(JSON.parse(JSON.stringify(state.structure)));
+  state.skeletonVersions.unshift({
+    structure: JSON.parse(JSON.stringify(state.structure)),
+    eval: state.structureEval ? JSON.parse(JSON.stringify(state.structureEval)) : null,
+  });
   if(state.skeletonVersions.length>5) state.skeletonVersions.length=5;
 }
 export function revertSkeleton(state){
@@ -363,7 +372,9 @@ export function revertSkeleton(state){
   // повторный клик клал текущую структуру обратно на то же место в истории —
   // второй клик просто возвращал вперёд, а версии старше первой были
   // навсегда недостижимы, хотя счётчик кнопки обещал «N» шагов назад.
-  state.structure = state.skeletonVersions.shift();
+  const v = state.skeletonVersions.shift();
+  state.structure = v.structure;
+  state.structureEval = v.eval;
   return true;
 }
 

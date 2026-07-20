@@ -1117,11 +1117,11 @@ export function renderStructure(els){
 
   const rs=document.getElementById('revertSkeleton');
   if(rs) rs.onclick = ()=>{
-    // Оценка Оценщика относилась к отменяемой структуре — после отката она
-    // описывала бы уже не то, что показано на экране (устаревшие оси/замечания).
-    // Карточки недостающих фактов — по той же причине: не перезапускаем LLM,
+    // revertSkeleton() сам восстанавливает state.structureEval — версию,
+    // сохранённую вместе с этим срезом structure[] (см. pushSkeletonVersion).
+    // Карточки недостающих фактов всё равно убираем: не перезапускаем LLM,
     // просто убираем то, что относилось к скелету-до-отката.
-    if(revertSkeleton(s)){ s.structureEval=null; clearMissingFacts(); save(); }
+    if(revertSkeleton(s)){ clearMissingFacts(); save(); }
   };
 
   const dismissStale = document.getElementById('dismissStale');
