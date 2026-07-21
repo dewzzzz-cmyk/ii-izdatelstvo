@@ -18,6 +18,7 @@ import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 import { runHistoricalResearch } from '../historian.js';
 import { rebuildBibleVecs } from '../bible.js';
+import { worldFactsFingerprint } from '../world.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
@@ -1055,6 +1056,25 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
   }
 }
 
+// Напоминание «давно не проверяли согласованность мира» — живой инцидент:
+// три взаимоисключающих факта о судьбе «первого землянина» (умер / выжил и
+// стал старейшиной / убит-но-выжил) спокойно жили в Библии несколько глав
+// подряд, потому что ручную дорогую проверку runWorldOverview (ui/world.js)
+// никто не запускал повторно после того, как канон разросся. Сама проверка
+// уже умеет обнаруживать «устарел ли кэш» через worldFactsFingerprint — не
+// дублируем эту логику, только решаем, когда об этом стоит НАПОМНИТЬ автору
+// вне вкладки «Мир»: если хотя бы одна глава уже закрыта (есть что портить)
+// и факты мира изменились с последней проверки (или её не было вовсе).
+// Не автозапуск (проверка платная, через LLM) — только ссылка на вкладку.
+export function worldCheckStale(s){
+  const hasClosedChapter = (s.structure||[]).some(n=>n.type==='chapter' && n.closed);
+  if(!hasClosedChapter) return false;
+  const fp = worldFactsFingerprint(s, null);
+  if(s.ui.worldCheckDismissedFor === fp) return false;
+  const cached = s.worldDepthEvals && s.worldDepthEvals.__all__;
+  return !cached || cached.fingerprint !== fp;
+}
+
 // ─────────────────────────────── СТРУКТУРА (мин.) ───────────────────────────────
 export function renderStructure(els){
   const s = getState();
@@ -1104,6 +1124,13 @@ export function renderStructure(els){
         <div style="font-size:12px;color:var(--err)">⚠ Добавлены факты мира после построения структуры — возможно, стоит перестроить.</div>
         <button class="btn" id="dismissStale" style="font-size:11px;margin-top:8px;padding:2px 9px">Скрыть</button>
       </div>` : ''}
+      ${worldCheckStale(s) ? `<div style="margin-top:14px;border:1px solid var(--warn,#c9a227);border-radius:8px;padding:12px 14px;background:var(--surface-2)">
+        <div style="font-size:12px">⚠ Канон мира менялся, а проверка согласованности («Мир» → «Оценка глубины мира») давно не запускалась — уже написаны главы, которые могли опереться на противоречащие друг другу факты.</div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn" id="goWorldCheck" style="font-size:11px;padding:2px 9px">Открыть «Мир» →</button>
+          <button class="btn" id="dismissWorldCheck" style="font-size:11px;padding:2px 9px">Скрыть</button>
+        </div>
+      </div>` : ''}
       <div id="missingFactsBlock"></div>
 
       ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
@@ -1147,6 +1174,11 @@ export function renderStructure(els){
 
   const dismissStale = document.getElementById('dismissStale');
   if(dismissStale) dismissStale.onclick = ()=>{ s.structureStale=false; save(); };
+
+  const goWorldCheck = document.getElementById('goWorldCheck');
+  if(goWorldCheck) goWorldCheck.onclick = ()=>{ s.ui.stage='world'; save(); };
+  const dismissWorldCheck = document.getElementById('dismissWorldCheck');
+  if(dismissWorldCheck) dismissWorldCheck.onclick = ()=>{ s.ui.worldCheckDismissedFor = worldFactsFingerprint(s, null); save(); };
 
   // Кнопки оценщика структуры
   const evalDismiss = document.getElementById('evalDismiss');
