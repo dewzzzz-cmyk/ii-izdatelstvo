@@ -20,6 +20,40 @@ function keyMatches(key, low, sset){
 
 export function tokensOf(text){ return (text||'').toLowerCase().replace(/ё/g,'е').match(/[а-яa-z0-9]+/gi)||[]; }
 export function tfvec(tokens){ const f={}; tokens.forEach(t=>{ const s=stem(t); if(s.length>2&&!STOP_RU.has(s)) f[s]=(f[s]||0)+1; }); return f; }
+
+// Топ повторяющихся корней слов по всей сцене — сигнал для Оценщика. LLM,
+// читая сцену целиком, надёжно замечает повтор в соседних предложениях, но
+// пропускает навязчивый мотив, размазанный по всему тексту (например, слово
+// «тиканье», повторённое 6+ раз на протяжении сцены почти одной и той же
+// формулировкой) — считаем это механически, а не полагаемся на то, что
+// модель заметит частоту, дочитав до конца.
+// Группируем по ПРЕФИКСУ слова, а не по stem() из tfvec выше: суффиксный
+// стеммер заточен под именные/падежные окончания и разваливает ГЛАГОЛЬНЫЕ
+// формы одного мотива на разные ключи («тиканье»→«тикань», «тикать»→
+// «тикат», «тикали»→«тикал» — три ключа с частотой 1-4 вместо одного с
+// частотой 6). Префикс общего корня склеивает их обратно.
+const STOP_RU_EXTRA = new Set('кто без него нее себя тебя меня ему ней им них эта этот эти того тому этого этой этим весь вся всё всех всем всеми каждый каждая каждое такой такая такое такие себе сама сами само'.split(' '));
+// Служебные глаголы-связки и слова-паразиты повествования («сказал», «только»,
+// «словно», «мог») — в любой прозе частотны сами по себе и не сигнализируют
+// об авторском стилистическом тике, в отличие от конкретной сенсорной детали
+// или образа. Фильтруем по ПРЕФИКСУ (не точной форме), т.к. группировка ниже
+// тоже идёт по префиксу — иначе «сказал»/«сказала»/«сказали» просочатся порознь.
+const STOP_PREFIXES = new Set(['сказ','стал','нача','посм','поду','толь','слов','очен','прос','совс','пото','тепе','опят','снов','мог','можн']);
+export function topRepeatedStems(text, min=5, limit=10, prefixLen=4){
+  const tokens = tokensOf(text).filter(t=>t.length>=4 && !STOP_RU.has(t) && !STOP_RU_EXTRA.has(t));
+  const freq = {}, examples = {};
+  tokens.forEach(t=>{
+    const key = t.length>prefixLen ? t.slice(0,prefixLen) : t;
+    if(STOP_PREFIXES.has(key)) return;
+    freq[key]=(freq[key]||0)+1;
+    if(!examples[key]) examples[key]=t;
+  });
+  return Object.entries(freq)
+    .filter(([,n])=>n>=min)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0, limit)
+    .map(([key,count])=>({stem:key, count, example:examples[key]}));
+}
 export function cosine(a,b){ let dot=0,na=0,nb=0; for(const k in a){ dot+=(a[k]||0)*(b[k]||0); na+=a[k]**2; } for(const k in b) nb+=b[k]**2; return na&&nb?dot/Math.sqrt(na*nb):0; }
 
 export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensOf((b.keys||'')+' '+(b.text||''))); }); }
