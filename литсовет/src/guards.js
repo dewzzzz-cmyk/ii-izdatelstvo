@@ -256,6 +256,12 @@ function factsBlock(state, scene){
   } else if(idx===0){
     parts.push('Это ПЕРВАЯ сцена книги — предыдущей сцены нет, переход и смену локации проверять не с чем.');
   }
+  // entryState — заполняется Архитектором книги в структуре, если на входе в
+  // сцену у героя уже есть предмет/знание/состояние, не самоочевидное из
+  // предыдущей сцены (то же семейство, что и проверка переодевания/предметов
+  // выше, но со стороны структуры, а не догадки стража по прозе). Сверяй текст
+  // сцены с этим explicit-якорем в первую очередь — он надёжнее пересказа.
+  if(scene.entryState) parts.push('НА ВХОДЕ В СЦЕНУ УСТАНОВЛЕНО (по структуре книги): '+scene.entryState);
   const chars = serializeCharacterStates(state.characters, scene.presentChars);
   if(chars) parts.push('Состояния персонажей:\n'+chars);
   const bible = bibleForPrompt(state.bible, scene.brief||scene.title||'', 5);

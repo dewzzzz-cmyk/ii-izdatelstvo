@@ -933,7 +933,7 @@ function currentSkeletonAsPrevious(s){
       // этого точечное исправление одной проблемы могло случайно перетасовать
       // весь ритм книги и уронить итоговый балл, хотя целевая проблема решена.
       scenes: (s.structure||[]).filter(n=>n.type==='scene' && n.chapterId===ch.id)
-        .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, targetWords:sc.targetWords, sceneType:sc.sceneType }))
+        .map(sc=>({ title:sc.title, brief:sc.brief, emotion:sc.emotion, entryState:sc.entryState, targetWords:sc.targetWords, sceneType:sc.sceneType }))
     }))
   } : null;
 }
@@ -1250,6 +1250,7 @@ function renderSkeletonEditor(s){
         </div>
         ${open?`<div class="sk-scene-body">
           <textarea class="sk-brief" data-id="${n.id}" rows="4" placeholder="бриф">${esc(n.brief)}</textarea>
+          <input type="text" class="sk-entry" data-id="${n.id}" value="${esc(n.entryState||'')}" placeholder="на входе в сцену уже есть/известно (если не очевидно из предыдущей) — необязательно" data-tip="Заполняйте, только если герой на входе в эту сцену уже имеет предмет/знание/состояние, которое не самоочевидно из предыдущей сцены — например, «знает адрес гильдии со слов торговца» или «уже без куртки, отдал её в сцене 3». Стражи и Оценщик структуры сверяются с этим полем явно.">
           <input type="text" class="sk-emo" data-id="${n.id}" value="${esc(n.emotion||'')}" placeholder="эмоция читателя">
           <div class="mode-mini" data-tip="Сцена — растущее напряжение (цель→конфликт→поражение). Секвель — передышка (реакция→дилемма→решение). Влияет на инструкцию Прозаику при написании.">
             <button class="mm-btn sk-type-btn ${!isSeq?'on':''}" data-typeid="${n.id}" data-type="scene">Сцена</button>
@@ -1275,6 +1276,7 @@ function bindSkeleton(s){
     h.onclick=()=>{ const id=h.dataset.toggle; s.ui.editScene = s.ui.editScene===id?null:id; save(); };
   });
   document.querySelectorAll('.sk-brief').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.brief=t.value; clearMissingFacts(); save();} }));
+  document.querySelectorAll('.sk-entry').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.entryState=t.value; clearMissingFacts(); save();} }));
   document.querySelectorAll('.sk-emo').forEach(t=>t.addEventListener('change',()=>{ const n=node(s,t.dataset.id); if(n){n.emotion=t.value; clearMissingFacts(); save();} }));
   document.querySelectorAll('.sk-type-btn').forEach(b=>b.onclick=(e)=>{
     e.stopPropagation();

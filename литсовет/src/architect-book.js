@@ -55,6 +55,15 @@ export function bookArchitectMessages(state, opts={}){
     // герою узнать ни про город, ни про гильдию, ни про магию вообще. Прозаик
     // пишет строго по брифу — дыра структуры дословно уходит в готовый текст.
     'НЕПРЕРЫВНОСТЬ ЗНАНИЙ ГЕРОЯ: если бриф сцены опирается на знание героя (название места, существование организации, куда идти, кого искать), какой-то БОЛЕЕ РАННИЙ бриф должен содержать источник этого знания — где герой это услышал/прочитал/увидел (вывеска, встречный, подсказка устройства, документ). Герой не может «просто знать» то, что узнать было негде. Проверь эту цепочку по каждому брифу перед выдачей.',
+    // Раньше это знание держалось только внутри прозы брифа («...и он пошёл в
+    // город Тенебрис, в гильдию магов»), и на каждой следующей итерации/улучшении
+    // модель заново решала, что герой уже знает, а не помнила явно — источник
+    // информации из проверки выше приходилось выискивать в тексте брифа заново.
+    // entryState — то же самое, но СТРУКТУРНО: отдельное поле, которое явно
+    // фиксирует, что герой имеет/знает на входе, если это не очевидно из
+    // предыдущего брифа — Оценщик структуры («Неоткуда знать»), пер-сценовый
+    // Архитектор и Страж логики читают именно его, а не реконструируют по прозе.
+    'ПОЛЕ entryState: заполняй его ТОЛЬКО когда на входе в сцену у героя появилось что-то новое (предмет, знание, место, союзник), чего не было в предыдущей сцене этой же цепочки — одной строкой, что именно и откуда оно взялось. Если между сценами ничего не изменилось — оставляй пустую строку, не дублируй бриф.',
     PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
   ].join('\n');
   // Нарративная инструкция по позиции в серии
@@ -107,7 +116,7 @@ export function bookArchitectMessages(state, opts={}){
       // по этой оси. Точечное исправление одной проблемы могло случайно
       // перетасовать весь ритм книги и уронить итоговый балл.
       const skText = prev.chapters.map((ch,ci)=>{
-        const scList = (ch.scenes||[]).map((sc,si)=>`    ${ci+1}.${si+1}. (${sc.sceneType==='sequel'?'секвель':'сцена'}) «${sc.title}» — ${sc.brief||'(без брифа)'}`).join('\n');
+        const scList = (ch.scenes||[]).map((sc,si)=>`    ${ci+1}.${si+1}. (${sc.sceneType==='sequel'?'секвель':'сцена'}) «${sc.title}» — ${sc.brief||'(без брифа)'}${sc.entryState?` [на входе: ${sc.entryState}]`:''}`).join('\n');
         return `Глава ${ci+1} [${ch.arc||'?'}]: «${ch.title}»\n${scList}`;
       }).join('\n\n');
       return `\nПРЕДЫДУЩАЯ СТРУКТУРА — улучши её, не создавай с нуля. Сохрани то, что работает; исправь только проблемы ниже:\n${skText}`;
@@ -115,7 +124,7 @@ export function bookArchitectMessages(state, opts={}){
     opts.hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${opts.hint}` : '',
     '',
     opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. В том числе сохрани sceneType (сцена/секвель) у сцен, которых правка не касается напрямую, — не перетасовывай ритм сцена/секвель заново без причины, только потому что переписываешь скелет. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
-    '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
+    '{ "chapters": [ { "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "entryState": "если на входе в сцену у героя уже есть предмет/знание/состояние, не самоочевидное из предыдущего брифа — одной строкой что и откуда; иначе пустая строка", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
     `Итого ${targetChapters} глав, ~${prevSceneCount || targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
   ].filter(Boolean).join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -138,6 +147,7 @@ function normalizeChapterRaw(ch){
       // Fallback: brief → description → summary → пустая строка
       brief: (typeof s.brief==='string' ? s.brief : typeof s.description==='string' ? s.description : typeof s.summary==='string' ? s.summary : '').trim(),
       emotion: (s.emotion||'').trim(),
+      entryState: (typeof s.entryState==='string' ? s.entryState : '').trim(),
       targetWords: Number(s.targetWords)>0 ? Math.round(Number(s.targetWords)) : 700,
       sceneType: s.sceneType==='sequel' ? 'sequel' : 'scene',
     })),
@@ -289,13 +299,14 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
     genreWantsHumor(p.genre)
       ? 'Ирония жанра касается ВСЕХ сцен, не только явно магических/жанровых — сохраняй приём снижения пафоса и там, где он не был явно указан раньше.'
       : '',
+    'entryState: заполняй ТОЛЬКО когда на входе в сцену у героя появилось что-то новое (предмет, знание, место, союзник), не установленное в предыдущей сцене — что именно и откуда. Смотри «[на входе: ...]» у контекстных и целевых сцен ниже — не противоречь уже установленной цепочке знаний на стыке с непатченными главами.',
   ].filter(Boolean).join('\n');
 
   const chText = wanted.map(n=>{
     const chNode = chapterNodes[n-1];
     const isTarget = targets.has(n);
     const scenes = structure.filter(s=>s.type==='scene' && s.chapterId===chNode.id);
-    const scList = scenes.map((sc,si)=>`    ${n}.${si+1}. (${sc.sceneType==='sequel'?'секвель':'сцена'}) «${sc.title}» [${sc.targetWords||700}сл] — ${sc.brief||'(без брифа)'}`).join('\n');
+    const scList = scenes.map((sc,si)=>`    ${n}.${si+1}. (${sc.sceneType==='sequel'?'секвель':'сцена'}) «${sc.title}» [${sc.targetWords||700}сл] — ${sc.brief||'(без брифа)'}${sc.entryState?` [на входе: ${sc.entryState}]`:''}`).join('\n');
     return `Глава ${n}${isTarget?'':' (КОНТЕКСТ — НЕ редактировать)'} [${chNode.arc||'?'}]: «${chNode.title}»\n${scList}`;
   }).join('\n\n');
 
@@ -306,7 +317,7 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
     hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${hint}` : '',
     '',
     `Верни ТОЛЬКО главы ${affectedChapters.join(', ')} (без контекстных), в том же порядке, в JSON:`,
-    '{ "chapters": [ { "number": номер_главы, "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
+    '{ "chapters": [ { "number": номер_главы, "title": "название главы", "arc": "завязка|развитие|кульминация|развязка", "scenes": [ { "title": "название сцены", "brief": "2-3 предложения: что происходит → ключевой конфликт или открытие → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "entryState": "если на входе в сцену у героя уже есть предмет/знание/состояние, не самоочевидное из предыдущего брифа — одной строкой что и откуда; иначе пустая строка", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
     'Брифы конкретные. Только JSON.',
   ].filter(Boolean).join('\n');
 
@@ -355,13 +366,14 @@ export async function regenerateScene(state, scene, hint){
   const user = [
     `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
     ch?`Глава: «${ch.title}» (${ch.arc||''}).`:'',
-    prev?`Предыдущая сцена: «${prev.title}» — ${prev.brief}`:'',
-    next?`Следующая сцена: «${next.title}» — ${next.brief}`:'',
-    `Текущая сцена: «${scene.title}» — ${scene.brief}`,
+    prev?`Предыдущая сцена: «${prev.title}» — ${prev.brief}${prev.entryState?` [на входе: ${prev.entryState}]`:''}`:'',
+    next?`Следующая сцена: «${next.title}» — ${next.brief}${next.entryState?` [на входе: ${next.entryState}]`:''}`:'',
+    `Текущая сцена: «${scene.title}» — ${scene.brief}${scene.entryState?` [на входе: ${scene.entryState}]`:''}`,
     '',
     'ПОДСКАЗКА АВТОРА (в каком направлении переделать): ' + (hint||'сделай сильнее и конкретнее'),
     '',
-    'Верни JSON одной сцены: { "title":"…", "brief":"что происходит, тон, чем заканчивается", "emotion":"эмоция читателя", "targetWords":число, "sceneType":"scene|sequel" }. sceneType: "scene" — растущее напряжение (цель→конфликт→поражение), "sequel" — передышка (реакция→дилемма→решение). Только JSON.',
+    'entryState — заполняй ТОЛЬКО если на входе в сцену у героя появилось что-то новое (предмет/знание/место), не установленное в предыдущей сцене; не противоречь тому, что уже на входе следующей сцены. Если ничего не изменилось — пустая строка.',
+    'Верни JSON одной сцены: { "title":"…", "brief":"что происходит, тон, чем заканчивается", "emotion":"эмоция читателя", "entryState":"см. выше", "targetWords":число, "sceneType":"scene|sequel" }. sceneType: "scene" — растущее напряжение (цель→конфликт→поражение), "sequel" — передышка (реакция→дилемма→решение). Только JSON.',
   ].filter(Boolean).join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
@@ -372,6 +384,7 @@ export async function regenerateScene(state, scene, hint){
         title:(j.title||scene.title).trim(),
         brief:j.brief.trim(),
         emotion:(j.emotion||scene.emotion||'').trim(),
+        entryState:(typeof j.entryState==='string'?j.entryState:scene.entryState||'').trim(),
         targetWords: Number(j.targetWords)>0?Math.round(Number(j.targetWords)):(scene.targetWords||700),
         sceneType: j.sceneType==='sequel' ? 'sequel' : 'scene',
       };
@@ -396,7 +409,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
   const chTitle = id => (nodes.find(n=>n.type==='chapter'&&n.id===id)||{}).title || '';
   const p = state.project;
   const sys = 'Ты — книжный архитектор. Изменилась одна сцена и повернула сюжет. Перепроектируй ВСЕ последующие сцены так, чтобы они логически следовали из изменения и не противоречили ему. Сохрани число сцен и их принадлежность главам. Не пишешь прозу.';
-  const list = downstream.map((s,i)=>`${i+1}. [${chTitle(s.chapterId)}] «${s.title}» — ${s.brief}`).join('\n');
+  const list = downstream.map((s,i)=>`${i+1}. [${chTitle(s.chapterId)}] «${s.title}» — ${s.brief}${s.entryState?` [на входе: ${s.entryState}]`:''}`).join('\n');
   const user = [
     `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
     '',
@@ -406,7 +419,8 @@ export async function regenerateDownstream(state, pivotScene, hint){
     `ПОСЛЕДУЮЩИЕ СЦЕНЫ (${downstream.length}) — перепиши каждую под новый поворот, по порядку:`,
     list,
     '',
-    `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"…","emotion":"…","targetWords":число,"sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Ровно ${downstream.length} сцен. Только JSON.`,
+    'entryState у каждой сцены — заполняй ТОЛЬКО если на входе появилось что-то новое, не установленное в предыдущей сцене этой же цепочки; иначе пустая строка.',
+    `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"…","emotion":"…","entryState":"…","targetWords":число,"sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Ровно ${downstream.length} сцен. Только JSON.`,
   ].filter(Boolean).join('\n');
 
   let lastErr='';
@@ -432,6 +446,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
         sc.title=(fr.title||sc.title).trim();
         sc.brief=fr.brief.trim();
         sc.emotion=(fr.emotion||sc.emotion||'').trim();
+        sc.entryState=(typeof fr.entryState==='string'?fr.entryState:sc.entryState||'').trim();
         if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
         sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';
         applied.push(sc.id);
@@ -444,7 +459,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
 }
 
 // История версий сцены-скелета: сохранить текущие поля перед заменой / откатить.
-const SCENE_FIELDS = ['title','brief','emotion','targetWords','sceneType'];
+const SCENE_FIELDS = ['title','brief','emotion','entryState','targetWords','sceneType'];
 export function pushSceneVersion(scene){
   scene.briefVersions = scene.briefVersions || [];
   scene.briefVersions.unshift(Object.fromEntries(SCENE_FIELDS.map(f=>[f, scene[f]])));
@@ -467,7 +482,7 @@ export function applySkeleton(state, skeleton, uid){
     nodes.push({ id:chId, type:'chapter', title:ch.title, arc:ch.arc });
     for(const sc of ch.scenes){
       nodes.push({ id:uid('sc'), type:'scene', chapterId:chId, title:sc.title, brief:sc.brief,
-        emotion:sc.emotion, targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
+        emotion:sc.emotion, entryState:sc.entryState||'', targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
     }
   }
   state.structure = nodes;
@@ -498,7 +513,7 @@ export function applySkeletonPatch(state, patchChapters, uid){
     nodes.push({ id:chId, type:'chapter', title:patch.title, arc:patch.arc });
     patch.scenes.forEach(sc=>{
       nodes.push({ id:uid('sc'), type:'scene', chapterId:chId, title:sc.title, brief:sc.brief,
-        emotion:sc.emotion, targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
+        emotion:sc.emotion, entryState:sc.entryState||'', targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
     });
   });
   state.structure = nodes;
@@ -556,7 +571,7 @@ export function structureEvalMessages(state, skeleton, prevEval){
     // магический, что есть город и гильдия, и что идти надо именно туда?
     // Ни один более ранний бриф этого не устанавливал. Прозаик пишет по
     // брифу — дыра из структуры дословно перешла в готовый текст.
-    '• Неоткуда знать: бриф опирается на ЗНАНИЕ героя (название места, существование организации, цель «пойти туда-то», имя персонажа), источник которого не установлен в брифах более ранних сцен — герой «просто знает» то, что узнать было негде. Отличие от «рояля в кустах»: там внезапно появляется СОБЫТИЕ/объект, здесь — знание в голове героя. Требуй источник: сцена, где герой это услышал/прочитал/увидел (вывеска, попутчик, надпись, подсказка устройства), пусть одной строкой в более раннем брифе.',
+    '• Неоткуда знать: бриф опирается на ЗНАНИЕ героя (название места, существование организации, цель «пойти туда-то», имя персонажа), источник которого не установлен в брифах более ранних сцен — герой «просто знает» то, что узнать было негде. Отличие от «рояля в кустах»: там внезапно появляется СОБЫТИЕ/объект, здесь — знание в голове героя. Пометка «[на входе: ...]» у сцены ниже — это явно заявленный источник; если она есть и покрывает знание — не флагуй. Если её нет, а бриф всё равно опирается на знание без предыстории — требуй источник: сцена, где герой это услышал/прочитал/увидел (вывеска, попутчик, надпись, подсказка устройства).',
     '• Ставки первой главы: открывающие 1-2 сцены книги должны называть КОНКРЕТНУЮ личную цену происходящего — что именно герой теряет или чем рискует (сломанная вещь, близкий человек в опасности, утекающее время), а не только абстрактную угрозу («опасно», «охотятся»). Без конкретной цены завязка читается как событие, а не как катастрофа, и не удерживает читателя.',
     'Не оценивай качество брифов, стиль или детали — только АРХИТЕКТУРУ.',
     prevEval && (prevEval.issues||[]).length
@@ -568,7 +583,7 @@ export function structureEvalMessages(state, skeleton, prevEval){
   // Компактный скелет для промпта — тип сцены в скобках, иначе Оценщик физически
   // не может проверить ритм сцена/секвель (не видел бы, где что стоит).
   const skeletonText = skeleton.chapters.map((ch,ci)=>{
-    const scList = (ch.scenes||[]).map((s,si)=>`    ${ci+1}.${si+1}. (${s.sceneType==='sequel'?'секвель':'сцена'}) «${s.title}» [${s.targetWords||700}сл] — ${s.brief}`).join('\n');
+    const scList = (ch.scenes||[]).map((s,si)=>`    ${ci+1}.${si+1}. (${s.sceneType==='sequel'?'секвель':'сцена'}) «${s.title}» [${s.targetWords||700}сл] — ${s.brief}${s.entryState?` [на входе: ${s.entryState}]`:''}`).join('\n');
     return `Глава ${ci+1} [${ch.arc||'?'}]: «${ch.title}»\n${scList}`;
   }).join('\n\n');
 
@@ -637,11 +652,12 @@ export async function regenerateChapter(state, chapter, hint){
   const user = [
     `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
     `Глава: «${chapter.title}» (${chapter.arc||''}). Сцен: ${scenes.length}.`,
-    'Текущие сцены:\n'+scenes.map((s,i)=>`${i+1}. «${s.title}» — ${s.brief}`).join('\n'),
+    'Текущие сцены:\n'+scenes.map((s,i)=>`${i+1}. «${s.title}» — ${s.brief}${s.entryState?` [на входе: ${s.entryState}]`:''}`).join('\n'),
     '',
     'ПОДСКАЗКА АВТОРА: ' + (hint||'сделай сильнее и конкретнее, сохрани сюжетные функции'),
     '',
-    `Верни JSON: { "scenes": [ ровно ${scenes.length} объектов: {"title","brief","emotion","targetWords","sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Только JSON.`,
+    'entryState у каждой сцены — заполняй ТОЛЬКО если на входе появилось что-то новое, не установленное в предыдущей сцене этой же цепочки; иначе пустая строка.',
+    `Верни JSON: { "scenes": [ ровно ${scenes.length} объектов: {"title","brief","emotion","entryState","targetWords","sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Только JSON.`,
   ].join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
@@ -668,6 +684,7 @@ export async function regenerateChapter(state, chapter, hint){
           sc.status = 'todo';
         }
         sc.title=(fr.title||sc.title).trim(); sc.brief=fr.brief.trim(); sc.emotion=(fr.emotion||sc.emotion||'').trim();
+        sc.entryState=(typeof fr.entryState==='string'?fr.entryState:sc.entryState||'').trim();
         if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
         sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';
         applied.push(sc.id);
