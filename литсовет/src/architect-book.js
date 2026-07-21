@@ -225,8 +225,15 @@ export async function runBookArchitect(state, opts={}){
   const prevSceneCountForBudget = opts.previousSkeleton
     ? opts.previousSkeleton.chapters.reduce((n,ch)=>n+(ch.scenes||[]).length, 0) : 0;
   const effectiveScenes = Math.max(targetScenes, prevSceneCountForBudget);
-  const perSceneTokens = opts.previousSkeleton ? 250 : 140;
-  const archMaxTokens = Math.max(4000, Math.min(24000, effectiveScenes * perSceneTokens + 1500));
+  // 140/250 → 220/300: то же самое обрезание JSON (см. комментарий выше про
+  // 9900 токенов на 60 сцен), но теперь и на ПЕРВОЙ генерации без previousSkeleton
+  // — после того как в схему сцены добавили entryState (см. записи сессии про
+  // «непрерывность знаний героя»), каждая сцена стала на одно поле длиннее, а
+  // константу 140 для свежей генерации не подняли вместе с ней. Живой инцидент:
+  // 60 сцен × 140 = 9900 ток. бюджета, реальный ответ обрезался на ~31870
+  // символах (≈3.2 симв/ток на этой модели) не дойдя до конца JSON.
+  const perSceneTokens = opts.previousSkeleton ? 300 : 220;
+  const archMaxTokens = Math.max(4000, Math.min(30000, effectiveScenes * perSceneTokens + 1500));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens });
@@ -330,15 +337,16 @@ export async function runBookArchitectPatch(state, opts={}){
   const architectAgent = ag(state, 'bookArchitect');
   const { affectedChapters } = opts;
   const msgs = bookArchitectPatchMessages(state, opts);
-  // Бюджет только под затронутые главы — тот же тариф на сцену (250 ток.),
-  // что и полный improve-режим в runBookArchitect, но без раздутия под всю книгу.
+  // Бюджет только под затронутые главы — тот же тариф на сцену (300 ток.),
+  // что и полный improve-режим в runBookArchitect (см. там про entryState —
+  // одно поле длиннее, константу подняли вместе), но без раздутия под всю книгу.
   const chapterNodes = (state.structure||[]).filter(n=>n.type==='chapter');
   const structure = state.structure||[];
   const sceneCountInTargets = affectedChapters.reduce((n,num)=>{
     const chNode = chapterNodes[num-1];
     return chNode ? n + structure.filter(s=>s.type==='scene' && s.chapterId===chNode.id).length : n;
   }, 0);
-  const maxTokens = Math.max(2000, Math.min(12000, sceneCountInTargets*250 + 800));
+  const maxTokens = Math.max(2000, Math.min(12000, sceneCountInTargets*300 + 800));
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
