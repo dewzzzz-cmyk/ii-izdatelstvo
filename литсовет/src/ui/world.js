@@ -251,6 +251,70 @@ function openWorldDepthModal(r, onFill, category=null, onRecheck=null, stale=fal
   });
 }
 
+// «⚠ Найти нестыковки» — тот же прогон runWorldOverview/кэш (s.worldDepthEvals.__all__),
+// что и «📊 Оценить глубину мира» (conflicts/mergeCandidates уже часть того же
+// ответа) — просто отдельная, узко озаглавленная модалка без общего балла/тонких
+// категорий/рекомендаций, чтобы не путать «нестыковки» с общей оценкой проработки
+// мира. К «🔧 Исправить»/«Объединить» добавлена «🗑 Удалить» на уровне ОТДЕЛЬНОГО
+// факта внутри находки — находка может ссылаться на 2+ факта, поэтому удаление
+// не «на всю находку», а на конкретный факт, который автор считает лишним/устаревшим.
+function openInconsistenciesModal(r, s, els, onRecheck, stale){
+  const root = document.getElementById('modalRoot'); if(!root) return;
+  const conflicts = [...(r.conflicts||[])], mergeCandidates = [...(r.mergeCandidates||[])];
+
+  const render = ()=>{
+    const empty = !conflicts.length && !mergeCandidates.length;
+    const renderGroup = (list, kind, label, borderErr)=> list.length ? `<div class="ares-h">${label}</div>${list.map((c,i)=>`
+      <div class="ares-note" ${borderErr?'style="border-color:var(--err)"':''}>
+        <div style="margin-bottom:6px">${esc(c.text)}</div>
+        ${c.facts.map((f,fi)=>`<div class="row" style="justify-content:space-between;align-items:center;gap:8px;margin:2px 0">
+          <span style="font-size:12px"><span class="muted">[${catLabel(f.category)}]</span> ${esc(f.text)}</span>
+          <button class="btn wi-del" data-kind="${kind}" data-idx="${i}" data-fi="${fi}" title="Удалить этот факт из канона" style="font-size:11px;padding:2px 7px;flex:none">🗑</button>
+        </div>`).join('')}
+        <div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn wi-fix" data-kind="${kind}" data-idx="${i}">${kind==='conflict'?'🔧 Исправить':'🔧 Объединить'}</button></div>
+      </div>`).join('') : '';
+    root.innerHTML = `<div class="modal-bg" id="wiBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
+      <h2>⚠ Нестыковки в каноне мира</h2>
+      ${stale ? `<div style="border:1px solid var(--err);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:var(--err)">⚠ Канон изменился после этой проверки — список ниже может быть неактуален. Нажмите «🔄 Переоценить».</div>` : ''}
+      ${renderGroup(conflicts, 'conflict', '⚠ Противоречия между фактами', true)}
+      ${renderGroup(mergeCandidates, 'merge', 'Стоит объединить', false)}
+      ${empty ? `<div class="muted" style="margin-top:8px">Нестыковок не найдено — факты канона согласуются друг с другом.</div>` : ''}
+      <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
+        ${onRecheck ? `<button class="btn ${stale?'btn-primary':''}" id="wiRecheck" data-tip="Полностью заново, без учёта прошлых находок — если канон сильно изменился.">🔄 Переоценить</button>` : ''}
+        <button class="btn" id="wiClose">Закрыть</button>
+      </div>
+    </div></div>`;
+    const close = ()=>{ root.innerHTML=''; };
+    document.getElementById('wiBg').onclick = close;
+    document.getElementById('wiClose').onclick = close;
+    const recheckBtn = document.getElementById('wiRecheck');
+    if(recheckBtn) recheckBtn.onclick = ()=>{ close(); onRecheck(); };
+    document.querySelectorAll('.wi-fix').forEach(btn=>btn.onclick=(e)=>{
+      e.stopPropagation();
+      const kind = btn.dataset.kind, idx = +btn.dataset.idx;
+      const item = (kind==='conflict' ? conflicts : mergeCandidates)[idx];
+      if(!item) return;
+      close();
+      openFixModal(s, els, kind, item);
+    });
+    document.querySelectorAll('.wi-del').forEach(btn=>btn.onclick=(e)=>{
+      e.stopPropagation();
+      const kind = btn.dataset.kind, idx = +btn.dataset.idx, fi = +btn.dataset.fi;
+      const list = kind==='conflict' ? conflicts : mergeCandidates;
+      const item = list[idx]; const fact = item && item.facts[fi];
+      if(!fact) return;
+      if(!confirm(`Удалить факт из канона?\n\n«${fact.text}»`)) return;
+      const bi = s.bible.findIndex(b=>b.category===fact.category && b.text===fact.text);
+      if(bi>=0){ deleteBibleFactAt(s.bible, bi); rebuildBibleVecs(s.bible); save(); }
+      // Убираем находку целиком из локального списка — она ссылалась на только что
+      // удалённый факт, дальше показывать её (с «Исправить»/«Объединить») бессмысленно.
+      list.splice(idx,1);
+      render();
+    });
+  };
+  render();
+}
+
 // Точечное исправление ОДНОГО противоречия/кандидата на объединение из проверки
 // глубины (кнопка «🔧 Исправить»/«🔧 Объединить»). LLM предлагает новый текст,
 // автор видит diff (было → станет) и решает применить — НЕ автопатч канона
@@ -622,6 +686,7 @@ export function renderWorld(els){
       <span class="read-title">Мир</span>
       <span style="flex:1"></span>
       <button class="btn" id="wDupCheck" ${busyAny||depthBusyAny?'disabled':''} data-tip="Ищет похожие/повторяющиеся факты канона мира (без LLM, мгновенно) — риск дублей растёт с каждой добавленной пачкой фактов.">🔍 Проверить дубли</button>
+      <button class="btn" id="wInconsist" ${busyAny||depthBusyAny?'disabled':''} data-tip="Ищет ПРОТИВОРЕЧИЯ между фактами канона (когда два факта спорят друг с другом) — предлагает исправить, объединить или удалить лишний. Тот же прогон, что и «Оценить глубину мира», но показывает только это.">${_depthBusy?'<span class="spinner"></span> …':'⚠ Найти нестыковки'}</button>
       <button class="btn" id="wDepthCheck" ${busyAny||depthBusyAny?'disabled':''} data-tip="Оценивает насколько подробно и конкретно проработан мир СРАЗУ ПО ВСЕМ категориям — не по прозе, писать сцены ещё не нужно.">${_depthBusy?'<span class="spinner"></span> …':'📊 Оценить глубину мира'}</button>
       <button class="btn btn-primary" id="wSuggestAll" ${busyAny?'disabled':''}>${_bulkBusy?'<span class="spinner"></span> '+esc(_bulkProgress):'✨ Предложить весь мир'}</button>
     </div>
@@ -665,6 +730,28 @@ function bindHandlers(els, s){
 
   const wdup = document.getElementById('wDupCheck');
   if(wdup) wdup.onclick = ()=>renderDuplicatesModal(els);
+
+  const wic = document.getElementById('wInconsist');
+  if(wic) wic.onclick = async ()=>{
+    if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+    const runAndOpen = async (opts)=>{
+      if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
+      if(_depthBusy || _catDepthBusy || _busyCategory || _bulkBusy) return;
+      if(!confirmOverviewCost(s, null)) return;
+      _depthBusy = true; renderWorld(els);
+      try{
+        _depthResult = await runAndCacheDepth(s, null, opts);
+        openInconsistenciesModal(_depthResult, s, els, doRecheck, false);
+      }catch(e){ alert('Нестыковки: '+e.message); }
+      finally{ _depthBusy = false; renderWorld(els); }
+    };
+    const doRecheck = ()=>runAndOpen({});
+    // Тот же кэш __all__, что и у «Оценить глубину мира» — обе кнопки читают
+    // и пишут один и тот же прогон runWorldOverview, отличается только модалка.
+    const cached = s.worldDepthEvals?.__all__;
+    if(cached){ openInconsistenciesModal(cached, s, els, doRecheck, isDepthStale(s, cached, null)); return; }
+    await doRecheck();
+  };
 
   const wdc = document.getElementById('wDepthCheck');
   if(wdc) wdc.onclick = async ()=>{
