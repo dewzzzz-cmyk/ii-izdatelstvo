@@ -1103,6 +1103,7 @@ export function renderStructure(els){
           <input type="text" id="chCount" value="${s.project.chapterCount||''}" placeholder="авто" style="width:70px">
           <button class="btn btn-primary" id="genSkeleton">${hasSkeleton?'Перегенерировать':'Сгенерировать скелет'}</button>
           ${(s.skeletonVersions&&s.skeletonVersions.length)?`<button class="btn" id="revertSkeleton" title="Вернуть прошлый скелет">↶ скелет (${s.skeletonVersions.length})</button>`:''}
+          ${(hasSkeleton && !s.structureEval)?`<button class="btn" id="evalOnly" data-tip="Оценить ТЕКУЩУЮ структуру Оценщиком без перегенерации — например, после отката «↶ скелет», когда оценка пропала, а «Улучшить по замечаниям» без неё недоступна.">⭐ Оценить структуру</button>`:''}
           <span class="muted" id="genStatus"></span>
         </div>
         <label class="row" style="gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:var(--text-2)">
@@ -1183,6 +1184,31 @@ export function renderStructure(els){
   // Кнопки оценщика структуры
   const evalDismiss = document.getElementById('evalDismiss');
   if(evalDismiss) evalDismiss.onclick = ()=>{ s.structureEval=null; save(); };
+
+  // «⭐ Оценить структуру» — прогон одного Оценщика по ТЕКУЩЕЙ структуре, без
+  // Архитектора и перегенерации. Закрывает тупик после отката «↶ скелет»:
+  // старые версии скелета (сохранённые до того, как pushSkeletonVersion начал
+  // хранить оценку) восстанавливаются без structureEval — панель с баллом и
+  // кнопкой «Улучшить по замечаниям» пропадала, и запустить оценку заново было
+  // просто нечем: она вызывалась только изнутри цикла генерации.
+  const evalOnly = document.getElementById('evalOnly');
+  if(evalOnly) evalOnly.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    evalOnly.disabled = true;
+    evalOnly.innerHTML = '<span class="spinner"></span> Оценщик проверяет…';
+    try{
+      const skeleton = currentSkeletonAsPrevious(s);
+      if(!skeleton){ evalOnly.textContent='⭐ Оценить структуру'; evalOnly.disabled=false; return; }
+      const ev = await runStructureEval(s, skeleton, null);
+      s.structureEval = ev;
+      save();
+    }catch(e){
+      evalOnly.textContent = '⚠ ошибка';
+      evalOnly.title = e.message;
+      setTimeout(()=>{ if(evalOnly.textContent==='⚠ ошибка'){ evalOnly.textContent='⭐ Оценить структуру'; evalOnly.title=''; evalOnly.disabled=false; } }, 3000);
+      return;
+    }
+  };
 
   const regenWithEval = document.getElementById('regenWithEval');
   if(regenWithEval) regenWithEval.onclick = async ()=>{
