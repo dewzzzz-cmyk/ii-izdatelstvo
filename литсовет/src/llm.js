@@ -14,7 +14,15 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
   for(let attempt=0; attempt<=retries; attempt++){
     if(attempt>0 && onRetry){ try{ onRetry(); }catch{} }
     const controller = new AbortController();
-    const timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s)')), 90000);
+    // Таймаут БЕЗДЕЙСТВИЯ (90с без единого чанка), не общий потолок запроса.
+    // Живой инцидент: генерация скелета книги (60 сцен, ~15 тыс. токенов
+    // ответа после честного подъёма бюджета под entryState) легитимно идёт
+    // дольше 90 секунд — жёсткий таймер убивал ЗДОРОВЫЙ стрим на середине.
+    // Раньше это маскировалось тем, что заниженный maxTokens обрезал ответ
+    // раньше, чем истекал таймер. Сбрасываем таймер на каждом чанке: висящий
+    // мёртвый коннект по-прежнему отваливается за 90с, длинный живой — нет.
+    let timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s)')), 90000);
+    const armTimeout = ()=>{ clearTimeout(timeoutId); timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s без данных)')), 90000); };
     try{
       const res = await fetch('/api/generate', {
         method:'POST',
@@ -44,6 +52,7 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       while(true){
         const {value, done} = await reader.read();
         if(done) break;
+        armTimeout(); // стрим живой — не даём таймауту убить длинный здоровый ответ
         const chunk = dec.decode(value, {stream:true});
         text += chunk;
         if(onToken) onToken(chunk);
