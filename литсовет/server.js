@@ -329,7 +329,7 @@ function writeSyncIndex(idx){
   try{ fs.writeFileSync(SYNC_INDEX_FILE, JSON.stringify(idx), 'utf8'); }catch{}
 }
 function indexEntry(d){
-  return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length };
+  return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length, rev:d.rev||0 };
 }
 
 // Полное сканирование каталога проектов — дорогая операция (десериализует
@@ -372,6 +372,12 @@ function handleSyncSave(req, res, id){
       if(parsed.id !== id) return send(res,400,'ID_MISMATCH');
       ensureDir(SYNC_DIR);
       const fp = path.join(SYNC_DIR,safeFile(id)+'.json');
+      // Если индекс потерян/повреждён — пересобрать полным сканированием
+      // каталога, а не начинать с пустого объекта: иначе повреждение
+      // _index.json на любом обычном сохранении молча схлопывает список
+      // синхронизации до одной записи (сами файлы проектов остаются целы).
+      let idx = readSyncIndex();
+      if(!idx) idx = rebuildSyncIndex();
       // Оптимистичная блокировка по rev: без неё это блокирующая перезапись
       // «последний записавший побеждает» — три раза за сессию давнооткрытая
       // вкладка (загружена давно, ни разу не обновлялась) сохраняла свой
@@ -384,8 +390,13 @@ function handleSyncSave(req, res, id){
       // сохранении; если он разошёлся с тем, что уже лежит на диске — значит,
       // пока эта вкладка бездействовала, кто-то другой (другая вкладка,
       // headless-скрипт) уже сохранил более новую версию.
-      let existingRev = 0;
-      try{ existingRev = JSON.parse(fs.readFileSync(fp,'utf8')).rev || 0; }catch{}
+      // rev берём из уже загруженного лёгкого индекса, а НЕ перечитыванием
+      // полного файла проекта — на живой книге в несколько МБ, под активной
+      // фоновой записью (write-chapters.mjs бьёт сюда на каждую сцену),
+      // лишний fs.readFileSync+JSON.parse всего файла на КАЖДОМ save() ощутимо
+      // поднимал пиковую память процесса (живой инцидент: деплой этого фикса
+      // тут же получил Railway-уведомление «Deploy Crashed»).
+      const existingRev = idx[id]?.rev || 0;
       const clientRev = parsed.rev || 0;
       if(existingRev > 0 && clientRev !== existingRev){
         // Не теряем правки этой вкладки молча — откладываем их на диск рядом,
@@ -396,12 +407,6 @@ function handleSyncSave(req, res, id){
       parsed.rev = existingRev + 1;
       const out = JSON.stringify(parsed);
       fs.writeFileSync(fp, out, 'utf8');
-      // Если индекс потерян/повреждён — пересобрать полным сканированием
-      // каталога, а не начинать с пустого объекта: иначе повреждение
-      // _index.json на любом обычном сохранении молча схлопывает список
-      // синхронизации до одной записи (сами файлы проектов остаются целы).
-      let idx = readSyncIndex();
-      if(!idx) idx = rebuildSyncIndex();
       idx[parsed.id] = indexEntry(parsed);
       writeSyncIndex(idx);
       send(res,200,JSON.stringify({ok:true, rev:parsed.rev}),'application/json; charset=utf-8');
