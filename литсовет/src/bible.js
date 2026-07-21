@@ -54,6 +54,38 @@ export function topRepeatedStems(text, min=5, limit=10, prefixLen=4){
     .slice(0, limit)
     .map(([key,count])=>({stem:key, count, example:examples[key]}));
 }
+
+// Топ дословно повторяющихся КОРОТКИХ фраз (n-грамм) — доп. сигнал для
+// Оценщика. Не путать с findDuplicatePhrases() в guards.js: та калибрована
+// на ДЛИННЫЕ (6+ слов) дубли В БЛИЗКОЙ БЛИЗОСТИ друг к другу — ловит
+// артефакты копипаста при правке, флагует как critical. Эта функция — про
+// КОРОТКИЕ (4 слова) фразы, повторившиеся хотя бы дважды где угодно в
+// тексте, без окна близости: живой пример — «как треск сухой ветки» дважды
+// в двух соседних абзацах ОДНОЙ сцены, «Капли падали — раз, два, три» четыре
+// раза за две сцены. Оба короче 6 слов и разнесены дальше 400 символов —
+// мимо findDuplicatePhrases. Это не критическая ошибка (не факт и не
+// противоречие), а информационный сигнал по оси «Свежесть образа», поэтому
+// порог мягче — от 2 повторов, а не от 6+ слов подряд.
+export function topRepeatedPhrases(text, n=4, min=2, limit=8){
+  const words = tokensOf(text).filter(w=>/[а-яё]/.test(w));
+  if(words.length < n*2) return [];
+  const freq = {};
+  for(let i=0; i<=words.length-n; i++){
+    const shingle = words.slice(i, i+n);
+    // Пропускаем шинглы почти целиком из стоп-слов/местоимений — иначе шум
+    // вроде «и я не могу» забивал бы список вместо реальных образов/рефренов.
+    const contentWords = shingle.filter(w=>w.length>=4 && !STOP_RU.has(w) && !STOP_RU_EXTRA.has(w));
+    if(contentWords.length < 2) continue;
+    const key = shingle.join(' ');
+    freq[key] = (freq[key]||0)+1;
+  }
+  return Object.entries(freq)
+    .filter(([,count])=>count>=min)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0, limit)
+    .map(([phrase,count])=>({phrase,count}));
+}
+
 export function cosine(a,b){ let dot=0,na=0,nb=0; for(const k in a){ dot+=(a[k]||0)*(b[k]||0); na+=a[k]**2; } for(const k in b) nb+=b[k]**2; return na&&nb?dot/Math.sqrt(na*nb):0; }
 
 export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensOf((b.keys||'')+' '+(b.text||''))); }); }
