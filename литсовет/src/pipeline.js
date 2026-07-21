@@ -638,7 +638,14 @@ export async function runScene(state, scene, opts={}, onProgress){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
           const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote), maxTokens:leMaxTk });
-          if(leRes.text && leRes.text.length > best.length*0.5){ // защита от усечённого ответа
+          // Защита от усечённого ответа — раньше проверяла ТОЛЬКО длину (>50% исходного).
+          // Живой прогон показал обрыв на 90% длины (3710 из 4139 симв., без завершающей
+          // пунктуации, посреди слова) — формально проходил порог длины и сохранялся как
+          // финальный текст сцены. looksTokenTruncated() (та же проверка, что уже ловит
+          // обрыв ПЕРВОГО черновика Прозаика чуть выше по файлу) ловит именно этот случай:
+          // обрыв не на конце предложения — сильный сигнал упора в maxTokens, даже если
+          // абсолютная длина ответа кажется достаточной.
+          if(leRes.text && leRes.text.length > best.length*0.5 && !looksTokenTruncated(leRes.text)){
             logStep({ agent:'lineedit', input:'(черновик)'+(leNote?' + заметка автора: '+leNote:''), output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
             onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
             const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
@@ -651,7 +658,10 @@ export async function runScene(state, scene, opts={}, onProgress){
             // Раньше это било молча — сцена просто оставалась без правки
             // Линейного редактора без единого следа, автор не мог отличить
             // «текст уже был идеален» от «ответ обрезался лимитом токенов».
-            onProgress && onProgress({log:{icon:'⚠️', text:`Линейный редактор: ответ короче половины исходного текста (похоже на обрыв лимитом ${leMaxTk} ток.) — правка пропущена, текст остаётся как был`, state:'warn'}});
+            const reason = (leRes.text && looksTokenTruncated(leRes.text))
+              ? 'ответ обрывается не на знаке препинания (похоже на обрыв лимитом токенов, хотя по длине выглядел приемлемо)'
+              : `ответ короче половины исходного текста (похоже на обрыв лимитом ${leMaxTk} ток.)`;
+            onProgress && onProgress({log:{icon:'⚠️', text:`Линейный редактор: ${reason} — правка пропущена, текст остаётся как был`, state:'warn'}});
             break;
           }
         }catch(e){ logStep({ agent:'lineedit', output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message }); break; }
