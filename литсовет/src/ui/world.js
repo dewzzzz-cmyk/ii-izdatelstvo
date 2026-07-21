@@ -335,17 +335,22 @@ function openFixModal(s, els, kind, item){
       <div class="muted" style="font-size:12px;margin-bottom:8px">${esc(item.text)}</div>
       ${missing ? `<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ Один из фактов изменился или был удалён с момента проверки. Переоцените мир заново.</div>` : ''}
       ${error ? `<div style="color:var(--err);font-size:12px;margin-bottom:8px">⚠ ${esc(error)}</div>` : ''}
-      ${proposal ? renderProposal(kind, proposal, item) : ''}
+      ${proposal ? renderProposal(kind, proposal, item, kind==='conflict') : ''}
+      ${proposal && kind==='conflict' ? `<div class="muted" style="font-size:11px;margin-bottom:4px">Снимите галочку с изменения, которое не хотите применять.</div>` : ''}
       <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
         ${!proposal ? `<button class="btn" id="wfClose">Закрыть</button>` : `<button class="btn" id="wfCancel">Отмена</button>`}
         ${!proposal && !missing ? `<button class="btn btn-primary" id="wfGen">${busy?'<span class="spinner"></span> …':(kind==='conflict'?'✨ Предложить исправление':'✨ Предложить объединение')}</button>` : ''}
-        ${proposal ? `<button class="btn btn-primary" id="wfApply">✓ Применить</button>` : ''}
+        ${proposal ? `<button class="btn btn-primary" id="wfApply" ${kind==='conflict' && proposal.every(f=>f.include===false || f.action==='keep')?'disabled':''}>✓ Применить</button>` : ''}
       </div>
     </div></div>`;
     const close = ()=>{ root.innerHTML=''; };
     document.getElementById('wfBg').onclick = close;
     const wfClose = document.getElementById('wfClose'); if(wfClose) wfClose.onclick = close;
     const wfCancel = document.getElementById('wfCancel'); if(wfCancel) wfCancel.onclick = close;
+    document.querySelectorAll('.wf-fact-cb').forEach(cb=>cb.onchange=()=>{
+      const f = proposal && proposal[+cb.dataset.fi];
+      if(f){ f.include = cb.checked; render(); }
+    });
     const wfGen = document.getElementById('wfGen');
     if(wfGen) wfGen.onclick = async ()=>{
       if(busy) return;
@@ -371,14 +376,29 @@ function openFixModal(s, els, kind, item){
 // поэтому здесь может оказаться факт без категории; пустая метка выглядела
 // бы как баг, а не как «это из текста, не из карточки Мира».
 function catLabel(cat){ return cat ? esc(cat) : 'из прозы'; }
-function renderProposal(kind, proposal, item){
+// perFact=true (модалка одного исправления) — у каждого предложенного
+// изменения (edit/delete) своя галочка .wf-fact-cb: решение по каждому факту
+// остаётся за автором, применяется только отмеченное. В массовом «Исправить
+// всё» галочка одна на находку целиком (perFact=false) — там свой чекбокс
+// снаружи, и вложенные конфликтовали бы с кликом по родительскому <label>.
+function renderProposal(kind, proposal, item, perFact){
   if(kind==='conflict'){
-    return proposal.map(f=>`<div style="margin-bottom:10px">
-      <div class="muted" style="font-size:11px;margin-bottom:2px">${catLabel(f.category)}</div>
-      <div class="ed-pop-orig">«${esc(f.oldText)}»</div>
-      <div class="ed-pop-arrow">→</div>
-      <div class="ed-pop-sugg">«${esc(f.newText)}»</div>
-    </div>`).join('');
+    return proposal.map((f,fi)=>{
+      const act = f.action || 'edit';
+      const cb = (perFact && act!=='keep')
+        ? `<input type="checkbox" class="wf-fact-cb" data-fi="${fi}" ${f.include!==false?'checked':''} style="margin-top:3px;flex-shrink:0">`
+        : '';
+      const body = act==='keep'
+        ? `<div style="font-size:12px">«${esc(f.oldText)}»</div><div class="muted" style="font-size:11px;margin-top:2px">✓ корректен — остаётся без изменений</div>`
+        : act==='delete'
+          ? `<div class="ed-pop-orig" style="text-decoration:line-through">«${esc(f.oldText)}»</div><div style="font-size:11px;color:var(--err);margin-top:2px">🗑 будет удалён (корректная версия — в другом факте)</div>`
+          : `<div class="ed-pop-orig">«${esc(f.oldText)}»</div>
+             <div class="ed-pop-arrow">→</div>
+             <div class="ed-pop-sugg">«${esc(f.newText)}»</div>`;
+      return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px">${cb}<div style="flex:1;min-width:0">
+        <div class="muted" style="font-size:11px;margin-bottom:2px">${catLabel(f.category)}</div>${body}
+      </div></div>`;
+    }).join('');
   }
   return `<div style="margin-bottom:10px">
     <div class="muted" style="font-size:11px;margin-bottom:2px">Заменит ${item.facts.length} факта категории «${catLabel(proposal.category)}» одним:</div>
@@ -392,10 +412,20 @@ function renderProposal(kind, proposal, item){
 // не защищает от правок, сделанных ПОКА была открыта модалка с предложением).
 function applyFix(s, kind, proposal, item){
   if(kind==='conflict'){
-    proposal.forEach(f=>{
+    // f.include===false — автор снял галочку с этого изменения (perFact-режим
+    // в openFixModal); keep не трогаем всегда. Сначала правки, потом удаления
+    // строго по убыванию индексов — иначе первый deleteBibleFactAt сдвинул бы
+    // индексы, найденные для следующих.
+    const active = proposal.filter(f=>f.include!==false);
+    active.filter(f=>f.action!=='delete' && f.action!=='keep').forEach(f=>{
       const bi = s.bible.findIndex(b=>b.category===f.category && b.text===f.oldText);
       if(bi>=0) applyFactEdit(s.bible, bi, s.bible[bi].keys, f.newText);
     });
+    active.filter(f=>f.action==='delete')
+      .map(f=>s.bible.findIndex(b=>b.category===f.category && b.text===f.oldText))
+      .filter(i=>i>=0)
+      .sort((a,b)=>b-a)
+      .forEach(i=>deleteBibleFactAt(s.bible, i));
     return;
   }
   const indices = item.facts.map(f=>s.bible.findIndex(b=>b.category===f.category && b.text===f.text)).filter(i=>i>=0);

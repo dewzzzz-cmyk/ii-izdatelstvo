@@ -277,24 +277,44 @@ export async function runWorldOverview(state, category=null, opts={}){
 // "[undefined]" вместо метки.
 function catLabel(cat){ return cat || 'из прозы'; }
 
+// Раньше модель была ОБЯЗАНА вернуть правку каждого факта — даже когда
+// правильное решение «один факт верен, второй просто ошибочный дубль»:
+// приходилось выдумывать компромиссные формулировки для обоих. Теперь у
+// каждого факта своё действие: keep (верен, не трогать), edit (точечная
+// правка), delete (лишний/ошибочный — удалить, оставив корректный).
+// Решение по каждому факту в итоге за автором: UI (openFixModal) показывает
+// галочку на каждом edit/delete, отмеченное применяется, снятое — нет.
 export async function proposeConflictFix(state, item){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
-  const sys = 'Ты — редактор канона мира книги. Ниже — противоречие между несколькими фактами и сами факты дословно. Предложи ИСПРАВЛЕННУЮ версию КАЖДОГО факта так, чтобы противоречие исчезло — поменяй только то, что нужно для устранения (дату, причинность, формулировку конфликтующей детали), не переписывай факт целиком и не теряй остальную содержательную информацию.';
+  const sys = 'Ты — редактор канона мира книги. Ниже — противоречие между несколькими фактами и сами факты дословно. Для КАЖДОГО факта выбери действие: "keep" — факт корректен, оставить без изменений; "edit" — точечно исправить (поменяй только то, что нужно для устранения противоречия, не переписывай целиком и не теряй остальную информацию); "delete" — факт ошибочен или дублирует другой, удалить его целиком (правильная версия остаётся в другом факте). Если противоречие в том, что один факт верен, а другой ошибочен/дублирует — правильное решение именно keep+delete, а не выдумывание компромиссных формулировок. Хотя бы один факт обязан остаться (не все delete).';
   const user = [
     `Противоречие: ${item.text}`,
     '',
-    'Факты (верни исправленные версии в этом же порядке):',
+    'Факты (верни решение по каждому в этом же порядке):',
     item.facts.map((f,i)=>`${i+1}. [${catLabel(f.category)}] ${f.text}`).join('\n'),
     '',
-    `Верни JSON: { "facts": [ { "text": "исправленный текст факта 1" }, { "text": "исправленный текст факта 2" } ] } — ровно ${item.facts.length} элемент(а/ов), в том же порядке, что и факты выше. Только JSON.`,
+    `Верни JSON: { "facts": [ { "action": "keep|edit|delete", "text": "новый текст (только для edit)" }, ... ] } — ровно ${item.facts.length} элемент(а/ов), в том же порядке, что и факты выше. Только JSON.`,
   ].join('\n');
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:900, retries:g.retries });
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.facts) ? j.facts : null;
   if(!arr || arr.length !== item.facts.length) throw new Error('Не удалось разобрать исправление — попробуйте ещё раз.');
-  const out = arr.map((f,i)=>({ category: item.facts[i].category, oldText: item.facts[i].text, newText: String(f?.text||'').trim() })).filter(f=>f.newText);
-  if(out.length !== item.facts.length) throw new Error('Не удалось разобрать исправление — попробуйте ещё раз.');
+  const out = arr.map((f,i)=>{
+    const oldText = item.facts[i].text;
+    let action = String(f?.action||'').trim().toLowerCase();
+    const newText = String(f?.text||'').trim();
+    // Модель без action (старый формат {text}) — считаем edit, если текст
+    // реально отличается, иначе keep.
+    if(!['keep','edit','delete'].includes(action)) action = (newText && newText!==oldText) ? 'edit' : 'keep';
+    if(action==='edit' && (!newText || newText===oldText)) action = 'keep';
+    return { category: item.facts[i].category, oldText, action, newText: action==='edit' ? newText : '' };
+  });
+  // Всё delete — противоречие «решено» уничтожением всей информации; это
+  // почти наверняка ошибка модели, а не намерение.
+  if(out.every(f=>f.action==='delete')) throw new Error('Модель предложила удалить все факты сразу — попробуйте ещё раз.');
+  // Всё keep — предложение-пустышка («ничего не менять» не чинит противоречие).
+  if(out.every(f=>f.action==='keep')) throw new Error('Модель не предложила ни одного изменения — попробуйте ещё раз.');
   return out;
 }
 
