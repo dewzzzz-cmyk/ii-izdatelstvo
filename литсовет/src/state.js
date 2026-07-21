@@ -61,6 +61,12 @@ export function defaultState(){
     structure: [],             // плоский массив узлов {type:'chapter'|'scene', ...}
     structureStale: false,     // true — в канон добавлены world-факты после того как скелет уже построен
     bible: [],                 // {keys, text, _vec?}
+    // Клише/образы, уже подтверждённые Оценщиком в ЛЮБОЙ сцене книги (не только
+    // текущей) — bannedCliches в pipeline.js раньше сбрасывался на каждую новую
+    // сцену, из-за чего одна и та же авторская находка модели («X — резко, как
+    // Y») не мешала ей повторить почти тот же образ в другой сцене несколькими
+    // прогонами позже. Обрезается в runScene() до последних ~150 записей.
+    usedCliches: [],
     characters: [],            // {name, desc, stateNote, book}
     memory: { scenes:{}, chapters:{}, books:{} },
     series: [],

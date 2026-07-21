@@ -31,7 +31,7 @@ function isFactualGuard(state, role){
   return !!(a.custom && a.factual);
 }
 
-const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов'};
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами'};
 function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
@@ -182,6 +182,13 @@ export async function runScene(state, scene, opts={}, onProgress){
     let iter = 0, safety = 0;
     let flags = {};
     const bannedCliches = new Set();
+    // Клише из ДРУГИХ уже написанных сцен книги (state.usedCliches) — Прозаик
+    // видит их в директиве («убери клише») уже с итерации 1, не только клише
+    // из ЭТОЙ сцены. Живой пример: «птица — резко, как по металлу» повторилась
+    // почти дословно в двух разных сценах, потому что раньше это множество
+    // обнулялось при каждом новом runScene().
+    (state.usedCliches||[]).forEach(c=>bannedCliches.add(c));
+    const crossSceneCliches = [...bannedCliches]; // снимок ДО этой сцены — для проверки похожести ниже
     let anchorVerdict = null;   // оценки итерации 1 — baseline для стабильности Оценщика
     const scoreHistory = [];    // история scores по итерациям — детектор стагнации осей
     // История вопросов фактических стражей по итерациям — детектор «застрявшего»
@@ -337,6 +344,28 @@ export async function runScene(state, scene, opts={}, onProgress){
         flags.repeat = dupFound.map(d=>({ severity:'critical', title:'Механический повтор фразы',
           detail:'Фрагмент текста повторён почти дословно рядом с собой — похоже на артефакт правки, не осознанный приём.',
           quote:d.quote }));
+      }
+
+      // Клише этого черновика (verdict.cliches) против clichés из ДРУГИХ сцен книги
+      // (crossSceneCliches — снимок state.usedCliches ДО этой сцены). Живой пример:
+      // «птица — резко, как по металлу» повторилась почти дословно в двух разных
+      // сценах — «убери клише» в директиве Прозаику само по себе не мешает ему
+      // изобрести НОВУЮ фразу с той же структурой в другой сцене, если он не видит,
+      // что это уже было. Порог REJECT_SIM_THRESHOLD — тот же, что и для повторных
+      // вопросов Стражей (см. выше), уже проверен на реальных парах фраз.
+      const crossSceneRepeats = (verdict?.cliches||[]).map(c=>{
+        const cv = tfvec(tokensOf(c));
+        let bestOld = null, bestSim = 0;
+        crossSceneCliches.forEach(old=>{
+          const sim = cosine(cv, tfvec(tokensOf(old)));
+          if(sim > bestSim){ bestSim = sim; bestOld = old; }
+        });
+        return bestSim >= REJECT_SIM_THRESHOLD ? { quote:c, matched:bestOld } : null;
+      }).filter(Boolean);
+      if(crossSceneRepeats.length){
+        flags.freshness = crossSceneRepeats.map(r=>({ severity:'critical', title:'Повтор образа из другой сцены книги',
+          detail:`Почти дословно повторяет образ, уже использованный в другой сцене: «${r.matched}». Нужен другой образ, не вариация того же.`,
+          quote:r.quote }));
       }
 
       if(hasGuards){
@@ -672,6 +701,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       // правке текста мимо основного прогона — см. фиксы в ui/stages.js, ui/chat.js).
       if(best !== beforeLineEdit) bestFlags = {};
     }
+
+    // Клише этой сцены (свои + унаследованные от предыдущих) — обратно в
+    // state.usedCliches, чтобы СЛЕДУЮЩАЯ сцена книги видела их с итерации 1.
+    // Обрезаем до последних 150 — иначе список бесконечно растёт на длинной книге.
+    state.usedCliches = [...bannedCliches].slice(-150);
 
     const run = endRun('done');
     return { text: best || '', eval: bestEval, flags: bestFlags, runId, run };
