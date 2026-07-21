@@ -272,7 +272,7 @@ function openInconsistenciesModal(r, s, els, onRecheck, stale){
           <button class="btn wi-del" data-kind="${kind}" data-idx="${i}" data-fi="${fi}" title="Удалить этот факт из канона" style="font-size:11px;padding:2px 7px;flex:none">🗑</button>
         </div>`).join('')}
         <div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn wi-fix" data-kind="${kind}" data-idx="${i}">${kind==='conflict'?'🔧 Исправить':'🔧 Объединить'}</button></div>
-      </div>`).join('') : '';
+      </div>`).join('')}` : '';
     root.innerHTML = `<div class="modal-bg" id="wiBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
       <h2>⚠ Нестыковки в каноне мира</h2>
       ${stale ? `<div style="border:1px solid var(--err);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:var(--err)">⚠ Канон изменился после этой проверки — список ниже может быть неактуален. Нажмите «🔄 Переоценить».</div>` : ''}
