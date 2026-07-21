@@ -36,7 +36,12 @@ export function endRun(status='done'){
     st.diagnostics = st.diagnostics || { runs: [] };
     st.diagnostics.runs.unshift(_active);
     // храним последние 50 прогонов
-    if(st.diagnostics.runs.length > 50) st.diagnostics.runs.length = 50;
+    // 50 → 10: каждый трейс хранит ВСЕ промпты/ответы агентов целиком
+    // (~180 КБ на прогон) и целиком ездит на сервер при каждом save() —
+    // 33 прогона давали 5.9 МБ из 23 МБ общего веса проекта (живой инцидент
+    // «очень медленно загружается»). 10 последних прогонов хватает для
+    // отладки, migrate() в state.js подрезает уже раздутые проекты.
+    if(st.diagnostics.runs.length > 10) st.diagnostics.runs.length = 10;
     save();
   }
   const finished = _active;

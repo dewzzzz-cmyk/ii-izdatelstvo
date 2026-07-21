@@ -248,6 +248,13 @@ export function chapterTitleForScene(state, sceneId){
 // 3 прошлых версии (плюс текущая — до 4 суммарно) достаточно, чтобы откатиться
 // после неудачной перегенерации, не раздувая хранилище бесконечно.
 const MAX_IMAGE_VERSIONS = 3;
+// Для карты кап жёстче: одна карта весит ~2.3-2.7 МБ base64 (у сценных
+// иллюстраций — сотни КБ), и 3 версии + текущая + baseDataUrl раздували ОДИН
+// элемент галереи до 12.2 МБ — главный кусок живого инцидента «проект грузится
+// 13+ секунд» (весь state ездит на сервер при каждом save() и обратно при
+// каждой загрузке). Один шаг отката для декоративной карты достаточен.
+const MAX_MAP_VERSIONS = 1;
+function versionsCapFor(item){ return item && item.type==='map' ? MAX_MAP_VERSIONS : MAX_IMAGE_VERSIONS; }
 
 // Прошлое состояние item'а (для переноса при замене одного «синглтона» другим —
 // карта/обложка при повторной генерации/загрузке ЗАМЕНЯЮТ элемент массива
@@ -255,7 +262,7 @@ const MAX_IMAGE_VERSIONS = 3;
 // вручную в новый item, иначе она потеряется вместе со старым объектом).
 export function carryVersions(oldItem){
   if(!oldItem) return [];
-  return [{ dataUrl: oldItem.dataUrl, prompt: oldItem.prompt, createdAt: oldItem.createdAt }, ...(oldItem.versions||[])].slice(0, MAX_IMAGE_VERSIONS);
+  return [{ dataUrl: oldItem.dataUrl, prompt: oldItem.prompt, createdAt: oldItem.createdAt }, ...(oldItem.versions||[])].slice(0, versionsCapFor(oldItem));
 }
 
 // Перед перегенерацией картинки ПО ТОМУ ЖЕ item (мутация dataUrl на месте,
@@ -263,7 +270,8 @@ export function carryVersions(oldItem){
 export function pushImageVersion(item){
   item.versions = item.versions || [];
   item.versions.unshift({ dataUrl: item.dataUrl, prompt: item.prompt, createdAt: item.createdAt });
-  if(item.versions.length > MAX_IMAGE_VERSIONS) item.versions.length = MAX_IMAGE_VERSIONS;
+  const cap = versionsCapFor(item);
+  if(item.versions.length > cap) item.versions.length = cap;
 }
 
 // Откатиться к прошлой версии — текущее состояние НЕ теряется, уходит в
@@ -274,7 +282,8 @@ export function restoreImageVersion(item, verIdx){
   item.versions.splice(verIdx, 1);
   item.dataUrl = chosen.dataUrl; item.prompt = chosen.prompt; item.createdAt = chosen.createdAt;
   item.versions.unshift(current);
-  if(item.versions.length > MAX_IMAGE_VERSIONS) item.versions.length = MAX_IMAGE_VERSIONS;
+  const cap = versionsCapFor(item);
+  if(item.versions.length > cap) item.versions.length = cap;
   return true;
 }
 
@@ -296,7 +305,13 @@ export function saveMapItem(state, dataUrl, prompt='', markerNames=[]){
   // markerNames — если карта сгенерирована с пронумерованными точками (см.
   // mapAutoLabels в world.js), список названий по номеру метки, нужен
   // detectMapMarkers() позже, чтобы сопоставить распознанный номер с именем.
-  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, baseDataUrl:dataUrl, labels:[], markerNames:markerNames||[], createdAt:Date.now(), versions };
+  // baseDataUrl:'' (не копия dataUrl): пока подписи не накладывались, база
+  // тождественна dataUrl — хранить её отдельной строкой значит возить два
+  // одинаковых base64 по ~2.7 МБ в каждом save()/загрузке. Пустая строка =
+  // «база совпадает с dataUrl»; все читатели используют fallback
+  // (item.baseDataUrl || item.dataUrl), applyMapLabels материализует копию
+  // перед первым наложением подписей.
+  const item = { id:'map_'+Date.now().toString(36), type:'map', sceneId:null, sceneTitle:'', prompt, dataUrl, baseDataUrl:'', labels:[], markerNames:markerNames||[], createdAt:Date.now(), versions };
   state.illustrations.items.push(item);
   return item;
 }
@@ -315,7 +330,7 @@ export function saveUploadedItem(state, dataUrl, { type, sceneId=null, sceneTitl
     state.illustrations.items = state.illustrations.items.filter(it=>it.type!==type);
   }
   const item = { id:'up_'+Date.now().toString(36), type, sceneId, sceneTitle, prompt:'', dataUrl, createdAt:Date.now(), uploaded:true, versions,
-    ...(type==='map' ? { baseDataUrl:dataUrl, labels:[] } : {}) };
+    ...(type==='map' ? { baseDataUrl:'', labels:[] } : {}) }; // '' = база совпадает с dataUrl, см. saveMapItem
   state.illustrations.items.push(item);
   if(type==='cover') state.project.coverDataUrl = dataUrl;
   return item;
@@ -406,7 +421,13 @@ export function compositeMapLabels(baseDataUrl, labels){
 // Пересобрать item.dataUrl из base+labels и сохранить прошлую готовую картинку
 // в историю версий — тот же принцип отката, что у обычной перегенерации.
 export async function applyMapLabels(item){
-  const base = item.baseDataUrl || item.dataUrl;
+  // Материализация дедупа: пустой baseDataUrl означает «база = dataUrl»
+  // (см. saveMapItem) — это верно ровно до первого наложения подписей.
+  // Дальше dataUrl станет картинкой С подписями, и fallback начал бы
+  // возвращать её же как «чистую базу», впечатывая текст поверх текста.
+  // Фиксируем настоящую базу отдельной копией ДО перезаписи dataUrl.
+  if(!item.baseDataUrl) item.baseDataUrl = item.dataUrl;
+  const base = item.baseDataUrl;
   const composited = await compositeMapLabels(base, item.labels||[]);
   if(composited !== item.dataUrl){ pushImageVersion(item); item.dataUrl = composited; }
   return composited;

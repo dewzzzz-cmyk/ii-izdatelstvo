@@ -504,6 +504,23 @@ function migrate(s){
     if(coverItem) s.project.coverDataUrl = coverItem.dataUrl;
   }
   s.diagnostics = s.diagnostics || { runs: [] };
+  // Диета состояния — живой инцидент: проект разросся до 23 МБ и грузился
+  // 13+ секунд только по сети. Разложение: 12.2 МБ — ОДНА карта мира
+  // (base64-дубль в baseDataUrl + 3 полных версии в истории), 5.9 МБ —
+  // 33 полных трейса пайплайна в diagnostics.runs (кап был 50). Всё это
+  // ездит на сервер при каждом save() и обратно при каждой загрузке.
+  // Здесь — разовая чистка уже раздутых проектов; новые записи ограничивают
+  // те же капы на месте создания (diagnostics.js, illustrations.js).
+  if(Array.isArray(s.diagnostics.runs) && s.diagnostics.runs.length > 10) s.diagnostics.runs.length = 10;
+  (s.illustrations.items||[]).forEach(it=>{
+    if(it.type!=='map') return;
+    if(Array.isArray(it.versions) && it.versions.length > 1) it.versions.length = 1;
+    // Дубль чистой карты: пока подписи не накладывались, baseDataUrl===dataUrl —
+    // держать две копии по 2.7 МБ незачем. Пустая строка = «база совпадает с
+    // dataUrl»; applyMapLabels материализует копию обратно перед первым
+    // наложением подписей (см. illustrations.js), читатели используют fallback.
+    if(it.baseDataUrl && it.baseDataUrl === it.dataUrl) it.baseDataUrl = '';
+  });
   s.spend = s.spend || { text: 0, images: 0 };
   s.structureStale = s.structureStale || false;
   // Порог принятия сцены — теперь минимум 7.5 (жёсткий пол, не «дефолт по
