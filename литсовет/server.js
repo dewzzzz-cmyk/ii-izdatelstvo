@@ -27,7 +27,12 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR || ROOT;
 const CHECKPOINT_DIR = path.join(DATA_DIR, 'checkpoints');
 const SYNC_DIR = path.join(DATA_DIR, 'data', 'projects');
+// Конфликтные снапшоты handleSyncSave (см. её комментарий) — отдельная папка,
+// а не рядом с проектами: rebuildSyncIndex() сканирует SYNC_DIR по маске
+// *.json и принял бы дамп конфликта за ещё один проект с тем же id.
+const CONFLICT_DIR = path.join(DATA_DIR, 'data', 'conflicts');
 ensureDir(SYNC_DIR);
+ensureDir(CONFLICT_DIR);
 
 // Страховка: без этого необработанная ошибка в любом асинхронном обработчике
 // (оборванное клиентом стриминг-соединение, гонка res.writeHead/res.end и т.п.)
@@ -366,7 +371,31 @@ function handleSyncSave(req, res, id){
       // создало бы «проект-призрак», видимый в списке, но недоступный по GET.
       if(parsed.id !== id) return send(res,400,'ID_MISMATCH');
       ensureDir(SYNC_DIR);
-      fs.writeFileSync(path.join(SYNC_DIR,safeFile(id)+'.json'), raw, 'utf8');
+      const fp = path.join(SYNC_DIR,safeFile(id)+'.json');
+      // Оптимистичная блокировка по rev: без неё это блокирующая перезапись
+      // «последний записавший побеждает» — три раза за сессию давнооткрытая
+      // вкладка (загружена давно, ни разу не обновлялась) сохраняла свой
+      // устаревший снапшот ПОВЕРХ новых серверных данных (откат Библии,
+      // потеря текста написанных сцен), и клиент об этом не узнавал: время
+      // сохранения (`updated`) не годится для проверки — клиент проставляет
+      // его как Date.now() В МОМЕНТ save(), так что даже застарелая вкладка
+      // шлёт свежую метку времени. rev — отдельный счётчик, который клиент
+      // получает при загрузке и обязан вернуть неизменным при следующем
+      // сохранении; если он разошёлся с тем, что уже лежит на диске — значит,
+      // пока эта вкладка бездействовала, кто-то другой (другая вкладка,
+      // headless-скрипт) уже сохранил более новую версию.
+      let existingRev = 0;
+      try{ existingRev = JSON.parse(fs.readFileSync(fp,'utf8')).rev || 0; }catch{}
+      const clientRev = parsed.rev || 0;
+      if(existingRev > 0 && clientRev !== existingRev){
+        // Не теряем правки этой вкладки молча — откладываем их на диск рядом,
+        // чтобы можно было вручную сверить/восстановить при необходимости.
+        try{ fs.writeFileSync(path.join(CONFLICT_DIR, safeFile(id)+'.'+Date.now()+'.json'), raw, 'utf8'); }catch{}
+        return send(res,409,JSON.stringify({error:'REV_CONFLICT', serverRev:existingRev, clientRev}),'application/json; charset=utf-8');
+      }
+      parsed.rev = existingRev + 1;
+      const out = JSON.stringify(parsed);
+      fs.writeFileSync(fp, out, 'utf8');
       // Если индекс потерян/повреждён — пересобрать полным сканированием
       // каталога, а не начинать с пустого объекта: иначе повреждение
       // _index.json на любом обычном сохранении молча схлопывает список
@@ -375,7 +404,7 @@ function handleSyncSave(req, res, id){
       if(!idx) idx = rebuildSyncIndex();
       idx[parsed.id] = indexEntry(parsed);
       writeSyncIndex(idx);
-      send(res,200,JSON.stringify({ok:true}),'application/json; charset=utf-8');
+      send(res,200,JSON.stringify({ok:true, rev:parsed.rev}),'application/json; charset=utf-8');
     }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
   });
 }

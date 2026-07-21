@@ -159,6 +159,14 @@ export async function getServerProject(id){
 // вызывающий код (state.js save()) не мог отличить реальную синхронизацию от
 // провалившейся: индикатор показывал «●» синхронизировано, даже если запрос
 // на сервер не дошёл вовсе (см. фикс в save()).
+//
+// state.rev — счётчик оптимистичной блокировки сервера (см. handleSyncSave в
+// server.js). Отправляем как есть (то значение, с которым эта вкладка
+// загружалась/последний раз успешно сохранялась); при конфликте (409) сервер
+// не тронул свою копию — сюда просто возвращается false, как при любой другой
+// ошибке сохранения, и уже существующий баннер «⚠ Не удалось сохранить»
+// (persistToServer в state.js) сигналит автору, что нужно перезагрузить
+// вкладку, вместо того чтобы молча стереть более новые серверные данные.
 export async function pushToServer(state){
   if(!state?.id) return false;
   try{
@@ -166,7 +174,10 @@ export async function pushToServer(state){
     const res = await fetch('/api/sync/'+encodeURIComponent(state.id),{
       method:'POST', headers:{'Content-Type':'application/json'}, body,
     });
+    if(res.status === 409){ console.warn('sync conflict: server has a newer revision — reload to get latest'); return false; }
     if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json().catch(()=>null);
+    if(data && typeof data.rev === 'number') state.rev = data.rev;
     return true;
   }catch(e){ console.warn('sync push failed',e); return false; }
 }
