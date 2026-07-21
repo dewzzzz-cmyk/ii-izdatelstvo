@@ -84,6 +84,63 @@ export function findDuplicatePhrases(text){
   });
 }
 
+// ── Детектор дословного повтора СТЫКА между сценами — НЕ LLM, n-граммы. ──
+// Живой инцидент: последняя фраза сцены «Первый вздох» («Я сунул ключ в
+// карман... пошёл в сторону света...») дословно повторилась как ПЕРВАЯ фраза
+// следующей сцены «Приёмная гильдии». Ни findDuplicatePhrases (сравнивает
+// текст ТОЛЬКО сам с собой внутри одной сцены), ни crossSceneRepeats в
+// pipeline.js (сравнивает только то, что сам Оценщик процитировал как
+// клише — это сюжетное действие, не клише) этого не ловят: стык МЕЖДУ
+// соседними сценами вообще не проверялся никем. Окно другое, чем у
+// findDuplicatePhrases — не «где угодно рядом», а именно конец предыдущей
+// сцены против начала текущей, поэтому нет смысла делить окно по BOUNDARY_WORDS
+// на близость: любое совпадение шингла в этой узкой паре зон подозрительно.
+const BOUNDARY_WORDS = 250;
+export function findBoundaryRepeat(prevText, newText){
+  if(!prevText || !newText) return [];
+  const re = /[а-яё]+/gi;
+
+  // Хвост предыдущей сцены — с грубой обрезкой по символам перед точным
+  // подсчётом слов (сцены длинные, не гонять regex по всему тексту).
+  const tailSlice = prevText.slice(Math.max(0, prevText.length - 4000));
+  const tailWords = []; let m;
+  while((m = re.exec(tailSlice))){ tailWords.push(m[0].toLowerCase()); }
+  const tail = tailWords.slice(-BOUNDARY_WORDS);
+
+  const headSlice = newText.slice(0, 4000);
+  const headWords = []; re.lastIndex = 0;
+  while((m = re.exec(headSlice))){ headWords.push({ w:m[0].toLowerCase(), idx:m.index, len:m[0].length }); }
+  const head = headWords.slice(0, BOUNDARY_WORDS);
+
+  if(tail.length < DUP_SHINGLE_WORDS || head.length < DUP_SHINGLE_WORDS) return [];
+
+  const tailShingles = new Set();
+  for(let i=0; i<=tail.length-DUP_SHINGLE_WORDS; i++){ tailShingles.add(tail.slice(i,i+DUP_SHINGLE_WORDS).join(' ')); }
+
+  const ranges = [];
+  for(let i=0; i<=head.length-DUP_SHINGLE_WORDS; i++){
+    const shingle = head.slice(i,i+DUP_SHINGLE_WORDS).map(w=>w.w).join(' ');
+    if(tailShingles.has(shingle)) ranges.push({ from:i, to:i+DUP_SHINGLE_WORDS-1 });
+  }
+  if(!ranges.length) return [];
+
+  ranges.sort((a,b)=>a.from-b.from);
+  const merged = [];
+  let cur = { ...ranges[0] };
+  for(let i=1;i<ranges.length;i++){
+    if(ranges[i].from <= cur.to+1) cur.to = Math.max(cur.to, ranges[i].to);
+    else { merged.push(cur); cur = { ...ranges[i] }; }
+  }
+  merged.push(cur);
+
+  return merged.map(r=>{
+    const startChar = head[r.from].idx;
+    const last = head[r.to];
+    const endChar = last.idx + last.len;
+    return { quote: headSlice.slice(startChar, endChar).trim() };
+  });
+}
+
 // ── Страж голоса (0.2): стиль/ритм против образца. Цитирует образец. ──
 export function voiceGuardMessages(scene, draft, voiceExamples, strictness){
   const sys = 'Ты — страж голоса. Ты НЕ переписываешь текст. Ты отмечаешь отклонения стиля/ритма от образца автора. По каждому флагу цитируй релевантное предложение из образца.\n'

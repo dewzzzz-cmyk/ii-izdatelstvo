@@ -10,7 +10,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          radicalReviseMessages, parseDebateRevision, styleGuardMessages, readerGuardMessages,
          imageryGuardMessages, povGuardMessages, dialogueGuardMessages, resolutionGuardMessages,
-         atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases } from './guards.js';
+         atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases, findBoundaryRepeat } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag, effectiveRules } from './state.js';
@@ -31,7 +31,7 @@ function isFactualGuard(state, role){
   return !!(a.custom && a.factual);
 }
 
-const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами'};
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен'};
 function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
@@ -343,6 +343,17 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(dupFound.length){
         flags.repeat = dupFound.map(d=>({ severity:'critical', title:'Механический повтор фразы',
           detail:'Фрагмент текста повторён почти дословно рядом с собой — похоже на артефакт правки, не осознанный приём.',
+          quote:d.quote }));
+      }
+
+      // Тот же принцип, но на СТЫКЕ со сценой раньше: живой инцидент — конец
+      // «Первый вздох» дословно повторился как начало «Приёмная гильдии» (см.
+      // findBoundaryRepeat в guards.js). dupFound выше это не ловит — сравнивает
+      // текст только сам с собой в пределах ОДНОЙ сцены.
+      const boundaryFound = findBoundaryRepeat(prevSceneText, pRes.text);
+      if(boundaryFound.length){
+        flags.boundary = boundaryFound.map(d=>({ severity:'critical', title:'Повтор конца предыдущей сцены',
+          detail:'Начало этой сцены почти дословно повторяет конец предыдущей — герой уже сделал это действие, сцена должна продолжить ДАЛЬШЕ, а не пересказывать тот же момент заново.',
           quote:d.quote }));
       }
 

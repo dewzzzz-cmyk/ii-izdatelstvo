@@ -86,6 +86,29 @@ export function topRepeatedPhrases(text, n=4, min=2, limit=8){
     .map(([phrase,count])=>({phrase,count}));
 }
 
+// ── Баланс глаголов-тегов речи («сказал» vs спросил/ответил/крикнул/...) —
+// доп. сигнал для Оценщика по оси «Ритм». Живой пример: во ВСЕХ шести
+// написанных сценах книги «сказал» — 50-65% вообще всех атрибуций реплик
+// (19 из 29 в одной сцене), остальное — по мелочи. Ни один существующий
+// пункт рубрики этого не считает: «Ритм» штрафует повтор ИМЕНИ персонажа
+// вместо местоимения, а не однообразие самого глагола-тега. Стемы без
+// родовых/временных окончаний (сказа- ловит сказал/сказала/сказали/сказать).
+const SPEECH_TAG_STEMS = ['сказа','спроси','ответи','повтори','пробормота','прошепта','крикну','заора','вздохну','возрази','переби','уточни','поправи','буркну'];
+export function speechTagBalance(text, minTotal=4, minShare=0.5){
+  const t = (text||'').toLowerCase();
+  const counts = {};
+  let total = 0;
+  SPEECH_TAG_STEMS.forEach(stem=>{
+    const n = (t.match(new RegExp(stem,'g'))||[]).length;
+    if(n){ counts[stem]=n; total+=n; }
+  });
+  if(total < minTotal) return null;
+  const [topStem, topCount] = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+  const share = topCount/total;
+  if(share < minShare) return null;
+  return { stem:topStem, count:topCount, total, share };
+}
+
 export function cosine(a,b){ let dot=0,na=0,nb=0; for(const k in a){ dot+=(a[k]||0)*(b[k]||0); na+=a[k]**2; } for(const k in b) nb+=b[k]**2; return na&&nb?dot/Math.sqrt(na*nb):0; }
 
 export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensOf((b.keys||'')+' '+(b.text||''))); }); }
