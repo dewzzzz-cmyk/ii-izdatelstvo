@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Литсовет</title>
+<script>
+// Тема ставится ДО загрузки CSS, иначе тёмная тема мигает светлой при каждом
+// открытии. Явный выбор (localStorage) важнее системной prefers-color-scheme.
+try{
+  var _t = localStorage.getItem('litsovet_theme');
+  if(_t === 'dark' || (!_t && matchMedia('(prefers-color-scheme: dark)').matches))
+    document.documentElement.setAttribute('data-theme','dark');
+}catch(e){}
+</script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,6 +24,7 @@
       <span class="proj-meta" id="projMeta"></span>
       <span class="proj-spend" id="projSpend" style="display:none;font-size:12px;color:var(--text-2);cursor:default"></span>
       <span id="_syncDot" title="Синхронизация с сервером" style="font-size:10px;cursor:default;color:var(--text-3)">●</span>
+      <button class="icon-btn" id="themeBtn" title="Переключить тему (светлая/тёмная)">🌙</button>
       <button class="icon-btn" id="settingsBtn" title="Настройки">⚙</button>
     </div>
   </header>

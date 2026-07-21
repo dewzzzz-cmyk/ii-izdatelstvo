@@ -17,6 +17,30 @@
   --radius: 8px;
   --radius-lg: 12px;
   --font: -apple-system, "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+/* Тёмная тема — включается атрибутом data-theme="dark" на <html>.
+   Атрибут ставится инлайн-скриптом в <head> ДО отрисовки (см. index.html),
+   иначе при загрузке страницы мигала бы светлая тема. Переключатель — 🌙/☀
+   в шапке, выбор хранится в localStorage('litsovet_theme'); без явного
+   выбора наследуем системную prefers-color-scheme. */
+html[data-theme="dark"]{
+  --bg: #191917;
+  --surface: #21211e;
+  --surface-2: #2a2a26;
+  --border: #35342f;
+  --border-2: #46453e;
+  --text: #e8e6e0;
+  --text-2: #b3b1a8;
+  --text-3: #928f85;
+  --accent: #6aaae8;
+  --accent-bg: #1e3a57;
+  --accent-border: #35638f;
+  --ok-bg:#232f18; --ok:#9ac86a; --ok-border:#4a6b28;
+  --warn-bg:#382a14; --warn:#eaa94e; --warn-border:#8a5f1c;
+  --err-bg:#3a1f1f; --err:#e88888; --err-border:#7c3b3b;
+  --purple-bg:#28263e; --purple:#a49bec; --purple-border:#54509c;
+  color-scheme: dark;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -352,7 +376,8 @@ textarea{resize:vertical;min-height:60px}
 .stop-banner-lock .sb-title{color:var(--text)}
 .stop-banner-lock .sb-text{color:var(--text-2);margin-bottom:8px}
 .sb-title{font-size:12px;font-weight:500;color:var(--warn);margin-bottom:3px}
-.sb-text{font-size:11px;color:#633806;line-height:1.5;margin-bottom:8px}
+/* был жёсткий #633806 — на тёмной теме (тёмный warn-bg) текст становился нечитаемым */
+.sb-text{font-size:11px;color:var(--warn);line-height:1.5;margin-bottom:8px}
 .sb-warn{font-size:11px;color:var(--err);margin-bottom:8px}
 
 /* ── Редактор: подсветка правок в тексте + попап принять/отклонить ── */

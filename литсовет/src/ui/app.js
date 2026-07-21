@@ -361,9 +361,33 @@ async function openSettings(){
   });
 }
 
+// ── Переключатель темы ──
+// Начальный data-theme уже стоит на <html> (инлайн-скрипт в <head>, до CSS —
+// иначе тёмная тема мигала бы светлой при каждой загрузке). Здесь только
+// кнопка: тумблер атрибута + сохранение ЯВНОГО выбора в localStorage, чтобы
+// он был важнее системной prefers-color-scheme при следующих открытиях.
+function initThemeToggle(){
+  const btn = document.getElementById('themeBtn');
+  if(!btn) return;
+  const syncIcon = ()=>{
+    const dark = document.documentElement.getAttribute('data-theme')==='dark';
+    btn.textContent = dark ? '☀' : '🌙';
+    btn.title = dark ? 'Переключить на светлую тему' : 'Переключить на тёмную тему';
+  };
+  syncIcon();
+  btn.onclick = ()=>{
+    const dark = document.documentElement.getAttribute('data-theme')==='dark';
+    if(dark) document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme','dark');
+    try{ localStorage.setItem('litsovet_theme', dark ? 'light' : 'dark'); }catch{}
+    syncIcon();
+  };
+}
+
 async function main(){
   const brand = document.querySelector('.brand');
   if(brand) brand.innerHTML = `Литсовет <span class="brand-ver">v${APP_VERSION}</span>`;
+  initThemeToggle();
   await init();
   subscribe(()=>rerender());
   document.getElementById('settingsBtn').onclick = openSettings;
