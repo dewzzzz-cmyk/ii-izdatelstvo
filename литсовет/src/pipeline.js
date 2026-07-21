@@ -44,6 +44,10 @@ function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).n
 // и вторая, реальная находка переставала подсвечиваться (найдено консилиумом).
 const REJECT_SIM_THRESHOLD = 0.75;
 function noteSimilarity(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))); }
+// Сколько итераций подряд один и тот же вопрос фактических стражей (логика/события)
+// может остаться без ответа, прежде чем перестать быть необязательным пробелом и
+// стать обязательной правкой (см. FACTUAL_ESCALATE_ITERS ниже по файлу).
+const FACTUAL_ESCALATE_ITERS = 3;
 function isRejectedNote(text, rejectedNotes){
   if(!rejectedNotes || !rejectedNotes.length || !text) return false;
   return rejectedNotes.some(rn => noteSimilarity(text, rn.quote + ' ' + (rn.reason||'')) >= REJECT_SIM_THRESHOLD);
@@ -180,6 +184,10 @@ export async function runScene(state, scene, opts={}, onProgress){
     const bannedCliches = new Set();
     let anchorVerdict = null;   // оценки итерации 1 — baseline для стабильности Оценщика
     const scoreHistory = [];    // история scores по итерациям — детектор стагнации осей
+    // История вопросов фактических стражей по итерациям — детектор «застрявшего»
+    // пробела (см. FACTUAL_ESCALATE_ITERS ниже): один и тот же вопрос без ответа
+    // много итераций подряд эскалируется в обязательную правку.
+    let factualWarningTracker = [];
     const AXIS_LABELS = Object.fromEntries(RUBRIC_AXES.map(a=>[a.key, a.label]));
     // true, если предыдущая итерация обнаружила стагнацию осей — на СЛЕДУЮЩУЮ
     // итерацию идём через radicalReviseMessages вместо surgicalReviseMessages
@@ -409,9 +417,50 @@ export async function runScene(state, scene, opts={}, onProgress){
         // же заставляло его блокировать консенсус наравне с настоящими ошибками.
         // Теперь идёт отдельным списком — виден в директиве, но не блокирует
         // завершение сцены и не требует придумывать ответ.
-        factualQuestions = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+        //
+        // НО «не выдумывай факт» на практике означало «можно просто игнорировать
+        // раз за разом» — живой прогон показал ОДИН И ТОТ ЖЕ вопрос («откуда часы
+        // в кармане», «откуда у героя сюртук, если минуту назад была куртка») слово
+        // в слово 4-5 итераций подряд: Прозаик ни разу не выбрал «сделай нейтральной»,
+        // дыра уходила в финальный текст и путала читателя на стыке сцен. Считаем
+        // повторы того же вопроса по сходству ЗАГОЛОВКА (не заголовок+detail —
+        // проверено на реальных данных: одна и та же дыра почти всегда получает
+        // от стража один и тот же короткий заголовок вроде «источник часов»
+        // дословно или почти дословно, а вот развёрнутый detail страж каждый раз
+        // формулирует заново другими словами и сходство title+detail тонет в этом
+        // шуме, ни разу не достигая порога даже для 4 повторов подряд одного и
+        // того же вопроса). Порог — тот же REJECT_SIM_THRESHOLD, что и у уже
+        // отклонённых автором находок выше.
+        //
+        // Трекер копится за ВСЁ время работы над сценой, а не только по соседним
+        // итерациям: страж не обязан поднимать один и тот же вопрос БУКВАЛЬНО
+        // каждый раз (иногда пропускает раунд, если внимание ушло на другую
+        // находку) — на живых данных «источник часов» встретился на итерациях
+        // 1, 3 и 5 из 5, с другими вопросами между. Подсчёт только по соседним
+        // итерациям обнулял счётчик на каждом таком пропуске и эскалация
+        // никогда не срабатывала. Записи не удаляются до конца сцены — при
+        // ограниченном числе итераций (maxIter, обычно ≤5-20) массив небольшой.
+        // После FACTUAL_ESCALATE_ITERS появлений вопрос перестаёт быть
+        // необязательным пробелом и уходит в criticals: у Прозаика было 2
+        // бесплатных шанса промолчать по делу, дальше непроявленная деталь
+        // (одежда, предмет в кармане и т.п.) — уже ошибка.
+        const rawFactual = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
           .filter(f=>f.severity==='warning' && isFactualGuard(state, role))
-          .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+          .map(f=>({role, title:f.title, detail:f.detail||''})));
+        const escalatedFactual = [];
+        rawFactual.forEach(f=>{
+          let entry = factualWarningTracker.find(t => noteSimilarity(f.title, t.title) >= REJECT_SIM_THRESHOLD);
+          if(!entry){ entry = { title:f.title, count:0 }; factualWarningTracker.push(entry); }
+          entry.count++;
+          if(entry.count >= FACTUAL_ESCALATE_ITERS) escalatedFactual.push(f);
+        });
+        if(escalatedFactual.length){
+          criticals.push(...escalatedFactual.map(f=>`[${GUARD_LABELS[f.role]||f.role}] (повторяется ${FACTUAL_ESCALATE_ITERS}+ итерации без изменений — уже не пробел, а ошибка) ${f.title}: ${f.detail}`));
+          onProgress && onProgress({log:{icon:'⚡', text:`Вопрос стражей логики/событий повторился ${FACTUAL_ESCALATE_ITERS}+ раз без ответа — эскалирован в обязательную правку: ${escalatedFactual.map(f=>f.title).join(', ')}`, state:'warn'}});
+        }
+        const escalatedTitles = new Set(escalatedFactual.map(f=>f.title));
+        factualQuestions = rawFactual.filter(f=>!escalatedTitles.has(f.title))
+          .map(f=>`[${GUARD_LABELS[f.role]||f.role}] ${f.title}: ${f.detail}`);
         // warning от ЛИТЕРАТУРНЫХ стражей (голос/стиль/юмор/диалог/...) — раньше
         // никуда не шли дальше flagList (видны в логе, но не в директиве Прозаику):
         // с гейтом на iter>=maxIter-1 они теперь успевают появиться ДО последней
