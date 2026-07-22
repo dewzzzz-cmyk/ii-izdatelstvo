@@ -314,6 +314,12 @@ export async function runScene(state, scene, opts={}, onProgress){
       // команды «сократи» из notes Оценщика), и в самом lengthNote дальше по циклу.
       const curWords = (pRes.text.match(/\S+/g)||[]).length;
       const tooShort = !!(scene.targetWords && curWords < scene.targetWords*0.7);
+      // Грубый недобор (<60% цели) — отдельный, жёсткий порог: такая сцена
+      // почти всегда не «лаконична», а недописана — выброшены сущности брифа
+      // (живой случай: открывающая сцена 621 из 1500 слов прошла консенсус,
+      // потеряв целиком линию матери, на которой держится сделка следующей
+      // сцены). Ниже блокирует консенсус до последней итерации.
+      const grossShort = !!(scene.targetWords && curWords < scene.targetWords*0.6);
 
       // ── Стражи: проверяют ТЕКУЩИЙ черновик (pRes.text), не исторический best.
       // Раньше проверяли best — если следующий черновик по сути исправлял находку
@@ -597,7 +603,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       }
 
       // Консенсус: оценщик принял И стражи не нашли критических проблем → готово.
-      if(evalAccepted && criticals.length === 0){ break; }
+      // grossShort блокирует консенсус, но не на последней итерации — иначе
+      // сцена, которую модель упорно пишет коротко, зациклила бы прогон впустую;
+      // на выходе такой текст всё равно помечен бейджем недобора в UI.
+      if(evalAccepted && criticals.length === 0 && (!grossShort || iter >= maxIter)){ break; }
+      if(evalAccepted && criticals.length === 0 && grossShort){
+        onProgress && onProgress({log:{icon:'📏', text:`Объём критически ниже цели (${curWords} из ${scene.targetWords} сл.) — консенсус отложен, следующая правка расширяет сцену`, state:'warn'}});
+      }
 
       // Директива строится от лучшего оценщика (bestEval), а не обязательно от текущего verdict.
       // Это важно когда guards запустились на финальной итерации, а best — из более ранней.
@@ -649,9 +661,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       // на реальной сцене: 751→747→651→629→619 слов при цели 1500 — 5 правок
       // подряд без единого отскока вверх). Не запрещаем резать (замечание может
       // быть правильным), только просим не резать ДАЛЬШЕ без необходимости.
-      const lengthNote = tooShort
-        ? `\n\nОБЪЁМ: черновик уже заметно короче цели (${curWords} из ${scene.targetWords} слов) — если конкретное замечание выше не требует прямо резать текст, ищи другой способ его выполнить (не удаляй абзацы целиком ради мелкой правки).`
-        : '';
+      const lengthNote = grossShort
+        ? `\n\nОБЪЁМ КРИТИЧЕСКИ НИЖЕ ЦЕЛИ (${curWords} из ${scene.targetWords} слов): расширь сцену минимум до ${Math.round(scene.targetWords*0.75)} слов — НЕ водой и не растягиванием фраз, а развитием того, что бриф требует, но текст пропустил или свернул: недостающие сущности брифа, реакции и память героя, сенсорика места, подтекст в диалоге.`
+        : tooShort
+          ? `\n\nОБЪЁМ: черновик уже заметно короче цели (${curWords} из ${scene.targetWords} слов) — если конкретное замечание выше не требует прямо резать текст, ищи другой способ его выполнить (не удаляй абзацы целиком ради мелкой правки).`
+          : '';
       directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote;
     }
     if(!best){
