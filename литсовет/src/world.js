@@ -243,9 +243,21 @@ export async function runWorldOverview(state, category=null, opts={}){
   // каноне находок реально больше 3, а урезанный до "топ-3" список означает,
   // что автор узнаёт про остальные только через несколько повторных проверок
   // подряд (по одной новой находке за раз) — сообщено автором напрямую.
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:2200, retries:g.retries });
-  const j = extractJSON(res.text);
-  if(!j || typeof j.depth !== 'number') throw new Error('Не удалось разобрать ответ.');
+  // callLLM.retries покрывает только сетевые/HTTP-сбои — невалидный JSON в
+  // успешно полученном ответе (модель на температуре 0.3 иногда рвёт
+  // разметку на насыщенном каноне — живой случай: 212 фактов, ~52К промпт,
+  // один прогон из трёх падал на "Не удалось разобрать ответ") никогда не
+  // повторялся, автор просто терял платный вызов и должен был жать кнопку
+  // заново. 1 бесплатный (для автора) повтор здесь дешевле, чем повторный
+  // клик по кнопке с полной ценой прогона.
+  let j = null, lastErr = '';
+  for(let attempt=0; attempt<=1 && !j; attempt++){
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:2200, retries:g.retries });
+    const parsed = extractJSON(res.text);
+    if(parsed && typeof parsed.depth === 'number') j = parsed;
+    else lastErr = res.text.slice(0,200);
+  }
+  if(!j) throw new Error('Не удалось разобрать ответ.' + (lastErr ? ` (${lastErr})` : ''));
   // Резолвим номера [N] из ответа модели в {category, text} — устойчивую
   // идентичность факта, НЕ индекс в state.bible: тот может съехать из-за
   // правок/удалений в ДРУГИХ категориях между этой проверкой и кликом
