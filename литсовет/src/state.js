@@ -1,7 +1,7 @@
 // Модель состояния проекта Литсовет + дефолты.
 // Единый объект state, персистентный в IndexedDB (storage.js).
 
-import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject } from './storage.js';
+import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject, lastPushConflict } from './storage.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
@@ -351,7 +351,24 @@ function persistToServer(){
     // индикатор синхронизации всегда показывал «●», даже если сцена никогда
     // не доходила до сервера. Локальные данные (IndexedDB) при этом целы —
     // это именно сигнал «сервер не видит последних правок», не потеря данных.
-    .then(ok=>{ setSyncStatus(ok ? 'ok' : 'err'); return ok; })
+    .then(ok=>{
+      setSyncStatus(ok ? 'ok' : 'err');
+      // Конфликт ревизий — не «сеть моргнула», а «эта вкладка устарела»:
+      // без явного баннера автор видел лишь тихий ⚠ у точки синхронизации и
+      // продолжал работать со старой копией, недоумевая, куда делись свежие
+      // изменения (живой репорт «почему я это не вижу?»).
+      if(!ok && lastPushConflict){
+        let b = document.getElementById('_saveBanner');
+        if(!b){
+          b = document.createElement('div'); b.id='_saveBanner';
+          b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
+          document.body?.appendChild(b);
+        }
+        b.textContent='⚠ На сервере более новая версия проекта — нажмите здесь, чтобы обновить страницу и загрузить её';
+        b.onclick=()=>location.reload();
+      }
+      return ok;
+    })
     .catch(e=>{
       console.error('save failed', e);
       setSyncStatus('err');

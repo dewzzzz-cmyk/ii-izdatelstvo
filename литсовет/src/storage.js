@@ -167,14 +167,25 @@ export async function getServerProject(id){
 // ошибке сохранения, и уже существующий баннер «⚠ Не удалось сохранить»
 // (persistToServer в state.js) сигналит автору, что нужно перезагрузить
 // вкладку, вместо того чтобы молча стереть более новые серверные данные.
+// Последний пуш отбит сервером как конфликт ревизий (409) — эта вкладка
+// устарела, на сервере лежит более новая версия проекта. Флаг читает
+// state.js (persistToServer), чтобы показать автору содержательный баннер
+// «обновите страницу», а не общий «не удалось сохранить».
+export let lastPushConflict = false;
+
 export async function pushToServer(state){
   if(!state?.id) return false;
+  lastPushConflict = false;
   try{
     const body = JSON.stringify(state, safeReplacer);
     const res = await fetch('/api/sync/'+encodeURIComponent(state.id),{
       method:'POST', headers:{'Content-Type':'application/json'}, body,
     });
-    if(res.status === 409){ console.warn('sync conflict: server has a newer revision — reload to get latest'); return false; }
+    if(res.status === 409){
+      lastPushConflict = true;
+      console.warn('sync conflict: server has a newer revision — reload to get latest');
+      return false;
+    }
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json().catch(()=>null);
     if(data && typeof data.rev === 'number') state.rev = data.rev;
@@ -187,14 +198,26 @@ export async function deleteFromServer(id){
 }
 
 // Синхронизировать все проекты с сервера в локальный IndexedDB.
-// Сервер — источник правды при конфликте (более свежая версия побеждает).
+// Сервер — источник правды при конфликте.
+// Сравнение по rev (счётчик сервера, см. handleSyncSave), а не по updated:
+// updated клиент проставляет как Date.now() в момент save() — давнооткрытая
+// вкладка со СТАРЫМ содержимым при любом клике записывала его в IndexedDB со
+// «свежей» меткой времени, и после этого даже перезагрузка страницы не
+// подтягивала серверную версию («локальная выглядит новее») — автор
+// продолжал видеть старую копию, хотя на сервере лежала новая (живой репорт
+// «почему я это не вижу?»). rev растёт только при УСПЕШНОМ сохранении на
+// сервер, устаревшая вкладка его увеличить не может (её пуш отбивается 409).
+// Для старых записей без rev — прежнее сравнение по updated.
 export async function syncFromServer(){
   const serverList = await listServerProjects();
   if(!serverList.length) return false;
   let imported = 0;
-  for(const {id, updated} of serverList){
+  for(const {id, updated, rev} of serverList){
     const local = await loadProject(id).catch(()=>null);
-    if(!local || (local.updated||0) < (updated||0)){
+    const serverNewer = rev
+      ? (local?.rev||0) < rev
+      : (local?.updated||0) < (updated||0);
+    if(!local || serverNewer){
       const proj = await getServerProject(id);
       if(proj){ await saveProject(proj); imported++; }
     }
