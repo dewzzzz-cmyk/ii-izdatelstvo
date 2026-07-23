@@ -36,8 +36,12 @@ function matchTextProvider(baseURL){
 // (см. PRICES в state.js — единственный источник уже проверенных id, не
 // придуманные названия). Список — подсказка (datalist), не жёсткий список:
 // печатать своё значение можно и дальше.
+// deepseek-chat/deepseek-reasoner официально устаревают 2026-07-24 (замена —
+// deepseek-v4-flash/deepseek-v4-pro), но старые имена пока работают ради
+// совместимости — оставляем их в списке, чтобы уже сохранённый выбор не
+// потерялся сам по себе.
 const TEXT_MODEL_OPTIONS = {
-  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
   openai: ['gpt-4o', 'gpt-4o-mini'],
   gemini: ['gemini-2.5-flash'],
   qwen: ['qwen-plus'],
