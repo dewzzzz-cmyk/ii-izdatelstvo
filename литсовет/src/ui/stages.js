@@ -23,7 +23,9 @@ import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
 import { suggestEdits } from '../editor.js';
 import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, suggestTitles,
-         hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck } from '../bookreview.js';
+         hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck,
+         passivityIsSystemic } from '../bookreview.js';
+import { extractCraftSignature, detectRepeatingHumorPattern, dominantExpositionChannel } from '../craftsignals.js';
 import { GENRES, ERAS } from '../genres.js';
 import { suggestMissingWorldFacts } from '../world.js';
 import { saveUploadedItem, removeCover } from '../illustrations.js';
@@ -2040,9 +2042,16 @@ export function renderEdit(els){
         hasCharactersToCheck(s) ? runFlatCharacterCheck(s) : Promise.resolve(null),
       ]);
       if(reviewR.status!=='fulfilled') throw reviewR.reason;
+      // Кросс-сценовые проверки ниже — чистый код по уже накопленным
+      // сигнатурам (craftsignals.js), без LLM-вызова: не часть allSettled,
+      // синхронные и бесплатные.
+      const sceneTitleById = Object.fromEntries((s.structure||[]).filter(n=>n.type==='scene').map(n=>[n.id, n.title]));
       const report = { ...reviewR.value,
         worldDepth: worldR.status==='fulfilled' ? worldR.value : null,
         flatCharacters: charR.status==='fulfilled' ? charR.value : null,
+        humorPattern: detectRepeatingHumorPattern(s.memory?.craftSignals, sceneTitleById),
+        expositionDominance: dominantExpositionChannel(s.memory?.craftSignals, sceneTitleById),
+        passivity: passivityIsSystemic(s),
       };
       _lastCriticReview=report; openCriticModal(s, report);
     }
@@ -2197,6 +2206,27 @@ function openCriticModal(s, r){
             <div class="row" style="gap:6px;flex-wrap:wrap">${copyNoteBtn(noteText)}</div>
           </div>`;
         }).join('')}
+      </div>`:''}
+      ${r.humorPattern && r.humorPattern.length?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <b>Повторяющийся приём</b>
+        ${r.humorPattern.map(b=>{
+          const noteText = `Приём «${b.style}» через «${b.channelRep}» повторяется ${b.occurrences.length} раз (сцены: ${b.occurrences.map(o=>o.sceneTitle).join(', ')}) — разнообразь подачу.`;
+          return `<div style="display:flex;flex-direction:column;gap:2px;padding:4px 0;border-top:1px solid var(--border)">
+            <div style="font-size:13px"><b>${esc(b.style)}</b> через «${esc(b.channelRep)}» — ${b.occurrences.length}×</div>
+            <div style="font-size:12px;color:var(--text-2)">${b.occurrences.map(o=>esc(o.sceneTitle)).join(', ')}</div>
+            <div class="row" style="gap:6px;flex-wrap:wrap">${copyNoteBtn(noteText)}</div>
+          </div>`;
+        }).join('')}
+      </div>`:''}
+      ${r.expositionDominance?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div class="row" style="justify-content:space-between"><b>Однообразная подача информации</b><span style="font-weight:700">${Math.round(r.expositionDominance.ratio*100)}%</span></div>
+        <div style="font-size:12px;color:var(--text-2)">«${esc(r.expositionDominance.channel)}» — источник в ${r.expositionDominance.count} из ${r.expositionDominance.total} сцен с экспозицией: ${r.expositionDominance.scenes.map(esc).join(', ')}</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">${copyNoteBtn(`Слишком часто информацию читателю подаёт «${r.expositionDominance.channel}» (${r.expositionDominance.count} из ${r.expositionDominance.total} сцен с экспозицией) — разнообразь источники подачи.`)}</div>
+      </div>`:''}
+      ${r.passivity?`<div class="apv-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div class="row" style="justify-content:space-between"><b>Пассивность героя</b><span style="font-weight:700">${r.passivity.count}/${r.passivity.window}</span></div>
+        <div style="font-size:12px;color:var(--text-2)">Сцены: ${r.passivity.scenes.map(x=>esc(x.title)).join(', ')}</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">${copyNoteBtn('Герой слишком часто пассивен в последних сценах — дай ему явный выбор или действие, которое меняет ход сюжета.')}</div>
       </div>`:''}
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="crClose">Закрыть</button></div>
@@ -2430,7 +2460,17 @@ async function doRun(els, s, scene, directive, runFlags={}){
     if(wasDone) markDownstreamStale(s, scene);
     save();
     btn.innerHTML='<span class="spinner"></span> Суммаризация…';
-    try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); await maybeRollup(s); save(); }
+    try{
+      await summarizeScene(s, scene); scene.drift = driftCheck(s, scene);
+      // Структурная сигнатура для кросс-сценовых проверок (повтор приёма/канала
+      // подачи экспозиции по всей книге, см. craftsignals.js) — не блокирует
+      // сохранение сцены при сбое, как и driftCheck/maybeRollup рядом.
+      try{
+        const sig = await extractCraftSignature(s, scene);
+        if(sig){ s.memory.craftSignals = s.memory.craftSignals || {}; s.memory.craftSignals[scene.id] = sig; }
+      }catch(e){ console.warn('craft signature failed', e); }
+      await maybeRollup(s); save();
+    }
     catch(e){ console.warn('summarize failed', e); }
   }catch(e){
     // Стриминг (prog.streaming выше) уже мог записать в scene.text свежий,

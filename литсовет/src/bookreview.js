@@ -15,6 +15,21 @@ export function doneScenesOrdered(state){
   return (state.structure||[]).filter(n=>n.type==='scene' && n.status==='done' && n.text);
 }
 
+// Накопительная проверка пассивности героя — чистый код, БЕЗ LLM-вызова:
+// scene.passivityFlag уже приходит бесплатно с ответом Стража-читателя
+// (readerGuardMessages, вопрос 4 — см. guards.js/pipeline.js), эта функция
+// только группирует то, что уже посчитано. Работает для любого протагониста
+// любого жанра — активность героя не жанровое понятие, а общелитературное.
+// Скользящее окно (не вся книга целиком) — пассивность в начале книги, которую
+// уже отработали правкой, не должна вечно засчитываться против более поздних,
+// уже активных глав.
+export function passivityIsSystemic(state, windowSize=6, minCount=3){
+  const recent = doneScenesOrdered(state).slice(-windowSize);
+  const flagged = recent.filter(sc=>sc.passivityFlag);
+  if(flagged.length < minCount) return null;
+  return { count: flagged.length, window: recent.length, scenes: flagged.map(sc=>({id:sc.id, title:sc.title})) };
+}
+
 // Компактный обзор книги по порядку ЧТЕНИЯ (structure), не порядку написания.
 // onlyWritten=true — пропускает ещё не написанные сцены целиком (не показывает даже
 // их бриф-план): нужно Бета-ридеру и Критику, которые симулируют человека, реально

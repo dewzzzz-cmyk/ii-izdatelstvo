@@ -2,7 +2,7 @@
 // ПП2-цепочка: [Архитектор] → Прозаик ⇄ Оценщик (петля).
 // Каждый агент включаем/отключаем; всё пишется в диагностический трейс.
 
-import { callLLM } from './llm.js';
+import { callLLM, extractJSON } from './llm.js';
 import { buildSceneContext, bookContextBlock } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES } from './agents.js';
@@ -325,7 +325,16 @@ export async function runScene(state, scene, opts={}, onProgress){
       let verdict = null;
       if(agentEnabled('evaluator')){
         onProgress && onProgress({stage:'evaluator', text:'Оценщик судит черновик…'});
-        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
+        // Внешние эталоны для «Свежести»/«Темпа» (см. agents.js) — оба
+        // self-referential к ЭТОЙ книге (не жанровый норматив), поэтому
+        // работают одинаково для любого жанра/типа прозы без настройки.
+        const doneWords = (state.structure||[]).filter(n=>n.type==='scene' && n.status==='done' && n.words).map(n=>n.words);
+        let paceBaseline = null;
+        if(doneWords.length >= 3){
+          const sorted = [...doneWords].sort((a,b)=>a-b);
+          paceBaseline = { medianWords: sorted[Math.floor(sorted.length/2)], sceneWords: (pRes.text.match(/\S+/g)||[]).length };
+        }
+        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline });
         // Anchor-score: передаём baseline итерации 1 чтобы Оценщик не дрейфовал между итерациями
         if(iter > 1 && anchorVerdict?.ok){
           const baseStr = Object.entries(anchorVerdict.scores).map(([k,v])=>`${AXIS_LABELS[k]||k}:${v}`).join(', ');
@@ -484,7 +493,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
             guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
           if(agentEnabled('reader'))
-            guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress));
+            guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress, scene));
           if(agentEnabled('imagery'))
             guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, state.project?.genre), flags, onProgress));
           if(agentEnabled('pov'))
@@ -838,12 +847,21 @@ export async function runScene(state, scene, opts={}, onProgress){
 }
 
 // Запуск одного Стража с устойчивостью к падению (спека 11: не валим весь прогон).
-async function guardJob(state, role, llmBase, messages, flagsOut, onProgress){
+async function guardJob(state, role, llmBase, messages, flagsOut, onProgress, scene){
   const a = ag(state, role);
   try{
     const res = await callLLM({ ...llmBase, temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??700 });
     const flags = runGuardParse(res.text);
     flagsOut[role] = flags;
+    // Страж-читатель уже отвечает на вопрос о пассивности героя (readerGuardMessages,
+    // guards.js) — вытаскиваем структурное поле "passive" тем же самым ответом,
+    // без дополнительного LLM-вызова, и копим на самой сцене для накопительной
+    // проверки по книге (см. bookreview.js/passivityIsSystemic). Жанронезависимо —
+    // работает для любого протагониста в любом типе прозы.
+    if(role==='reader' && scene){
+      const j = extractJSON(res.text);
+      if(j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
+    }
     logStep({ agent:role, input:'(черновик)', output:res.text, flags, tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost });
   }catch(e){
     flagsOut[role] = [];
