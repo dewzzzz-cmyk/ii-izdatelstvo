@@ -1362,7 +1362,12 @@ function bindSkeleton(s){
       const applied=await regenerateDownstream(s, n, hint);
       clearMissingFacts(); // хвост книги переписан — старые карточки недостающих фактов больше не про то, что на экране
       save();
-      if(st) st.textContent=`Переписано сцен: ${applied.length}.`;
+      // cnt — сколько сцен реально было в хвосте ДО вызова; applied.length может
+      // быть меньше, если модель вернула не все — оставшиеся помечены ⚠ (stale)
+      // внутри regenerateDownstream, но статус-строка должна честно назвать недостачу.
+      if(st) st.textContent = applied.length < cnt
+        ? `Переписано ${applied.length} из ${cnt} — остальные помечены ⚠ как возможно устаревшие.`
+        : `Переписано сцен: ${applied.length}.`;
     }catch(e){ if(st) st.textContent='Ошибка: '+e.message; b.disabled=false; }
   });
 }
