@@ -10,7 +10,8 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          radicalReviseMessages, parseDebateRevision, styleGuardMessages, readerGuardMessages,
          imageryGuardMessages, povGuardMessages, dialogueGuardMessages, resolutionGuardMessages,
-         atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases, findBoundaryRepeat } from './guards.js';
+         atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases, findBoundaryRepeat,
+         looksTokenTruncated } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag, effectiveRules } from './state.js';
@@ -109,15 +110,7 @@ function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestio
 // иначе легитимное «сократи вдвое» автоматически отменялось тем же условием,
 // что защищает от случайно оборванного ответа модели.
 const SHORTEN_HINT_RE = /сократ|покороче|короче|уменьш|сожми|срежь|вырежи/i;
-// Эвристика обрыва по лимиту токенов для СЫРОЙ прозы (не JSON, без секции
-// [ТЕКСТ] — для тех есть свои проверки). Настоящая проза почти всегда кончается
-// на пунктуацию конца предложения/реплики; резкий обрыв на букве/запятой —
-// сильный сигнал упора в maxTokens, а не то, что автор/модель закончили мысль.
-function looksTokenTruncated(text){
-  const t = (text||'').trim();
-  if(!t) return false;
-  return !/[.!?…»"”\)]\s*$/.test(t);
-}
+// looksTokenTruncated теперь общий экспорт guards.js (используется и в ondemand.js).
 function flagsText(flags){
   const all=[]; Object.entries(flags).forEach(([role,arr])=>(arr||[]).forEach(f=>all.push(`[${f.severity}] ${f.title}: ${f.detail||''}`)));
   return all.length? all.join('\n') : 'Флагов нет.';
@@ -217,7 +210,14 @@ export async function runScene(state, scene, opts={}, onProgress){
         onProgress && onProgress({stage:'prose', text: stagnantLastIter
           ? `Прозаик перерабатывает застрявшие места шире обычного (итерация ${iter})…`
           : `Прозаик разбирает замечания и правит черновик (итерация ${iter})…`});
-        const cap = Math.min(5000, Math.max(2000, Math.round(prevDraft.length/2) + 1400));
+        // Живой замер по уже написанной книге (14 сцен): реальная плотность
+        // токен/слово ≈2.78 по собственной оценке приложения (estimateTokens в
+        // tokens.js) — выше, чем закладывал старый потолок в 5000 для длинных
+        // сцен, да ещё без запаса на текст самого [РАЗБОР] перед [ТЕКСТ]. Раньше
+        // это и роняло сцены в обрыв на правке (см. looksTokenTruncated чуть
+        // ниже) при абсолютно нормальном, не сетевом сбое — модели физически не
+        // хватало лимита дописать переписанную прозу после разбора замечаний.
+        const cap = Math.min(11000, Math.max(2500, Math.round(prevDraft.length/2) + 2000));
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
@@ -250,7 +250,9 @@ export async function runScene(state, scene, opts={}, onProgress){
         onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
         const ctx = buildSceneContext(state, scene, { prevSceneText, architectOutput:architectText, directive, prevDraft:'' });
         const sceneWords = scene.targetWords || 700;
-        const dynMin = Math.max(2000, Math.round(sceneWords * 2.5));
+        // 3.5 ток/слово (не 2.5) — с запасом над реальной плотностью ≈2.78,
+        // измеренной на уже написанных сценах книги (см. cap чуть выше по файлу).
+        const dynMin = Math.max(2500, Math.round(sceneWords * 3.5));
         const proseMaxTk = proseAg.maxTokens != null ? Math.max(proseAg.maxTokens, dynMin) : dynMin;
         pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb, streamRetry);
         // Первый черновик не проходит через parseDebateRevision (нет секции [ТЕКСТ] —
@@ -259,7 +261,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         // Настоящая проза почти всегда кончается на пунктуацию конца предложения —
         // резкий обрыв без неё сильный сигнал упора в maxTokens, не завершения мысли.
         if(looksTokenTruncated(pRes.text)){
-          const retryMaxTk = Math.min(8000, proseMaxTk * 2);
+          // Раньше потолок в 8000 срезал повтор до +28% вместо честного ×2 для
+          // сцен с proseMaxTk уже за 4000 (2500+ слов) — повтор с почти тем же
+          // лимитом почти гарантированно упирался туда же.
+          const retryMaxTk = Math.min(16000, proseMaxTk * 2);
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
           // Раньше результат повтора принимался безусловно — если обрыв повторялся
@@ -726,9 +731,10 @@ export async function runScene(state, scene, opts={}, onProgress){
       // расти вместе со сценой, иначе на длинных сценах (проект на 90 тыс. слов
       // при 48 сценах — уже ~1875 слов на сцену в среднем, кульминационные ещё
       // длиннее) ответ обрывается раньше, чем текст дописан. Тот же приём и та
-      // же формула (2.5 ток/слово), что и у Прозаика чуть выше по файлу.
+      // же формула (3.5 ток/слово, с запасом над измеренной плотностью ≈2.78),
+      // что и у Прозаика чуть выше по файлу.
       const bestWords = (best.match(/\S+/g)||[]).length;
-      const leDynMin = Math.max(2000, Math.round(bestWords * 2.5));
+      const leDynMin = Math.max(2500, Math.round(bestWords * 3.5));
       const leMaxTk = Math.max(leAg.maxTokens ?? 3600, leDynMin);
       let leNote = '';
       for(let g0=0; g0<6; g0++){

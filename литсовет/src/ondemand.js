@@ -9,7 +9,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
          styleGuardMessages, sceneQuestionMessages, readerGuardMessages, imageryGuardMessages,
          povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
-         humorGuardMessages, parseDebateRevision } from './guards.js';
+         humorGuardMessages, parseDebateRevision, looksTokenTruncated } from './guards.js';
 import { bookContextBlock } from './context.js';
 import { effectiveRules } from './state.js';
 
@@ -43,11 +43,18 @@ export async function runAgentOnDemand(state, scene, agent){
     // сцены целиком, статичный maxTokens обрубал длинные сцены раньше, чем текст
     // дописан. Без проверки длины обрубленный ответ тихо заменял всю сцену.
     const draftWords = (draft.match(/\S+/g)||[]).length;
-    const dynMin = Math.max(2000, Math.round(draftWords * 2.5));
+    // 3.5 ток/слово (не 2.5) — см. тот же расчёт и обоснование в pipeline.js.
+    const dynMin = Math.max(2500, Math.round(draftWords * 3.5));
     const maxTk = Math.max(agent.maxTokens ?? 3600, dynMin);
     const res = await callLLM({ ...base, temperature:agent.temp??0.3, messages:msgs, maxTokens:maxTk });
     if(!res.text || res.text.length < draft.length*0.5)
       throw new Error(`Ответ короче половины исходного текста (похоже на обрыв лимитом ${maxTk} ток.) — попробуйте ещё раз.`);
+    // Раньше здесь проверялась ТОЛЬКО длина (>50% исходного) — тот же пробел,
+    // что чинили в pipeline.js: ответ может быть нужной длины, но обрываться не
+    // на знаке препинания (обрыв ближе к концу лимита). looksTokenTruncated —
+    // общая эвристика из guards.js, теперь применяется и здесь.
+    if(looksTokenTruncated(res.text))
+      throw new Error(`Ответ обрывается не на знаке препинания (похоже на обрыв лимитом ${maxTk} ток.) — попробуйте ещё раз.`);
     return { kind:'lineedit', text:res.text.trim() };
   }
   // стражи (включая кастомных) — только флагуют
@@ -93,7 +100,10 @@ export async function patchScene(state, scene, instruction){
   if(!draft) throw new Error('Нет текста сцены.');
   if(!instruction || !instruction.trim()) throw new Error('Пустое замечание.');
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
-  const cap = Math.min(4000, Math.max(1400, Math.round(draft.length/2) + 800));
+  // Тот же расчёт, что и у Прозаика в pipeline.js (см. обоснование там): реальная
+  // плотность ≈2.78 ток/слово на уже написанном тексте книги — старый потолок в
+  // 4000 не оставлял запаса под текст [РАЗБОР] перед переписанной прозой.
+  const cap = Math.min(9000, Math.max(1800, Math.round(draft.length/2) + 1200));
   const res = await callLLM({ ...base, temperature:0.4,
     messages: surgicalReviseMessages(draft, instruction, state.style?.rules), maxTokens:cap });
   // Ответ приходит в формате [РАЗБОР]/[ТЕКСТ] (см. surgicalReviseMessages) — без
@@ -102,5 +112,9 @@ export async function patchScene(state, scene, instruction){
   if(parsed.truncated) throw new Error('Ответ оборван — попробуйте ещё раз.');
   const out = (parsed.prose||'').trim();
   if(out.length < draft.length*0.6) throw new Error('Ответ оборван — попробуйте ещё раз.');
+  // parsed.truncated ловит только «тега [ТЕКСТ] почти нет» — не «текст есть, но
+  // обрывается на полуслове чуть дальше» (тот же пробел, что чинили в
+  // pipeline.js). looksTokenTruncated закрывает именно этот случай.
+  if(looksTokenTruncated(out)) throw new Error('Ответ обрывается не на знаке препинания (похоже на обрыв токенами) — попробуйте ещё раз.');
   return out;
 }

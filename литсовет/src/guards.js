@@ -8,6 +8,20 @@
 import { callLLM, extractJSON } from './llm.js';
 import { bibleForPrompt } from './bible.js';
 import { serializeCharacterStates } from './context.js';
+
+// Эвристика обрыва по лимиту токенов для СЫРОЙ прозы (без JSON-обвязки):
+// настоящая проза почти всегда кончается на пунктуацию конца предложения/
+// реплики; резкий обрыв на букве/запятой — сильный сигнал упора в лимит
+// токенов (или в оборванное сетевое соединение), а не то, что модель
+// закончила мысль. Общий экспорт — раньше жила только в pipeline.js и не
+// применялась к ondemand.js (patchScene/точечная правка Линейного
+// редактора), хотя там тот же класс риска: полноразмерный ответ сцены на
+// статичном maxTokens.
+export function looksTokenTruncated(text){
+  const t = (text||'').trim();
+  if(!t) return false;
+  return !/[.!?…»"”\)]\s*$/.test(t);
+}
 import { genreJudgeNote, genreToneNote } from './genres.js';
 
 // Строгость 1-3 → инструкция для Стража (реально влияет на число и порог флагов).
