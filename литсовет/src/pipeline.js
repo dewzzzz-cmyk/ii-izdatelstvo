@@ -167,7 +167,22 @@ export async function runScene(state, scene, opts={}, onProgress){
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
     let best = null, bestEval = null, bestClean = false, bestFlags = {}, bestLiteraryChecked = false;
-    let directive = opts.directive || '';
+    // opts.directive — «стоячее» указание (например, от целевой правки по
+    // конкретным находкам, заданной вызывающим кодом), не разовая подсказка.
+    // Раньше directive безусловно перезаписывался в конце КАЖДОЙ итерации
+    // текстом, собранным ТОЛЬКО из текущих находок Оценщика/Стражей — исходная
+    // формулировка автора учитывалась лишь в первой правке и затем терялась
+    // безвозвратно. Живой инцидент: целевая правка сцены с конкретной
+    // инструкцией «дай источник знания персонажу N» отработала на итерации 1,
+    // но все 4 следующие итерации Прозаик её уже не видел и просто отклонял
+    // те же находки Стражей как «авторский приём» — балл не сдвинулся.
+    const standingDirective = opts.directive || '';
+    // Домешивается в директиву КАЖДОЙ итерации (не только первой) во всех трёх
+    // местах, где directive пересобирается заново.
+    const standingBlock = standingDirective
+      ? '\n\nПОСТОЯННОЕ УКАЗАНИЕ АВТОРА (учитывать на каждой правке, не только на первой — это не разовая подсказка):\n' + standingDirective
+      : '';
+    let directive = standingDirective;
     let prevDraft = opts.initialDraft || '';
     let lastGenerated = ''; // последний РЕАЛЬНО сгенерированный текст — переживает
     // reset prevDraft='' в ручном гейте Прозаика ниже, так что финальный fallback
@@ -217,7 +232,16 @@ export async function runScene(state, scene, opts={}, onProgress){
         // это и роняло сцены в обрыв на правке (см. looksTokenTruncated чуть
         // ниже) при абсолютно нормальном, не сетевом сбое — модели физически не
         // хватало лимита дописать переписанную прозу после разбора замечаний.
-        const cap = Math.min(11000, Math.max(2500, Math.round(prevDraft.length/2) + 2000));
+        // Запас под [РАЗБОР] раньше был плоским (+2000) независимо от того,
+        // сколько замечаний Прозаику нужно разобрать. Живой замер (трейс
+        // прогона «Подпольщики в подвале», state.diagnostics.runs): загрузка
+        // потолка правки росла 86%→87%→83%→92%→94% от итерации к итерации по
+        // мере накопления находок Стражей — запас таял именно тогда, когда
+        // критики находили БОЛЬШЕ всего, а не когда сцена становилась длиннее.
+        // Масштабируем запас от длины самой директивы (chars/2 — та же
+        // кир.-эвристика, что и для прозы), а не фиксированной константой.
+        const debateAllowance = Math.max(1500, Math.round(directive.length/2) + 500);
+        const cap = Math.min(14000, Math.max(2500, Math.round(prevDraft.length/2) + debateAllowance));
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
@@ -606,7 +630,8 @@ export async function runScene(state, scene, opts={}, onProgress){
         if(criticals.length === 0 && !draftTruncated) break;
         directive = 'КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticals.join('\n')
           + (factualQuestions.length ? '\n\nВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (не выдумывай ответ):\n' + factualQuestions.join('\n') : '')
-          + (draftTruncated ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.' : '');
+          + (draftTruncated ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.' : '')
+          + standingBlock;
         continue;
       }
 
@@ -631,7 +656,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           break;
         }
         if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
-        directive = gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive;
+        directive = (gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + standingBlock;
         continue;
       }
 
@@ -702,7 +727,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       const truncNote = draftTruncated
         ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.'
         : '';
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote + truncNote;
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote + truncNote + standingBlock;
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд

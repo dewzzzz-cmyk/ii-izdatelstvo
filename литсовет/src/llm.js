@@ -12,6 +12,14 @@ import { PRICES, getState } from './state.js';
 // ответа при обрыве апстрим-соединения посреди стрима (см. комментарий там же) —
 // иначе клиент снова не отличит оборванный ответ от штатно завершённого.
 const STREAM_TRUNCATED_MARKER = '\n[[LITSOVET:STREAM_TRUNCATED]]';
+// Должен совпадать с маркером, который server.js дописывает при
+// stream_options.include_usage — реальные prompt/completion_tokens апстрима.
+// Без него весь токен-учёт в приложении — только оценка на глаз (estimateTokens:
+// кириллица/2 + прочее/4), которая на живых данных расходилась с реальностью
+// (JSON-ответы Оценщика/Стражей на живом прогоне превышали заявленный
+// maxTokens по оценке приложения, хотя апстрим честно уложился в лимит —
+// эвристика просто иначе считает баланс кириллицы/пунктуации в JSON).
+const USAGE_MARKER_RE = /\n\[\[LITSOVET:USAGE:(\{[\s\S]*?\})\]\]\s*$/;
 
 export async function callLLM({ baseURL, apiKey, model, temperature, messages, maxTokens, retries=2 }, onToken, onRetry){
   const tokensIn = messages.reduce((s,m)=>s+estimateTokens(m.content), 0);
@@ -69,16 +77,31 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       // ниже она попадёт в тот же catch(e), что и сетевые сбои.
       const truncIdx = text.indexOf(STREAM_TRUNCATED_MARKER);
       if(truncIdx !== -1) throw new Error('Соединение с сервером генерации оборвалось на середине ответа');
-      const tokensOut = estimateTokens(text);
+      // Реальные токены апстрима, если сервер их прислал (см. USAGE_MARKER_RE
+      // выше) — маркер обрезается из текста ДО того, как он уйдёт дальше в
+      // пайплайн прозой/JSON. Если апстрим usage не прислал (не-OpenAI-совместимый
+      // провайдер, старый сервер до этого фикса) — тихо падаем на оценку, как раньше.
+      let realTokensIn = null, realTokensOut = null;
+      const usageMatch = text.match(USAGE_MARKER_RE);
+      if(usageMatch){
+        text = text.slice(0, usageMatch.index);
+        try{
+          const usage = JSON.parse(usageMatch[1]);
+          if(typeof usage.prompt_tokens === 'number') realTokensIn = usage.prompt_tokens;
+          if(typeof usage.completion_tokens === 'number') realTokensOut = usage.completion_tokens;
+        }catch{}
+      }
+      const finalTokensIn = realTokensIn ?? tokensIn;
+      const tokensOut = realTokensOut ?? estimateTokens(text);
       const p = PRICES[model] || {in:0.14, out:0.28};
-      const cost = tokensIn/1e6*p.in + tokensOut/1e6*p.out;
+      const cost = finalTokensIn/1e6*p.in + tokensOut/1e6*p.out;
       // Единая точка учёта расхода на текущий проект — см. state.spend в
       // state.js. Считаем здесь, а не в каждой из ~20 функций, которые зовут
       // callLLM: так гарантированно не пропустим ни один запрос, независимо
       // от того, через какого агента/кнопку он прошёл.
       const st = getState();
       if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.text += cost; }
-      return { text: text.trim(), tokensIn, tokensOut, cost };
+      return { text: text.trim(), tokensIn: finalTokensIn, tokensOut, cost };
     }catch(e){
       if(e.nonRetryable) throw e;
       lastErr = e.message;

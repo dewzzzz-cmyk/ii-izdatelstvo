@@ -101,7 +101,14 @@ async function handleGenerate(req, res){
         headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
         body: JSON.stringify({ model, messages:b.messages||[], stream: wantStream,
           temperature: typeof b.temperature==='number'? b.temperature : 1.0,
-          ...(b.max_tokens ? {max_tokens: b.max_tokens} : {}) }),
+          ...(b.max_tokens ? {max_tokens: b.max_tokens} : {}),
+          // OpenAI-совместимый флаг: просим апстрим прислать usage (реальные
+          // prompt/completion_tokens) финальным чанком стрима — без него клиент
+          // (llm.js) вообще не видит настоящих чисел и оценивает токены на глаз
+          // (estimateTokens: кириллица/2 + прочее/4), которая может расходиться
+          // с реальным счётом апстрима (особенно на JSON-ответах Оценщика/Стражей,
+          // где много латиницы/пунктуации — иной баланс кириллицы, чем в прозе).
+          ...(wantStream ? {stream_options:{include_usage:true}} : {}) }),
       });
     }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
     if(!up.ok || !up.body){ const t=await up.text().catch(()=> ''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,400)); }
@@ -113,21 +120,29 @@ async function handleGenerate(req, res){
         fullBody += dec2.decode(); // добить недокодированный хвост многобайтового символа
       }
       catch(e){ return send(res, 502, 'READ_ERROR: '+e.message); }
-      let content = '';
-      try { content = JSON.parse(fullBody).choices?.[0]?.message?.content || ''; }
+      let content = '', usage = null;
+      try { const j = JSON.parse(fullBody); content = j.choices?.[0]?.message?.content || ''; usage = j.usage || null; }
       catch(e) {
         content = fullBody.split('\n').filter(l => l.startsWith('data: ') && l !== 'data: [DONE]')
           .map(l => { try{ return JSON.parse(l.slice(6)).choices?.[0]?.delta?.content||''; }catch{ return ''; } }).join('');
       }
       res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-cache'});
-      res.end(content); return;
+      res.end(content + (usage ? `\n[[LITSOVET:USAGE:${JSON.stringify(usage)}]]` : '')); return;
     }
     res.writeHead(200, { 'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'no-cache' });
     const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
+    // С stream_options.include_usage апстрим шлёт финальный чанк вида
+    // {choices:[], usage:{...}} — без delta.content, но с реальными токенами.
+    let capturedUsage = null;
     const emitLine=(line)=>{
       const s=line.trim(); if(!s.startsWith('data:')) return;
       const data=s.slice(5).trim(); if(data==='[DONE]') return;
-      try{ const d=JSON.parse(data).choices?.[0]?.delta?.content; if(d) res.write(d); }catch{}
+      try{
+        const parsed = JSON.parse(data);
+        const d = parsed.choices?.[0]?.delta?.content;
+        if(d) res.write(d);
+        if(parsed.usage) capturedUsage = parsed.usage;
+      }catch{}
     };
     let streamBroke = false;
     try{
@@ -154,6 +169,10 @@ async function handleGenerate(req, res){
       streamBroke = true;
     }
     if(streamBroke) res.write('\n[[LITSOVET:STREAM_TRUNCATED]]');
+    // Реальные токены апстрима (см. stream_options.include_usage выше) — если
+    // соединение оборвалось (streamBroke), финальный чанк с usage до нас не
+    // дошёл, и маркера не будет: клиент честно откатится на свою оценку.
+    else if(capturedUsage) res.write(`\n[[LITSOVET:USAGE:${JSON.stringify(capturedUsage)}]]`);
     res.end();
   });
 }
