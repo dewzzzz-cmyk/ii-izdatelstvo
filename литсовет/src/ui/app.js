@@ -269,8 +269,21 @@ async function openSettings(){
         <div class="row" style="gap:8px">
           <div class="field" style="flex:1;margin-bottom:0"><label>Базовый URL</label><input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
           <div class="field" style="flex:1;margin-bottom:0"><label>Модель</label>
-            <input type="text" id="setModel" list="setModelList" value="${escAttr(g.model)}">
-            <datalist id="setModelList">${(TEXT_MODEL_OPTIONS[matchTextProvider(g.baseURL)]||[]).map(m=>`<option value="${escAttr(m)}">`).join('')}</datalist>
+            ${(()=>{
+              // Настоящий <select> (не datalist-подсказка на текстовом поле —
+              // не читается как «выпадающий список», сама подсказка почти
+              // незаметна без клика/набора текста в некоторых браузерах).
+              // Текущее значение всегда попадает в список (даже если это не
+              // одна из «известных» моделей провайдера) — переоткрытие
+              // Настроек не должно молча менять уже выбранную модель.
+              const known = TEXT_MODEL_OPTIONS[matchTextProvider(g.baseURL)] || [];
+              const opts = known.includes(g.model) || !g.model ? known : [g.model, ...known];
+              return `<select id="setModel">
+                ${opts.map(m=>`<option value="${escAttr(m)}"${m===g.model?' selected':''}>${escAttr(m)}</option>`).join('')}
+                <option value="__custom__">✎ другая модель…</option>
+              </select>
+              <input type="text" id="setModelCustom" placeholder="название модели" style="display:none;margin-top:6px">`;
+            })()}
           </div>
         </div>
         <div class="field" style="margin-top:14px"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей, поднимайте выше для очень длинных серийных книг (70+ глав) на моделях с большим окном контекста</span></label>
@@ -310,11 +323,20 @@ async function openSettings(){
       </div>
     </div>`;
   const close = ()=>{ els.modalRoot.innerHTML=''; };
+  // Модель — <select> с известными вариантами провайдера + «✎ другая модель…»,
+  // раскрывающая соседний текстовый ввод. Общая точка чтения для setSave и
+  // «Проверить» — обе раньше читали один <input>, теперь либо select, либо
+  // (при __custom__) текстовое поле рядом.
+  const readModel = ()=>{
+    const sel = document.getElementById('setModel');
+    if(sel && sel.value==='__custom__') return (document.getElementById('setModelCustom')?.value||'').trim();
+    return (sel?.value||'').trim();
+  };
   document.getElementById('mbg').onclick = close;
   document.getElementById('setSave').onclick = ()=>{
     g.apiKey = document.getElementById('setKey').value.trim();
     g.baseURL = document.getElementById('setUrl').value.trim();
-    g.model = document.getElementById('setModel').value.trim();
+    g.model = readModel();
     const bv = parseInt(document.getElementById('setBudgetNum').value); if(bv>=8000) g.budgetTokens = bv;
     s.illustrations = s.illustrations || {};
     s.illustrations.provider = document.getElementById('setIcProvider').value;
@@ -329,13 +351,23 @@ async function openSettings(){
     const list = document.getElementById('setIcModelList');
     if(list) list.innerHTML = (MODEL_OPTIONS[ev.target.value]||[]).map(m=>`<option value="${escAttr(m)}">`).join('');
   };
+  const rebuildModelSelect = (providerKey, selectValue)=>{
+    const sel = document.getElementById('setModel');
+    if(!sel) return;
+    const known = TEXT_MODEL_OPTIONS[providerKey] || [];
+    const opts = known.includes(selectValue) || !selectValue ? known : [selectValue, ...known];
+    sel.innerHTML = opts.map(m=>`<option value="${escAttr(m)}"${m===selectValue?' selected':''}>${escAttr(m)}</option>`).join('')
+      + '<option value="__custom__">✎ другая модель…</option>';
+    document.getElementById('setModelCustom').style.display = 'none';
+  };
   document.getElementById('setProvider').onchange = (ev)=>{
-    const list = document.getElementById('setModelList');
-    if(list) list.innerHTML = (TEXT_MODEL_OPTIONS[ev.target.value]||[]).map(m=>`<option value="${escAttr(m)}">`).join('');
     const p = TEXT_PROVIDERS.find(x=>x.v===ev.target.value);
-    if(!p || p.v==='custom') return; // «Другой…» — не трогаем то, что уже введено
+    if(!p || p.v==='custom'){ rebuildModelSelect(ev.target.value, readModel()); return; } // «Другой…» — не трогаем то, что уже введено
     document.getElementById('setUrl').value = p.baseURL;
-    document.getElementById('setModel').value = p.model;
+    rebuildModelSelect(ev.target.value, p.model);
+  };
+  document.getElementById('setModel').onchange = (ev)=>{
+    document.getElementById('setModelCustom').style.display = ev.target.value==='__custom__' ? '' : 'none';
   };
   document.querySelectorAll('.set-eye').forEach(btn=>btn.onclick=()=>{
     const inp = document.getElementById(btn.dataset.for); if(!inp) return;
@@ -347,7 +379,7 @@ async function openSettings(){
     const btn = document.getElementById('setKeyTest');
     const key = document.getElementById('setKey').value.trim();
     const baseURL = document.getElementById('setUrl').value.trim();
-    const model = document.getElementById('setModel').value.trim();
+    const model = readModel();
     if(!key){ alert('Сначала введите ключ.'); return; }
     const orig = btn.textContent;
     btn.disabled = true; btn.textContent = '…'; btn.style.color = '';
