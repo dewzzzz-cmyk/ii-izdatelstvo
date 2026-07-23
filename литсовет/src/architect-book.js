@@ -10,6 +10,26 @@ import { ag } from './state.js';
 
 const ARCS = ['завязка','развитие','кульминация','развязка'];
 
+// Общий клэмп targetWords сцены под целевой объём книги (та же формула, что
+// уже стояла ТОЛЬКО внутри runBookArchitect для полной генерации скелета) —
+// не даёт ни одной сцене вывалиться далеко за пределы адекватного диапазона
+// для этой книги. Живой инцидент: открывающая сцена держала targetWords=250
+// при общем целевом объёме сцен книги ~1600-2000 слов — клэмп применялся
+// только при генерации ВСЕГО скелета целиком, но не в точечных путях
+// перегенерации (regenerateScene/regenerateDownstream/regenerateChapter/
+// applySkeletonPatch), поэтому аномалия из одного из этих путей никогда не
+// исправлялась и молча уходила в реальный targetWords сцены.
+function clampSceneTargetWords(state, tw){
+  const p = state.project;
+  const sceneCount = (state.structure||[]).filter(n=>n.type==='scene').length;
+  const norm = p.sceneWords>0
+    ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000) / Math.max(1, sceneCount))));
+  const minW = Math.round(norm * 0.80), maxW = Math.round(norm * 1.20);
+  const t = Math.round(Number(tw)) || norm;
+  return Math.max(minW, Math.min(maxW, t));
+}
+
 const PACING_NOTES = {
   action: 'После сильной сцены-потрясения ЧАСТО (не обязательно) нужен короткий sequel — обычно 10-20% сцен книги — sequel, акцент на действии, реже передышки.',
   balanced: 'После сильной сцены-потрясения почти всегда нужен короткий sequel — но НЕ жёстко через одну: используй по ощущению ритма, обычно 20-35% сцен книги — sequel.',
@@ -404,7 +424,7 @@ export async function regenerateScene(state, scene, hint){
         brief:j.brief.trim(),
         emotion:(j.emotion||scene.emotion||'').trim(),
         entryState:(typeof j.entryState==='string'?j.entryState:scene.entryState||'').trim(),
-        targetWords: Number(j.targetWords)>0?Math.round(Number(j.targetWords)):(scene.targetWords||700),
+        targetWords: clampSceneTargetWords(state, Number(j.targetWords)>0?j.targetWords:(scene.targetWords||700)),
         sceneType: j.sceneType==='sequel' ? 'sequel' : 'scene',
       };
     }
@@ -466,7 +486,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
         sc.brief=fr.brief.trim();
         sc.emotion=(fr.emotion||sc.emotion||'').trim();
         sc.entryState=(typeof fr.entryState==='string'?fr.entryState:sc.entryState||'').trim();
-        if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
+        if(Number(fr.targetWords)>0) sc.targetWords=clampSceneTargetWords(state, fr.targetWords);
         sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';
         applied.push(sc.id);
       }
@@ -532,7 +552,7 @@ export function applySkeletonPatch(state, patchChapters, uid){
     nodes.push({ id:chId, type:'chapter', title:patch.title, arc:patch.arc });
     patch.scenes.forEach(sc=>{
       nodes.push({ id:uid('sc'), type:'scene', chapterId:chId, title:sc.title, brief:sc.brief,
-        emotion:sc.emotion, entryState:sc.entryState||'', targetWords:sc.targetWords, sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
+        emotion:sc.emotion, entryState:sc.entryState||'', targetWords:clampSceneTargetWords(state, sc.targetWords), sceneType:sc.sceneType||'scene', text:'', words:0, status:'todo' });
     });
   });
   state.structure = nodes;
@@ -704,7 +724,7 @@ export async function regenerateChapter(state, chapter, hint){
         }
         sc.title=(fr.title||sc.title).trim(); sc.brief=fr.brief.trim(); sc.emotion=(fr.emotion||sc.emotion||'').trim();
         sc.entryState=(typeof fr.entryState==='string'?fr.entryState:sc.entryState||'').trim();
-        if(Number(fr.targetWords)>0) sc.targetWords=Math.round(Number(fr.targetWords));
+        if(Number(fr.targetWords)>0) sc.targetWords=clampSceneTargetWords(state, fr.targetWords);
         sc.sceneType = fr.sceneType==='sequel' ? 'sequel' : 'scene';
         applied.push(sc.id);
       }
