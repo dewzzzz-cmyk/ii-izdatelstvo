@@ -6,7 +6,7 @@ import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.13.0';
+export const APP_VERSION = '1.14.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -121,7 +121,7 @@ export function defaultAgents(){
       desc:'Планирует сцену: ключевые детали, шаги, запрещённые слова. Не пишет прозу — готовит каркас для Прозаика.' },
     { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:3600, enabled:true, role:'prose', loop:true,
       desc:'Пишет прозу сцены по брифу и контексту. В петле с Оценщиком дорабатывает черновик, пока тот не примет.' },
-    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:1950, enabled:true, role:'evaluator',
+    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:3200, enabled:true, role:'evaluator',
       desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },
     { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:2100, strictness:2, enabled:false, role:'voiceguard',
       desc:'Сверяет стиль и ритм с образцом вашего голоса, цитируя образец. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
@@ -562,6 +562,12 @@ function migrate(s){
     // в потолок токенов у агентов. Та же логика: трогаем только тех, кто ещё
     // сидит на прошлом дефолте, ручные значения не перезаписываем.
     const OLD_MAXTOKENS_DEFAULT_V2 = { architect:600, prose:2400, evaluator:1300, voiceguard:1400, logic:1400, events:1400, styleguard:1400, imagery:1400, reader:1400, pov:1400, dialogue:1400, resolution:1400, atmosphere:1400, lineedit:2400 };
+    // Третий раунд — Оценщик и раньше был бампнут (900→1300→1950 в предыдущих
+    // сессиях, вручную/по факту прошлых версий дефолта), но живой прогон с
+    // реальным usage апстрима (не оценкой) показал tokensOut РОВНО на 1950 —
+    // JSON оборвался, вердикт не распарсился. Та же логика: трогаем только тех,
+    // кто ещё сидит именно на этом значении, ручные правки не перезаписываем.
+    const OLD_MAXTOKENS_DEFAULT_V3 = { evaluator:1950 };
     const defById = Object.fromEntries(d.agents.map(a=>[a.id, a]));
     // Идём по СОХРАНЁННОМУ порядку — пользовательская перестановка сохраняется.
     const storedIds = new Set(s.agents.map(a=>a.id));
@@ -570,7 +576,7 @@ function migrate(s){
       const merged = Object.assign({}, da);
       KEEP.forEach(k=>{
         if(a[k]===undefined) return;
-        if(k==='maxTokens' && (OLD_MAXTOKENS_DEFAULT[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V2[a.role]===a.maxTokens)) return; // всё ещё старый дефолт — берём новый
+        if(k==='maxTokens' && (OLD_MAXTOKENS_DEFAULT[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V2[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V3[a.role]===a.maxTokens)) return; // всё ещё старый дефолт — берём новый
         merged[k]=a[k];
       });
       return merged;

@@ -331,8 +331,22 @@ export async function runScene(state, scene, opts={}, onProgress){
           const baseStr = Object.entries(anchorVerdict.scores).map(([k,v])=>`${AXIS_LABELS[k]||k}:${v}`).join(', ');
           eMsgs[1].content += `\n\nИтерация ${iter}. Базовые оценки черновика 1: [${baseStr}]. Оценивай ТЕКУЩИЙ черновик относительно baseline — ось должна расти там где проблема устранена, и падать если добавлена новая.`;
         }
-        const eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalAg.maxTokens??900 });
+        const evalMaxTk = evalAg.maxTokens ?? 900;
+        let eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalMaxTk });
         verdict = parseEvaluator(eRes.text, threshold);
+        // Живой инцидент: реальный usage апстрима (не оценка) показал tokensOut
+        // РОВНО на заявленном maxTokens — JSON оборвался и не распарсился
+        // (verdict.ok=false). Раньше это молча проглатывалось: черновик без
+        // валидной оценки мог всё равно победить в отборе best (см. thisClean
+        // ниже — теперь требует verdict.ok), и сцена уходила в книгу без
+        // реальной проверки качества. Один ретрай с удвоенным лимитом — тот же
+        // приём, что уже стоит на первом черновике Прозаика.
+        if(!verdict.ok){
+          const evalRetryTk = Math.min(6000, evalMaxTk * 2);
+          onProgress && onProgress({log:{icon:'⚠️', text:`Оценщик: ответ не распарсился (похоже на обрыв токенами, лимит был ${evalMaxTk}) — повтор с лимитом ${evalRetryTk}`, state:'warn'}});
+          eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalRetryTk });
+          verdict = parseEvaluator(eRes.text, threshold);
+        }
         // Якорь ставим на ПЕРВЫЙ успешно распарсенный вердикт, не строго на итерации
         // 1 — раньше, если итерация 1 не распарсилась (verdict.ok===false), anchorVerdict
         // навсегда оставался null на всю сцену: условие `iter===1 && verdict.ok`
@@ -610,7 +624,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       // победу героя и неуместный пафос — правки тихо терялись, потому что
       // непроверенный черновик выглядел «чище» просто за счёт того, что его
       // никто не проверял.
-      const thisClean = criticals.length === 0 && !draftTruncated;
+      // verdict.ok===false (Оценщик не распарсился, даже после ретрая выше) не
+      // должен автоматически выигрывать отбор best только за счёт «нет
+      // критических флагов Стражей» — Стражи и Оценщик проверяют РАЗНОЕ, и
+      // нулевые критические флаги ничего не говорят о литературном качестве.
+      // Живой инцидент: черновик с нераспарсенным вердиктом выиграл именно так
+      // и ушёл в книгу с lastEval.ok=false — не низкой, а ОТСУТСТВУЮЩЕЙ оценкой.
+      const thisClean = criticals.length === 0 && !draftTruncated && (!agentEnabled('evaluator') || verdict.ok);
       if(!bestEval || (thisClean && !bestClean) ||
          (thisClean === bestClean && (
            (literaryChecked && !bestLiteraryChecked) ||

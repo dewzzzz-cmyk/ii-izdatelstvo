@@ -17,6 +17,11 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+// Версия читается из package.json — единственный источник правды для
+// GET /api/version и клиентского индикатора в шапке (см. ui/app.js). Раньше
+// не было способа быстро проверить, какая версия кода реально задеплоена на
+// Railway — только сверять ID деплоя вручную через `railway status`.
+const pkg = require('./package.json');
 
 const PORT = process.env.PORT || 8788;
 const ROOT = __dirname;
@@ -520,6 +525,7 @@ http.createServer(async (req,res)=>{
     if(req.method==='DELETE') return handleSyncDelete(req,res,id);
   }
   if(req.method==='GET' && req.url==='/api/sync') return handleSyncList(req,res);
+  if(req.method==='GET' && req.url==='/api/version') return send(res,200,JSON.stringify({name:pkg.name,version:pkg.version}),'application/json; charset=utf-8');
   if(req.method==='GET') return serveStatic(req,res);
   send(res,405,'Method not allowed');
 }).listen(PORT, ()=>{
