@@ -29,6 +29,20 @@ function matchTextProvider(baseURL){
   return found ? found.v : 'custom';
 }
 
+// Подсказки моделей для текстового провайдера — то же поле остаётся
+// свободным текстом (можно вписать что угодно), но раньше выбор был вообще
+// не виден: TEXT_PROVIDERS хранит только ОДНУ модель на провайдера по
+// умолчанию, хотя у DeepSeek их реально две с разной ценой и поведением
+// (см. PRICES в state.js — единственный источник уже проверенных id, не
+// придуманные названия). Список — подсказка (datalist), не жёсткий список:
+// печатать своё значение можно и дальше.
+const TEXT_MODEL_OPTIONS = {
+  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  openai: ['gpt-4o', 'gpt-4o-mini'],
+  gemini: ['gemini-2.5-flash'],
+  qwen: ['qwen-plus'],
+};
+
 const IC_MODEL_DEFAULT = { gemini:'gemini-2.5-flash-image', openai:'gpt-image-1', qwen:'wanx2.1-t2i-turbo', recraft:'recraftv4_1' };
 
 const STAGES = [
@@ -254,7 +268,10 @@ async function openSettings(){
         </div>
         <div class="row" style="gap:8px">
           <div class="field" style="flex:1;margin-bottom:0"><label>Базовый URL</label><input type="text" id="setUrl" value="${escAttr(g.baseURL)}"></div>
-          <div class="field" style="flex:1;margin-bottom:0"><label>Модель</label><input type="text" id="setModel" value="${escAttr(g.model)}"></div>
+          <div class="field" style="flex:1;margin-bottom:0"><label>Модель</label>
+            <input type="text" id="setModel" list="setModelList" value="${escAttr(g.model)}">
+            <datalist id="setModelList">${(TEXT_MODEL_OPTIONS[matchTextProvider(g.baseURL)]||[]).map(m=>`<option value="${escAttr(m)}">`).join('')}</datalist>
+          </div>
         </div>
         <div class="field" style="margin-top:14px"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей, поднимайте выше для очень длинных серийных книг (70+ глав) на моделях с большим окном контекста</span></label>
           <div style="display:flex;gap:8px;align-items:center">
@@ -313,6 +330,8 @@ async function openSettings(){
     if(list) list.innerHTML = (MODEL_OPTIONS[ev.target.value]||[]).map(m=>`<option value="${escAttr(m)}">`).join('');
   };
   document.getElementById('setProvider').onchange = (ev)=>{
+    const list = document.getElementById('setModelList');
+    if(list) list.innerHTML = (TEXT_MODEL_OPTIONS[ev.target.value]||[]).map(m=>`<option value="${escAttr(m)}">`).join('');
     const p = TEXT_PROVIDERS.find(x=>x.v===ev.target.value);
     if(!p || p.v==='custom') return; // «Другой…» — не трогаем то, что уже введено
     document.getElementById('setUrl').value = p.baseURL;
