@@ -182,6 +182,24 @@ async function handleGenerate(req, res){
   });
 }
 
+// Живой инцидент: «Историческая разведка» (historian.js) делает до 9 поисков
+// × до 3 саммари каждый — до ~36 запросов к Википедии за один клик кнопки.
+// Раньше ЛЮБОЙ не-200 (в т.ч. 429 — rate limit) от search ИЛИ от summary
+// молча превращался в пустой результат, неотличимый от «статьи правда нет» —
+// живой тест поймал это напрямую: одна и та же заведомо существующая статья
+// («Искусственный интеллект») на одном прогоне находилась, на следующем —
+// нет, потому что Википедия успевала вернуть 429 после серии быстрых
+// запросов. Один ретрай с паузой на 429/5xx — тот же приём, что уже стоит
+// на LLM-вызовах (callLLM в llm.js).
+async function fetchWithRetry(url, retries=1){
+  for(let attempt=0; attempt<=retries; attempt++){
+    const r = await fetch(url, {headers:{'User-Agent':'Litsovet/1.0 (book-writing tool)'}});
+    if(r.ok || (r.status!==429 && r.status<500)) return r;
+    if(attempt<retries) await new Promise(res=>setTimeout(res, 600*(attempt+1)));
+    else return r;
+  }
+}
+
 async function handleWiki(req, res){
   readBody(req, res, 5e3, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{ return send(res,400,'BAD_JSON'); }
@@ -191,7 +209,7 @@ async function handleWiki(req, res){
     if(!query) return send(res,400,'NO_QUERY');
     try{
       const searchUrl=`https://${lang}.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srsearch=${encodeURIComponent(query)}&srlimit=${limit}`;
-      const sr=await fetch(searchUrl,{headers:{'User-Agent':'Litsovet/1.0'}});
+      const sr=await fetchWithRetry(searchUrl);
       if(!sr.ok) return send(res,502,'WIKI_SEARCH_FAIL '+sr.status);
       const sd=await sr.json();
       const pages=(sd.query?.search||[]).slice(0,3);
@@ -199,7 +217,7 @@ async function handleWiki(req, res){
       for(const page of pages){
         try{
           const enc=encodeURIComponent(page.title.replace(/ /g,'_'));
-          const su=await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${enc}`,{headers:{'User-Agent':'Litsovet/1.0'}});
+          const su=await fetchWithRetry(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${enc}`);
           if(!su.ok) continue;
           const s=await su.json();
           if(s.extract) summaries.push({title:s.title,extract:s.extract.slice(0,2000)});

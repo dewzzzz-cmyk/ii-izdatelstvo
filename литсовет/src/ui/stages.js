@@ -17,7 +17,7 @@ import { parseFile } from '../import.js';
 import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 import { runHistoricalResearch } from '../historian.js';
-import { rebuildBibleVecs } from '../bible.js';
+import { rebuildBibleVecs, tokensOf, tfvec, cosine } from '../bible.js';
 import { worldFactsFingerprint } from '../world.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
@@ -758,15 +758,39 @@ let _historianFacts = []; // кэш последних найденных фак
 
 function renderHistorianPanel(s){
   const era = s.project.era || '';
-  const hint = era ? `Эпоха: «${esc(era)}»` : 'Заполните «Эпоха / сеттинг» в Концепции для точного поиска.';
+  // Раньше подпись всегда обещала «факты эпохи» — честно только когда эпоха
+  // реально задана (исторический сеттинг). Без неё поиск идёт по жанру/идее
+  // книги и находит тематически смежные, а не исторические факты (живой
+  // тест: для фэнтези без эпохи выпали Google Glass, фильм «Она», D&D
+  // Spelljammer — полезно как генератор идей, но это не «история эпохи»,
+  // и подпись, обещающая это, вводит в заблуждение).
+  const hint = era
+    ? `Эпоха: «${esc(era)}»`
+    : 'Эпоха не задана — поиск пойдёт по жанру и идее книги (тематические находки, не исторические факты). Заполните «Эпоха / сеттинг» в Концепции для настоящего исторического поиска.';
+  const label = era ? '🔍 Найти факты эпохи' : '🔍 Найти тематические факты';
   return `<div class="ph">Историческая разведка</div>
     <div class="pad">
       <div class="muted" style="margin-bottom:10px;font-size:12px">Находит реальные факты через Википедию и добавляет их в Канон — Прозаик автоматически использует их при написании сцен.</div>
       <div class="muted" style="font-size:11px;margin-bottom:12px">${hint}</div>
-      <button class="btn btn-primary" id="btnResearch" ${s.global.apiKey?'':'disabled'} title="${s.global.apiKey?'':'Задайте API-ключ в настройках'}">🔍 Найти факты эпохи</button>
+      <button class="btn btn-primary" id="btnResearch" ${s.global.apiKey?'':'disabled'} title="${s.global.apiKey?'':'Задайте API-ключ в настройках'}">${label}</button>
       <div id="researchStatus" class="muted" style="margin-top:10px;font-size:12px"></div>
       <div id="researchResults" style="margin-top:12px"></div>
     </div>`;
+}
+
+// Смысловое сходство (не побайтовое ===) факта с уже существующим каноном —
+// та же эвристика (TF-IDF + косинус), что и bibleMatches в bible.js, тот же
+// порог REJECT_SIM_THRESHOLD, что используется в pipeline.js для похожих
+// решений «это по сути то же самое». Раньше проверка «уже в каноне» ловила
+// только 100%-но идентичный текст — переформулировка того же факта другими
+// словами (обычное дело для LLM-генерации) проходила незамеченной.
+const HISTORIAN_SIM_THRESHOLD = 0.75;
+function factAlreadyInBible(fact, bible){
+  const factVec = tfvec(tokensOf((fact.keys||'') + ' ' + (fact.text||'')));
+  return (bible||[]).some(b => {
+    const bVec = b._vec || tfvec(tokensOf((b.keys||'') + ' ' + (b.text||'')));
+    return cosine(factVec, bVec) >= HISTORIAN_SIM_THRESHOLD;
+  });
 }
 
 function renderFactCards(facts, s){
@@ -778,18 +802,18 @@ function renderFactCards(facts, s){
       <div style="font-size:11px;color:var(--accent);font-weight:500;margin-bottom:4px">${esc(f.keys)}</div>
       <div style="font-size:12px;line-height:1.5;margin-bottom:5px">${esc(f.text)}</div>
       <div style="font-size:11px;color:var(--text-3);margin-bottom:7px">💡 ${esc(f.plotHook||'')}</div>
-      <button class="btn fact-add" data-i="${i}" style="font-size:11px;padding:3px 9px">${s.bible.some(b=>b.text===f.text)?'✓ В каноне':'+  В канон'}</button>
+      <button class="btn fact-add" data-i="${i}" style="font-size:11px;padding:3px 9px">${factAlreadyInBible(f, s.bible)?'✓ Похоже, уже в каноне':'+  В канон'}</button>
     </div>`).join('');
   el.querySelectorAll('.fact-add').forEach(btn=>{
     btn.onclick=()=>{
       const f = facts[+btn.dataset.i];
       if(!f) return;
-      if(!s.bible.some(b=>b.text===f.text)){
+      if(!factAlreadyInBible(f, s.bible)){
         s.bible.push({ keys: f.keys, text: f.text + (f.plotHook ? '\n💡 ' + f.plotHook : '') });
         rebuildBibleVecs(s.bible);
         save();
       }
-      btn.textContent='✓ В каноне'; btn.disabled=true;
+      btn.textContent='✓ Похоже, уже в каноне'; btn.disabled=true;
     };
   });
 }
