@@ -27,7 +27,7 @@ import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, sugges
          passivityIsSystemic } from '../bookreview.js';
 import { extractCraftSignature, detectRepeatingHumorPattern, dominantExpositionChannel } from '../craftsignals.js';
 import { GENRES, ERAS } from '../genres.js';
-import { suggestMissingWorldFacts } from '../world.js';
+import { suggestMissingWorldFacts, suggestWorldFacts } from '../world.js';
 import { saveUploadedItem, removeCover } from '../illustrations.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -1113,8 +1113,26 @@ export function renderStructure(els){
   if(_historianFacts.length) renderFactCards(_historianFacts, s);
 
   const hasSkeleton = (s.structure||[]).some(n=>n.type==='chapter');
+  // Нужен ДО скелета, не после: Книжный архитектор только ЧИТАЕТ канон при
+  // построении брифов, никогда не пишет в него сам, а Стражи (guards.js
+  // factsBlock) видят только structured-факты (state.bible/characters), не
+  // сырой синопсис. Значит скрытая природа персонажа («не совсем человек»,
+  // тайная способность), которая есть только в синопсисе автора, невидима
+  // Стражам вплоть до самой первой сцены — и первая сцена ровно та, где
+  // проверить противоречие уже поздно (см. живой пример сессии: «ИИ сидит
+  // на подоконнике» — стражи молчали, т.к. в каноне вообще не было факта,
+  // что персонаж не человек).
+  const hasCharFacts = (s.bible||[]).some(b=>b.category==='персонажи');
+  const showCharNudge = !hasSkeleton && (s.project.synopsis||s.project.idea) && !hasCharFacts && !s.ui.charNudgeDismissed;
   els.center.innerHTML = `
     <div class="pad" style="max-width:660px">
+      ${showCharNudge ? `<div class="card" style="margin-bottom:16px;border-color:var(--accent)">
+        <div style="font-size:12px">🎭 Если в синопсисе есть персонаж не совсем «тем, кем кажется» (не человек, скрытая способность, тайна) — стоит зафиксировать это в каноне ДО написания сцен: иначе Стражам нечего будет сверять, и противоречие (например, «ИИ без тела сидит на подоконнике») пройдёт незамеченным.</div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn btn-primary" id="findCharFacts" style="font-size:11px;padding:2px 9px">Найти факты о персонажах</button>
+          <button class="btn" id="dismissCharNudge" style="font-size:11px;padding:2px 9px">Скрыть</button>
+        </div>
+      </div>` : ''}
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;gap:10px">
           <div style="font-size:22px">🏛️</div>
@@ -1205,6 +1223,22 @@ export function renderStructure(els){
   if(goWorldCheck) goWorldCheck.onclick = ()=>{ s.ui.stage='world'; save(); };
   const dismissWorldCheck = document.getElementById('dismissWorldCheck');
   if(dismissWorldCheck) dismissWorldCheck.onclick = ()=>{ s.ui.worldCheckDismissedFor = worldFactsFingerprint(s, null); save(); };
+
+  const findCharFacts = document.getElementById('findCharFacts');
+  if(findCharFacts) findCharFacts.onclick = async ()=>{
+    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    findCharFacts.disabled = true; const orig = findCharFacts.textContent; findCharFacts.innerHTML = '<span class="spinner"></span> Ищу…';
+    try{
+      const facts = await suggestWorldFacts(s, 'персонажи', {});
+      // Тот же визуальный канал одобрения, что и у «недостающих фактов»
+      // Архитектора (renderMissingFactCards) — не отдельная UI-ветка.
+      _missingFacts = [..._missingFacts, ...facts];
+      renderMissingFactCards(_missingFacts, s);
+    }catch(e){ alert('Мир: '+e.message); }
+    finally{ findCharFacts.disabled = false; findCharFacts.textContent = orig; }
+  };
+  const dismissCharNudge = document.getElementById('dismissCharNudge');
+  if(dismissCharNudge) dismissCharNudge.onclick = ()=>{ s.ui.charNudgeDismissed = true; save(); };
 
   // Кнопки оценщика структуры
   const evalDismiss = document.getElementById('evalDismiss');

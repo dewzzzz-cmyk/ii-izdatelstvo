@@ -549,11 +549,28 @@ export async function runScene(state, scene, opts={}, onProgress){
       {
         // Замечания, которые Прозаик уже мотивированно отклонил (художественный
         // приём) — не подсвечиваем повторно и не гоняем по кругу в директиве.
+        // ИСКЛЮЧЕНИЕ: находки фактических стражей, УЖЕ эскалированные (см.
+        // FACTUAL_ESCALATE_ITERS ниже) — не даём «мотивированному отказу»
+        // заглушить их навсегда. Смысл эскалации именно в том, что у Прозаика
+        // кончились бесплатные пропуски; отказ на этом этапе — тот же пропуск,
+        // просто сформулированный как обоснование. Живой инцидент: один и тот
+        // же список из 9 уже эскалированных находок («Неустановленная
+        // посылка» — целиком незакрытая цепочка знаний героя) был отклонён
+        // Прозаиком ОДНИМ ходом под шаблонное «художественный приём» — без
+        // этого исключения rememberRejected() стёр бы их из flags ДО того,
+        // как эскалация на следующей итерации вообще успела бы их увидеть
+        // (эскалация читает flags ПОСЛЕ этого фильтра, см. ниже), и находка
+        // молча исчезла бы навсегда вместо того, чтобы остаться видимой.
         if(scene.rejectedNotes && scene.rejectedNotes.length){
           let droppedCount = 0;
           Object.keys(flags).forEach(role=>{
             const before = (flags[role]||[]).length;
-            flags[role] = (flags[role]||[]).filter(f=>f.severity==='ok' || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes));
+            flags[role] = (flags[role]||[]).filter(f=>{
+              if(f.severity==='ok') return true;
+              const alreadyEscalated = isFactualGuard(state, role)
+                && factualWarningTracker.some(t => t.count>=FACTUAL_ESCALATE_ITERS && noteSimilarity(f.title, t.title) >= REJECT_SIM_THRESHOLD);
+              return alreadyEscalated || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes);
+            });
             droppedCount += before - flags[role].length;
           });
           if(droppedCount) onProgress && onProgress({log:{icon:'🖋', text:`Скрыто ${droppedCount} замеч. — уже отклонено автором ранее как приём`}});
