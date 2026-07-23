@@ -1020,7 +1020,15 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
         applySkeletonPatch(s, patchChapters, uid);
       } else {
         const previousSkeleton = prevEval ? currentSkeletonAsPrevious(s) : null;
-        const freshSkeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton });
+        // Живой инцидент: без onChunk статус не менялся ВООБЩЕ на протяжении
+        // всей генерации (может занимать 5-10+ минут на большом скелете) —
+        // автор не мог отличить «ещё пишет» от «зависло». Показываем счётчик
+        // символов, чтобы было видно, что поток живой.
+        const onChunk = n=>{
+          setStatus(`<span class="spinner"></span> ${label}Архитектор ${usePatch?`правит главы ${affected.join(', ')}`:(prevEval?'перерабатывает':'проектирует')} структуру… (${n} симв.)`);
+          setClickedBtnBusy(`${label}${n} симв.…`);
+        };
+        const freshSkeleton = await runBookArchitect(s, { ...(chCount?{chapters:chCount}:{}), hint, previousSkeleton, onChunk });
         applySkeleton(s, freshSkeleton, uid);
       }
       // И полный, и точечный путь сходятся здесь: skeleton всегда пересобирается

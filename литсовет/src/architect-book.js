@@ -291,8 +291,18 @@ export async function runBookArchitect(state, opts={}){
   const perSceneTokens = opts.previousSkeleton ? 300 : 220;
   const archMaxTokens = Math.max(4000, Math.min(30000, effectiveScenes * perSceneTokens + 1500));
   let lastErr = '';
+  // Живой инцидент: автор видел «спиннер навсегда» на скелете из 47+ сцен —
+  // единственный вызов callLLM во всём приложении без onToken (см. остальные
+  // сайты в pipeline.js), хотя именно тут самый большой maxTokens (до 30000) и
+  // реально самая долгая генерация. Без чанков не отличить «ещё стримит» от
+  // «висит» — 5+ минут молчания читались как зависание, хотя апстрим отвечал.
+  // retries тоже не пробрасывался в callLLM (падало на дефолт 2), в отличие от
+  // всех остальных сайтов — тот же класс бага «пропущено в одном пути».
+  let streamedChars = 0;
+  const onChunk = chunk=>{ streamedChars += chunk.length; opts.onChunk && opts.onChunk(streamedChars); };
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens });
+    streamedChars = 0;
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens, retries:g.retries }, onChunk);
     const v = validateSkeleton(res.text);
     if(v.ok){
       // Нормализация targetWords: база = totalWords / фактич. число сцен.

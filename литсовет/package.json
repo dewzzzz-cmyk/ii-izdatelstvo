@@ -1,6 +1,6 @@
 {
   "name": "litsovet",
-  "version": "1.19.2",
+  "version": "1.19.3",
   "description": "Литсовет — ИИ-инструмент для написания прозы",
   "scripts": {
     "start": "node server.js"
