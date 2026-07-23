@@ -165,9 +165,6 @@ export function evaluatorMessages(scene, draft, voiceExamples, bookContext, rule
   const paceBlock = paceBaseline && paceBaseline.medianWords
     ? `\nТЕМП КНИГИ: медиана длины уже принятых сцен этой книги — ${paceBaseline.medianWords} слов. Эта сцена — ${paceBaseline.sceneWords} слов. Отклонение вниз необязательно плохо (короткая динамичная сцена — нормально), но если сцена заметно ДЛИННЕЕ медианы книги (${Math.round(paceBaseline.medianWords*1.4)}+ слов) — проверь особенно внимательно, не растянута ли она относительно СОБСТВЕННОЙ нормы книги, прежде чем ставить «Темп» выше 6.\n`
     : '';
-  const repeats = topRepeatedStems(draft);
-  const repeatPhrases = topRepeatedPhrases(draft);
-  const tagBalance = speechTagBalance(draft);
   const repeatsBlock = (repeats.length || repeatPhrases.length || tagBalance)
     ? '\nАвтоматический подсчёт повторов (без стоп-слов):'
       + (repeats.length ? '\n— корни слов (форма × кол-во раз по всей сцене): ' + repeats.map(r=>`«${r.example}»×${r.count}`).join(', ') : '')
