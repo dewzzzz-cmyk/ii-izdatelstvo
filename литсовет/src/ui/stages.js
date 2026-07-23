@@ -9,15 +9,15 @@ import { runScene, isRunning } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
-import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
-import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval } from '../architect-book.js';
+import { summarizeScene, driftCheck, maybeRollup, capBibleSize } from '../memory.js';
+import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter, isChapterLocked } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
 import { importSeriesBook } from '../series.js';
 import { transformSelection, INLINE_ACTIONS } from '../inline.js';
 import { runHistoricalResearch } from '../historian.js';
-import { rebuildBibleVecs, tokensOf, tfvec, cosine } from '../bible.js';
+import { rebuildBibleVecs, factAlreadyInBible } from '../bible.js';
 import { worldFactsFingerprint } from '../world.js';
 import { openRuleModal, openInputModal } from './rule-modal.js';
 import { proofreadText } from '../proofread.js';
@@ -513,7 +513,14 @@ export function renderVoice(els){
   if(ext) ext.onclick = ()=>{
     const sample = document.getElementById('sample').value.trim();
     if(sample.length<40){ document.getElementById('vstatus').textContent='Слишком короткий образец.'; return; }
-    s.voice = extractVoice(sample, 5); save();
+    // extractVoice не несёт evolution (историю дрейфа голоса между книгами
+    // серии, см. series.js importSeriesBook) — без сохранения ручное
+    // «Извлечь голос» на книге 3+ серии молча стирало всю накопленную
+    // историю, хотя автор просто хотел подправить образец текущей книги.
+    const prevEvolution = s.voice?.evolution || [];
+    s.voice = extractVoice(sample, 5);
+    if(prevEvolution.length) s.voice.evolution = prevEvolution;
+    save();
   };
 
   const am=document.getElementById('analyzeManner');
@@ -780,20 +787,6 @@ function renderHistorianPanel(s){
     </div>`;
 }
 
-// Смысловое сходство (не побайтовое ===) факта с уже существующим каноном —
-// та же эвристика (TF-IDF + косинус), что и bibleMatches в bible.js, тот же
-// порог REJECT_SIM_THRESHOLD, что используется в pipeline.js для похожих
-// решений «это по сути то же самое». Раньше проверка «уже в каноне» ловила
-// только 100%-но идентичный текст — переформулировка того же факта другими
-// словами (обычное дело для LLM-генерации) проходила незамеченной.
-const HISTORIAN_SIM_THRESHOLD = 0.75;
-function factAlreadyInBible(fact, bible){
-  const factVec = tfvec(tokensOf((fact.keys||'') + ' ' + (fact.text||'')));
-  return (bible||[]).some(b => {
-    const bVec = b._vec || tfvec(tokensOf((b.keys||'') + ' ' + (b.text||'')));
-    return cosine(factVec, bVec) >= HISTORIAN_SIM_THRESHOLD;
-  });
-}
 
 function renderFactCards(facts, s){
   const el = document.getElementById('researchResults');
@@ -812,6 +805,7 @@ function renderFactCards(facts, s){
       if(!f) return;
       if(!factAlreadyInBible(f, s.bible)){
         s.bible.push({ keys: f.keys, text: f.text + (f.plotHook ? '\n💡 ' + f.plotHook : '') });
+        capBibleSize(s);
         rebuildBibleVecs(s.bible);
         save();
       }
@@ -847,14 +841,19 @@ function renderMissingFactCards(facts, s){
       <div class="card" style="margin-bottom:8px;padding:10px 12px">
         <div style="font-size:11px;color:var(--accent);font-weight:500;margin-bottom:4px">${esc(f.category)} · ${esc(f.keys)}</div>
         <div style="font-size:12px;line-height:1.5;margin-bottom:7px">${esc(f.text)}</div>
-        <button class="btn missing-fact-add" data-i="${i}" style="font-size:11px;padding:3px 9px">${s.bible.some(b=>b.text===f.text)?'✓ В каноне':'+ В канон'}</button>
+        <button class="btn missing-fact-add" data-i="${i}" style="font-size:11px;padding:3px 9px">${factAlreadyInBible(f, s.bible)?'✓ В каноне':'+ В канон'}</button>
       </div>`).join('')}
   </div>`;
   el.querySelectorAll('.missing-fact-add').forEach(btn=>{
     btn.onclick=()=>{
       const f = facts[+btn.dataset.i]; if(!f) return;
-      if(!s.bible.some(b=>b.text===f.text)){
+      // Раньше здесь была байт-точная проверка (b.text===f.text) — не ловила
+      // перефраз того же факта, который такая же карточка чуть выше
+      // (renderFactCards, историческая разведка) уже дедупит через
+      // factAlreadyInBible (TF-IDF/cosine) — тот же паттерн, применён и тут.
+      if(!factAlreadyInBible(f, s.bible)){
         s.bible.push({ keys:f.keys, text:f.text, source:'world', category:f.category });
+        capBibleSize(s);
         rebuildBibleVecs(s.bible);
         save();
       }
@@ -1325,7 +1324,7 @@ function bindSkeleton(s){
   });
   document.querySelectorAll('.sk-ic[data-revert]').forEach(b=>b.onclick=()=>{
     const n=node(s, b.dataset.revert); if(!n) return;
-    if(revertScene(n)){ clearMissingFacts(); save(); }
+    if(revertScene(s, n)){ clearMissingFacts(); save(); }
   });
   document.querySelectorAll('.sk-ch-regen[data-chregen]').forEach(b=>b.onclick=()=>{
     const ch=node(s, b.dataset.chregen); if(!ch) return;
@@ -2347,7 +2346,10 @@ function openRegenSettings(s, scene){
   t.oninput=()=>document.getElementById('rgsTempV').textContent=parseFloat(t.value).toFixed(2);
   document.getElementById('rgsOk').onclick=()=>{
     if(prose) prose.temp=parseFloat(t.value);
-    scene.targetWords=parseInt(document.getElementById('rgsWords').value)||scene.targetWords||700;
+    // Тот же клэмп, что теперь стоит на всех LLM-путях правки скелета — иначе
+    // это единственная оставшаяся дверь, через которую можно вручную вписать
+    // ту же аномалию (250 слов при норме книги 1600-2000), что и была найдена.
+    scene.targetWords=clampSceneTargetWords(s, parseInt(document.getElementById('rgsWords').value)||scene.targetWords||700);
     save(); close();
   };
 }

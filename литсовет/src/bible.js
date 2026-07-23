@@ -113,6 +113,21 @@ export function cosine(a,b){ let dot=0,na=0,nb=0; for(const k in a){ dot+=(a[k]|
 
 export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensOf((b.keys||'')+' '+(b.text||''))); }); }
 
+// Смысловое сходство (не побайтовое ===) факта с уже существующим каноном —
+// тот же порог, что pipeline.js использует для похожих решений «это по сути
+// то же самое». Раньше это жило только внутри ui/stages.js (историческая
+// разведка) — ui/world.js (одобрение кандидатов «Мир», ручное добавление
+// по категории) вообще не проверял дубли перед push в state.bible, поэтому
+// вынесено сюда как общая точка, доступная обоим модулям.
+const FACT_SIM_THRESHOLD = 0.75;
+export function factAlreadyInBible(fact, bible){
+  const factVec = tfvec(tokensOf((fact.keys||'') + ' ' + (fact.text||'')));
+  return (bible||[]).some(b => {
+    const bVec = b._vec || tfvec(tokensOf((b.keys||'') + ' ' + (b.text||'')));
+    return cosine(factVec, bVec) >= FACT_SIM_THRESHOLD;
+  });
+}
+
 // Семантический поиск топ-K записей релевантных запросу (бриф сцены).
 // Возвращает массив записей {keys, text}.
 // Закреплённые (pinned) факты идут ВСЕГДА, независимо от релевантности —
@@ -166,9 +181,18 @@ export function parseBibleLines(text){
 // Значения (keys/text) собирает вызывающий UI через openFactModal() (см.
 // ui/rule-modal.js) — раньше здесь были два prompt(), но нативный prompt()
 // блокирует страницу и не работает в iOS PWA.
+// Те же лимиты (500/120 симв.), что suggestWorldFacts/suggestMissingWorldFacts
+// применяют к своей ПЕРВОЙ партии кандидатов в world.js — applyFactEdit это
+// общая точка записи для ВСЕХ последующих правок факта (ручное редактирование,
+// rerollWorldFact, принятие подсказки исправления конфликта/слияния), но сама
+// она клэмп не делала: факт, изначально ограниченный до 500 символов, мог
+// потом получить многоабзацный ответ модели без всякого лимита при реролле
+// или принятии авто-исправления — раздувая бюджет промптов, которые
+// рассчитаны на короткие факты канона (OTHER_CANON_BUDGET, FACTS_BUDGET).
 export function applyFactEdit(bible, i, keys, text){
   const fact = bible[i]; if(!fact) return false;
-  fact.keys = String(keys||'').trim(); fact.text = String(text||'').trim();
+  fact.keys = String(keys||'').trim().slice(0,120);
+  fact.text = String(text||'').trim().slice(0,500);
   return true;
 }
 

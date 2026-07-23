@@ -19,7 +19,7 @@ const ARCS = ['завязка','развитие','кульминация','ра
 // перегенерации (regenerateScene/regenerateDownstream/regenerateChapter/
 // applySkeletonPatch), поэтому аномалия из одного из этих путей никогда не
 // исправлялась и молча уходила в реальный targetWords сцены.
-function clampSceneTargetWords(state, tw){
+export function clampSceneTargetWords(state, tw){
   const p = state.project;
   const sceneCount = (state.structure||[]).filter(n=>n.type==='scene').length;
   const norm = p.sceneWords>0
@@ -504,10 +504,14 @@ export function pushSceneVersion(scene){
   scene.briefVersions.unshift(Object.fromEntries(SCENE_FIELDS.map(f=>[f, scene[f]])));
   if(scene.briefVersions.length>10) scene.briefVersions.length=10;
 }
-export function revertScene(scene){
+export function revertScene(state, scene){
   if(!scene.briefVersions || !scene.briefVersions.length) return false;
   const v = scene.briefVersions.shift();
   SCENE_FIELDS.forEach(f=>{ if(v[f]!==undefined) scene[f]=v[f]; });
+  // Версия в истории могла быть снята ДО того, как клэмп начал применяться
+  // везде (или вообще предшествовать самому появлению этого поля в старой
+  // книге) — откат не должен молча возвращать устаревшее вневилочное значение.
+  if(scene.targetWords!=null) scene.targetWords = clampSceneTargetWords(state, scene.targetWords);
   return true;
 }
 

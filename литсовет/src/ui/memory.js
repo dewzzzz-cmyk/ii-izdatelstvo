@@ -2,11 +2,11 @@
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
 import { getState, save, mergeCharacters, charNamesMatch, dismissObserved, dismissOpenThread, dismissFactConflict } from '../state.js';
-import { rollback, summarizeScene } from '../memory.js';
+import { rollback, summarizeScene, capBibleSize } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
 import { callLLM } from '../llm.js';
-import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
+import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned, factAlreadyInBible } from '../bible.js';
 import { openRuleModal, openFactModal } from './rule-modal.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -278,7 +278,10 @@ function bindMemory(){
   if(ba) ba.onclick=()=>{
     const s=getState();
     openFactModal({}, (keys, text)=>{
-      s.bible.push({keys, text}); rebuildBibleVecs(s.bible); save();
+      // Не блокируем осознанное решение автора — только предупреждаем, что
+      // похожий факт уже есть (тот же порог, что у авто-путей суммаризации).
+      if(factAlreadyInBible({keys,text}, s.bible) && !confirm('Похожий факт уже есть в каноне — всё равно добавить?')) return;
+      s.bible.push({keys, text}); capBibleSize(s); rebuildBibleVecs(s.bible); save();
     });
   };
   // Bible: ред./AI-расширить/удалить. Матчим по [data-bi] (только у Bible-кнопок),

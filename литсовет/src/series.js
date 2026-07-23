@@ -6,6 +6,7 @@ import { extractVoice } from './voice.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 import { smartTrunc } from './tokens.js';
 import { findOrCreateCharacter } from './state.js';
+import { capBibleSize } from './memory.js';
 
 function extractMessages(title, text, knownNames){
   // ограничим вход: начало + конец книги (smartTrunc), чтобы поймать завязку и финал
@@ -82,7 +83,7 @@ export async function importSeriesBook(state, title, text){
     });
     if(!dup){ state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); factsAdded++; }
   });
-  if(factsAdded) rebuildBibleVecs(state.bible);
+  if(factsAdded){ capBibleSize(state); rebuildBibleVecs(state.bible); }
 
   // сводка книги → серия
   const summary = typeof j.summary==='string'? j.summary.trim() : '';

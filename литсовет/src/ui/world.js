@@ -4,7 +4,8 @@
 // image-API, только по явному клику (спека §5, §6, §9).
 
 import { getState, save, saveNow } from '../state.js';
-import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned } from '../bible.js';
+import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned, factAlreadyInBible } from '../bible.js';
+import { capBibleSize } from '../memory.js';
 import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix, estimateOverviewTokens, detectMapMarkers } from '../world.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
@@ -885,8 +886,17 @@ function bindHandlers(els, s){
     const cat = btn.dataset.cat;
     const approved = _candidates.filter(c=>c.category===cat && _selected.has(c.id));
     s.bible = s.bible || [];
-    approved.forEach(c=>{ s.bible.push({ keys:c.keys, text:c.text, source:'world', category:c.category }); _selected.delete(c.id); });
+    // suggestWorldFacts не сверяет кандидатов с уже одобренным каноном (см.
+    // otherCanonFor выше — она лишь ПОДСКАЗЫВАЕТ модели контекст, не
+    // фильтрует результат кодом) — без этой проверки массовое одобрение
+    // могло молча задублировать факт, который уже есть в state.bible другой
+    // формулировкой.
+    approved.forEach(c=>{
+      if(factAlreadyInBible(c, s.bible)){ _selected.delete(c.id); return; }
+      s.bible.push({ keys:c.keys, text:c.text, source:'world', category:c.category }); _selected.delete(c.id);
+    });
     _candidates = _candidates.filter(c=>!approved.includes(c));
+    capBibleSize(s);
     rebuildBibleVecs(s.bible);
     if((s.structure||[]).some(n=>n.type==='chapter')) s.structureStale = true;
     save(); renderWorld(els);
@@ -914,7 +924,9 @@ function bindHandlers(els, s){
       b.disabled = true; const orig = b.textContent; b.textContent = '…';
       try{
         const newText = await rerollWorldFact(s, fact);
-        fact.text = newText;
+        // Тот же лимит, что applyFactEdit() применяет к остальным правкам
+        // факта — этот путь пишет fact.text напрямую, в обход applyFactEdit.
+        fact.text = String(newText||'').trim().slice(0,500);
         rebuildBibleVecs(s.bible); save(); renderWorld(els);
       }catch(err){ alert('Мир: '+err.message); b.disabled=false; b.textContent=orig; }
     }
@@ -926,7 +938,11 @@ function bindHandlers(els, s){
     const cat = el.dataset.cat;
     openFactModal({}, (keys, text)=>{
       s.bible = s.bible || [];
+      // Не блокируем осознанное решение автора — только предупреждаем, что
+      // похожий факт уже есть (тот же порог, что и у авто-путей).
+      if(factAlreadyInBible({keys,text}, s.bible) && !confirm('Похожий факт уже есть в каноне — всё равно добавить?')) return;
       s.bible.push({ keys, text, source:'world', category:cat });
+      capBibleSize(s);
       rebuildBibleVecs(s.bible);
       if((s.structure||[]).some(n=>n.type==='chapter')) s.structureStale = true;
       save(); renderWorld(els);

@@ -25,6 +25,23 @@ function keysOverlap(keysA, keysB){
   return false;
 }
 
+// Лимит размера Bible (защита от раздувания на длинной книге): держит
+// последние 300. Раньше это было приватной логикой ТОЛЬКО внутри
+// summarizeScene() — остальные места, добавляющие факты в state.bible
+// (импорт серии, ручное добавление, одобрение кандидатов «Мир», историк,
+// подсказки Архитектора о недостающих фактах), никогда не подрезали массив,
+// поэтому Bible мог расти без предела в обход тех же путей, что и splice(0,
+// len-300) резал самые старые ПО ИНДЕКСУ безусловно — мог стереть факт,
+// который автор явно закрепил (📌 pinned, «виден всегда»). Пропускаем
+// закреплённые, режем только обычные.
+export function capBibleSize(state, cap=300){
+  if(!state.bible || state.bible.length <= cap) return;
+  let excess = state.bible.length - cap;
+  for(let i=0; i<state.bible.length && excess>0; i++){
+    if(!state.bible[i].pinned){ state.bible.splice(i,1); i--; excess--; }
+  }
+}
+
 // Запись памяти с версиями: { current, versions:[{text, at}] }
 function putVersioned(bucket, id, text){
   const prev = bucket[id];
@@ -146,16 +163,7 @@ export async function summarizeScene(state, scene){
     if(closest) conflictCandidates.push({ newText: f.text, oldText: closest.text });
     state.bible.push({ keys:f.keys||'', text:f.text, _vec:fvec }); added++;
   });
-  // лимит размера Bible (защита от раздувания на длинной книге): держим последние 300.
-  // Раньше splice(0, len-300) резал самые старые ПО ИНДЕКСУ безусловно — мог
-  // стереть факт, который автор явно закрепил (📌 pinned, «виден всегда»)
-  // на раннем этапе проекта. Пропускаем закреплённые, режем только обычные.
-  if(state.bible.length > 300){
-    let excess = state.bible.length - 300;
-    for(let i=0; i<state.bible.length && excess>0; i++){
-      if(!state.bible[i].pinned){ state.bible.splice(i,1); i--; excess--; }
-    }
-  }
+  capBibleSize(state);
   if(added) rebuildBibleVecs(state.bible);
 
   // Необязательная проверка — падение здесь не должно ронять суммаризацию сцены

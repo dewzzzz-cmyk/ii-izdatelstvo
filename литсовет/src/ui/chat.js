@@ -5,6 +5,8 @@
 import { getState, save } from '../state.js';
 import { callLLM } from '../llm.js';
 import { bibleForPrompt } from '../bible.js';
+import { looksTokenTruncated } from '../guards.js';
+import { summarizeScene, driftCheck, maybeRollup } from '../memory.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -112,10 +114,31 @@ function bindChat(){
       setTimeout(()=>{ if(applyBtn.dataset.armed==='yes'){ applyBtn.dataset.armed=''; applyBtn.textContent='✎ Применить к сцене'; applyBtn.style.background=''; } }, 3000);
       return;
     }
+    // Единственный путь полной перезаписи scene.text в приложении, который не
+    // проверял обрыв токенами (looksTokenTruncated стоит на всех остальных —
+    // основной пайплайн, Линейный редактор, ondemand.js) — фиксированный
+    // maxTokens:2000 в doSend() ниже почти гарантированно режет мысль
+    // посередине на обычной сцене (700-2000+ слов, ~2.5-3.5 ток/слово).
+    if(looksTokenTruncated(lastAI.content)){
+      alert('Ответ обрывается на полуслове (похоже на упор в лимит токенов) — не применяю. Попросите переписать ещё раз или короче.');
+      applyBtn.dataset.armed=''; applyBtn.textContent='✎ Применить к сцене'; applyBtn.style.background='';
+      return;
+    }
     scene.text = lastAI.content;
     scene.words = (lastAI.content.match(/\S+/g)||[]).length;
     scene.lastEval=null; scene.flags={};   // оценка/флаги относились к тексту до правки
     save();
+    // Тот же пост-обработчик, что и после основного пайплайна (ui/stages.js) —
+    // без него новые факты/состояния персонажей из переписанной сценой правки
+    // ИИ никогда не попадали в Bible/память, а drift не пересчитывался.
+    (async ()=>{
+      try{
+        await summarizeScene(s, scene);
+        scene.drift = driftCheck(s, scene);
+        await maybeRollup(s);
+        save();
+      }catch(e){ console.warn('summarize failed (chat apply)', e); }
+    })();
   };
 
   const doSend = async ()=>{
@@ -131,8 +154,14 @@ function bindChat(){
     if(log){ log.innerHTML+=`<div class="chat-msg assistant"><div class="chat-bubble"><span class="spinner"></span></div></div>`; log.scrollTop=log.scrollHeight; }
     try{
       const msgs=[{role:'system',content:contextPrompt(s, editMode)}, ...s.chat.slice(-10).map(m=>({role:m.role,content:m.content}))];
+      // Правка переписывает сцену ЦЕЛИКОМ — фиксированный лимит резал обычную
+      // сцену (700-2000+ слов) на полуслове. Та же плотность (3.5 ток/слово,
+      // с запасом), что уже стоит на первом черновике Прозаика в pipeline.js.
+      const editScene = (s.structure||[]).find(n=>n.id===s.ui.activeScene);
+      const editWordsGuess = editScene?.words || editScene?.targetWords || 700;
+      const editMaxTokens = Math.max(2500, Math.round(editWordsGuess * 3.5));
       const res=await callLLM({ baseURL:s.global.baseURL, apiKey:s.global.apiKey, model:s.global.model,
-        temperature: editMode ? 1.0 : 0.7, messages:msgs, maxTokens: editMode ? 2000 : 700 });
+        temperature: editMode ? 1.0 : 0.7, messages:msgs, maxTokens: editMode ? editMaxTokens : 700 });
       s.chat.push({role:'assistant', content:res.text||'(пусто)'}); save();
     }catch(e){ s.chat.push({role:'assistant', content:'Ошибка: '+e.message}); save(); }
     finally{ sending = false; updateSendUI(); }
