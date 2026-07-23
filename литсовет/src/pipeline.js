@@ -45,6 +45,12 @@ function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).n
 // и вторая, реальная находка переставала подсвечиваться (найдено консилиумом).
 const REJECT_SIM_THRESHOLD = 0.75;
 function noteSimilarity(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(b))); }
+// Якоря Оценщика обещаны как ДОСЛОВНЫЕ цитаты (buildUnifiedDirective просит
+// Прозаика «СОХРАНИ ДОСЛОВНО») — проверка поэтому точная (нормализация только
+// регистра/кавычек/пробелов), не косинусная: перефраз якоря по определению
+// этой проверки уже потеря, не совпадение.
+function normalizeAnchor(s){ return String(s||'').toLowerCase().replace(/[«»"'''`]/g,'').replace(/\s+/g,' ').trim(); }
+function anchorSurvives(text, anchor){ return !anchor || normalizeAnchor(text).includes(normalizeAnchor(anchor)); }
 // Сколько итераций подряд один и тот же вопрос фактических стражей (логика/события)
 // может остаться без ответа, прежде чем перестать быть необязательным пробелом и
 // стать обязательной правкой (см. FACTUAL_ESCALATE_ITERS ниже по файлу).
@@ -199,6 +205,16 @@ export async function runScene(state, scene, opts={}, onProgress){
     const crossSceneCliches = [...bannedCliches]; // снимок ДО этой сцены — для проверки похожести ниже
     let anchorVerdict = null;   // оценки итерации 1 — baseline для стабильности Оценщика
     const scoreHistory = [];    // история scores по итерациям — детектор стагнации осей
+    // Якоря ПРЕДЫДУЩЕЙ итерации (verdict.anchors — дословные цитаты, которые
+    // Оценщик пометил «работает, не трогай», см. buildUnifiedDirective). Сама
+    // инструкция сохранить их уже уходит в директиву, но раньше ничто не
+    // проверяло, выполнил ли её Прозаик — модель может молча срезать якорь
+    // вместе с «водой» вокруг него. Живой инцидент: при повторной автоматической
+    // правке уже готовой сцены пропали финальный сюжетный крючок и часть
+    // фактуры места из брифа, а балл Оценщика при этом вырос (короче и чище
+    // читается как «лучше» по темпу, хотя реально текст обеднел). prevIterAnchors
+    // хранится между итерациями для сверки с ТЕКУЩИМ черновиком ниже по циклу.
+    let prevIterAnchors = [];
     // История вопросов фактических стражей по итерациям — детектор «застрявшего»
     // пробела (см. FACTUAL_ESCALATE_ITERS ниже): один и тот же вопрос без ответа
     // много итераций подряд эскалируется в обязательную правку.
@@ -399,6 +415,15 @@ export async function runScene(state, scene, opts={}, onProgress){
       // оценил его высоко (он не обучен узнавать обрыв — судит только то, что видит).
       const draftTruncated = looksTokenTruncated(pRes.text);
       if(draftTruncated) onProgress && onProgress({log:{icon:'⚠️', text:'Обрыв токенами/сетью в этом черновике — он не будет принят как готовый, даже если Оценщик оценит его высоко (Оценщик не умеет узнавать обрыв)', state:'warn'}});
+      // Потеря якорей ПРЕДЫДУЩЕЙ итерации — та же логика, что draftTruncated:
+      // независимо от того, что скажет Оценщик про ЭТОТ черновик, если он молча
+      // потерял то, что сам же Оценщик на прошлой итерации попросил сохранить
+      // дословно, это регресс, а не улучшение. Не применяется к самому первому
+      // черновику (isRevision===false) — там ещё нечего было терять.
+      const lostAnchors = (isRevision && prevIterAnchors.length)
+        ? prevIterAnchors.filter(a => !anchorSurvives(pRes.text, a))
+        : [];
+      if(lostAnchors.length) onProgress && onProgress({log:{icon:'📌', text:`Правка потеряла якорь(я), закреплённые предыдущей оценкой: «${lostAnchors[0].slice(0,60)}»${lostAnchors.length>1?` (+${lostAnchors.length-1})`:''} — консенсус отложен, следующая правка должна их вернуть`, state:'warn'}});
 
       // ── Стражи: проверяют ТЕКУЩИЙ черновик (pRes.text), не исторический best.
       // Раньше проверяли best — если следующий черновик по сути исправлял находку
@@ -639,7 +664,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       // нулевые критические флаги ничего не говорят о литературном качестве.
       // Живой инцидент: черновик с нераспарсенным вердиктом выиграл именно так
       // и ушёл в книгу с lastEval.ok=false — не низкой, а ОТСУТСТВУЮЩЕЙ оценкой.
-      const thisClean = criticals.length === 0 && !draftTruncated && (!agentEnabled('evaluator') || verdict.ok);
+      const thisClean = criticals.length === 0 && !draftTruncated && !lostAnchors.length && (!agentEnabled('evaluator') || verdict.ok);
       if(!bestEval || (thisClean && !bestClean) ||
          (thisClean === bestClean && (
            (literaryChecked && !bestLiteraryChecked) ||
@@ -654,13 +679,20 @@ export async function runScene(state, scene, opts={}, onProgress){
         best = pRes.text; bestEval = verdict; bestClean = thisClean; bestFlags = {...flags}; bestLiteraryChecked = literaryChecked;
       }
 
+      // Заметка про потерянные якоря — общая для обеих веток (с/без Оценщика).
+      const anchorNote = lostAnchors.length
+        ? '\n\nПОТЕРЯНЫ ЗАКРЕПЛЁННЫЕ ЯКОРЯ (предыдущая оценка просила сохранить дословно, правка их убрала): ' + lostAnchors.join('; ') + ' — верни их дословно или явно замени на равноценную по функции деталь, если решил осознанно её убрать.'
+        : '';
+
       if(!agentEnabled('evaluator')){
         // Без Оценщика решение о завершении — только по Стражам (+ проверка обрыва).
-        if(criticals.length === 0 && !draftTruncated) break;
+        // lostAnchors блокирует так же, как и без Оценщика больше некому его ловить —
+        // не на последней итерации, иначе прогон зациклится без выхода.
+        if(criticals.length === 0 && !draftTruncated && (!lostAnchors.length || iter >= maxIter)) break;
         directive = 'КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticals.join('\n')
           + (factualQuestions.length ? '\n\nВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (не выдумывай ответ):\n' + factualQuestions.join('\n') : '')
           + (draftTruncated ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.' : '')
-          + standingBlock;
+          + anchorNote + standingBlock;
         continue;
       }
 
@@ -690,10 +722,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       }
 
       // Консенсус: оценщик принял И стражи не нашли критических проблем → готово.
-      // grossShort блокирует консенсус, но не на последней итерации — иначе
-      // сцена, которую модель упорно пишет коротко, зациклила бы прогон впустую;
-      // на выходе такой текст всё равно помечен бейджем недобора в UI.
-      if(evalAccepted && criticals.length === 0 && !draftTruncated && (!grossShort || iter >= maxIter)){ break; }
+      // grossShort/lostAnchors блокируют консенсус, но не на последней итерации —
+      // иначе сцена, которую модель упорно пишет коротко или упорно теряет якоря,
+      // зациклила бы прогон впустую; на выходе такой текст всё равно помечен
+      // бейджем недобора в UI (якоря — только предупреждением в логе).
+      if(evalAccepted && criticals.length === 0 && !draftTruncated && (!grossShort || iter >= maxIter) && (!lostAnchors.length || iter >= maxIter)){ break; }
       if(evalAccepted && criticals.length === 0 && !draftTruncated && grossShort){
         onProgress && onProgress({log:{icon:'📏', text:`Объём критически ниже цели (${curWords} из ${scene.targetWords} сл.) — консенсус отложен, следующая правка расширяет сцену`, state:'warn'}});
       }
@@ -756,7 +789,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       const truncNote = draftTruncated
         ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.'
         : '';
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote + truncNote + standingBlock;
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote + truncNote + anchorNote + standingBlock;
+      // Якоря ЭТОЙ итерации становятся базой для сверки со СЛЕДУЮЩЕЙ — только
+      // если Оценщик реально распарсился (verdict.ok); иначе держим прошлые
+      // якоря, а не обнуляем их из-за одного нераспарсенного ответа.
+      if(verdict && verdict.ok) prevIterAnchors = verdict.anchors || [];
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
