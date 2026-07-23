@@ -129,6 +129,7 @@ async function handleGenerate(req, res){
       const data=s.slice(5).trim(); if(data==='[DONE]') return;
       try{ const d=JSON.parse(data).choices?.[0]?.delta?.content; if(d) res.write(d); }catch{}
     };
+    let streamBroke = false;
     try{
       while(true){
         const {value,done}=await reader.read(); if(done) break;
@@ -142,7 +143,17 @@ async function handleGenerate(req, res){
       // при обрыве ровно на границе символа/строки, неотличимо от штатного конца.
       buf += dec.decode();
       if(buf) emitLine(buf);
-    }catch{}
+    }catch{
+      // Живой инцидент: сеть/апстрим оборвали соединение на середине генерации —
+      // это НЕ отличалось клиентом от штатного конца стрима (res.writeHead(200) уже
+      // ушёл, статус-код сменить нельзя). callLLM получал усечённый, но формально
+      // успешный ответ и ни разу не ретраил — оборванная на полуслове сцена молча
+      // уходила в текст книги как «готовая». Помечаем обрыв маркером в теле ответа —
+      // клиент (см. STREAM_TRUNCATED_MARKER в llm.js) ловит его и ретраит как обычную
+      // сетевую ошибку.
+      streamBroke = true;
+    }
+    if(streamBroke) res.write('\n[[LITSOVET:STREAM_TRUNCATED]]');
     res.end();
   });
 }

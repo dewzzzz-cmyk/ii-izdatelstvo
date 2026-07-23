@@ -8,6 +8,11 @@ import { PRICES, getState } from './state.js';
 // каждой повторной попыткой (опц.): чанки неудачной попытки уже переданы в
 // onToken, и накопительный буфер вызывающего кода (напр. streamed в
 // pipeline.js) иначе клеит их с началом успешного повтора без сброса.
+// Должен буквально совпадать с маркером, который server.js дописывает в тело
+// ответа при обрыве апстрим-соединения посреди стрима (см. комментарий там же) —
+// иначе клиент снова не отличит оборванный ответ от штатно завершённого.
+const STREAM_TRUNCATED_MARKER = '\n[[LITSOVET:STREAM_TRUNCATED]]';
+
 export async function callLLM({ baseURL, apiKey, model, temperature, messages, maxTokens, retries=2 }, onToken, onRetry){
   const tokensIn = messages.reduce((s,m)=>s+estimateTokens(m.content), 0);
   let lastErr = null;
@@ -57,6 +62,13 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
         text += chunk;
         if(onToken) onToken(chunk);
       }
+      // Сервер дописывает этот маркер в тело ответа, если апстрим оборвался
+      // посреди генерации (см. server.js) — раньше такой обрыв был неотличим от
+      // штатного конца стрима, и оборванный на полуслове текст молча уходил
+      // в пайплайн как «готовый». Превращаем маркер в обычную ретраимую ошибку —
+      // ниже она попадёт в тот же catch(e), что и сетевые сбои.
+      const truncIdx = text.indexOf(STREAM_TRUNCATED_MARKER);
+      if(truncIdx !== -1) throw new Error('Соединение с сервером генерации оборвалось на середине ответа');
       const tokensOut = estimateTokens(text);
       const p = PRICES[model] || {in:0.14, out:0.28};
       const cost = tokensIn/1e6*p.in + tokensOut/1e6*p.out;

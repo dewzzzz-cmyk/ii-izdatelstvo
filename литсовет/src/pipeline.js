@@ -232,6 +232,18 @@ export async function runScene(state, scene, opts={}, onProgress){
           onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: ответ обрезан токенами (нет секции [ТЕКСТ]) — используем предыдущий черновик', state:'warn'}});
           pRes.text = prevDraft;
         } else if(parsed.prose) pRes.text = parsed.prose;
+        // parsed.truncated ловит только «тега [ТЕКСТ] почти нет» (обрыв сразу после
+        // тега) — но тег может быть на месте, а сама проза внутри него оборваться
+        // на полуслове чуть дальше (обрыв ближе к концу ответа, формально не «почти
+        // пусто»). Живой инцидент: две сцены книги ушли в финал с последним
+        // предложением, обрывающимся посреди слова — ни parsed.truncated (тег и
+        // текст были), ни проверка длины ниже (обрыв был не настолько драматичным,
+        // чтобы просесть под 60%) этого не поймали. looksTokenTruncated — та же
+        // эвристика, что уже стоит на первом черновике и на Линейном редакторе.
+        if(pRes.text && pRes.text !== prevDraft && looksTokenTruncated(pRes.text)){
+          onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: правка обрывается не на знаке препинания (похоже на обрыв токенами, хотя тег [ТЕКСТ] был на месте) — используем предыдущий черновик', state:'warn'}});
+          pRes.text = prevDraft;
+        }
         if(pRes.text && pRes.text.length < prevDraft.length*0.6 && !SHORTEN_HINT_RE.test(directive)) pRes.text = prevDraft;
         logInput = '(разбор замечаний + точечная правка) ' + (directive||'');
       } else {
@@ -250,6 +262,14 @@ export async function runScene(state, scene, opts={}, onProgress){
           const retryMaxTk = Math.min(8000, proseMaxTk * 2);
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
+          // Раньше результат повтора принимался безусловно — если обрыв повторялся
+          // (редко, но бывает: тот же лимит или второй сетевой обрыв подряд), никто
+          // это уже не перепроверял. draftTruncated ниже по циклу всё равно не даст
+          // такому черновику победить в отборе best/консенсусе — это предупреждение
+          // просто делает причину видимой автору сразу, а не постфактум.
+          if(looksTokenTruncated(pRes.text)){
+            onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: черновик всё ещё обрывается после повтора с удвоенным лимитом — консенсус для этой итерации будет заблокирован, проверьте сцену', state:'warn'}});
+          }
         }
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
@@ -320,6 +340,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       // потеряв целиком линию матери, на которой держится сделка следующей
       // сцены). Ниже блокирует консенсус до последней итерации.
       const grossShort = !!(scene.targetWords && curWords < scene.targetWords*0.6);
+      // Финальная страховка от обрыва токенами/сетью — независимо от того, каким
+      // путём (первый черновик, правка, ретрай) текст сюда дошёл. Ниже фактически
+      // приравнивается к критической находке Стражей: обрывок не должен побеждать
+      // в отборе best и не должен закрывать консенсус, даже если Оценщик почему-то
+      // оценил его высоко (он не обучен узнавать обрыв — судит только то, что видит).
+      const draftTruncated = looksTokenTruncated(pRes.text);
+      if(draftTruncated) onProgress && onProgress({log:{icon:'⚠️', text:'Обрыв токенами/сетью в этом черновике — он не будет принят как готовый, даже если Оценщик оценит его высоко (Оценщик не умеет узнавать обрыв)', state:'warn'}});
 
       // ── Стражи: проверяют ТЕКУЩИЙ черновик (pRes.text), не исторический best.
       // Раньше проверяли best — если следующий черновик по сути исправлял находку
@@ -554,7 +581,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       // победу героя и неуместный пафос — правки тихо терялись, потому что
       // непроверенный черновик выглядел «чище» просто за счёт того, что его
       // никто не проверял.
-      const thisClean = criticals.length === 0;
+      const thisClean = criticals.length === 0 && !draftTruncated;
       if(!bestEval || (thisClean && !bestClean) ||
          (thisClean === bestClean && (
            (literaryChecked && !bestLiteraryChecked) ||
@@ -570,10 +597,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       }
 
       if(!agentEnabled('evaluator')){
-        // Без Оценщика решение о завершении — только по Стражам.
-        if(criticals.length === 0) break;
+        // Без Оценщика решение о завершении — только по Стражам (+ проверка обрыва).
+        if(criticals.length === 0 && !draftTruncated) break;
         directive = 'КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticals.join('\n')
-          + (factualQuestions.length ? '\n\nВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (не выдумывай ответ):\n' + factualQuestions.join('\n') : '');
+          + (factualQuestions.length ? '\n\nВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (не выдумывай ответ):\n' + factualQuestions.join('\n') : '')
+          + (draftTruncated ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.' : '');
         continue;
       }
 
@@ -606,8 +634,8 @@ export async function runScene(state, scene, opts={}, onProgress){
       // grossShort блокирует консенсус, но не на последней итерации — иначе
       // сцена, которую модель упорно пишет коротко, зациклила бы прогон впустую;
       // на выходе такой текст всё равно помечен бейджем недобора в UI.
-      if(evalAccepted && criticals.length === 0 && (!grossShort || iter >= maxIter)){ break; }
-      if(evalAccepted && criticals.length === 0 && grossShort){
+      if(evalAccepted && criticals.length === 0 && !draftTruncated && (!grossShort || iter >= maxIter)){ break; }
+      if(evalAccepted && criticals.length === 0 && !draftTruncated && grossShort){
         onProgress && onProgress({log:{icon:'📏', text:`Объём критически ниже цели (${curWords} из ${scene.targetWords} сл.) — консенсус отложен, следующая правка расширяет сцену`, state:'warn'}});
       }
 
@@ -666,7 +694,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         : tooShort
           ? `\n\nОБЪЁМ: черновик уже заметно короче цели (${curWords} из ${scene.targetWords} слов) — если конкретное замечание выше не требует прямо резать текст, ищи другой способ его выполнить (не удаляй абзацы целиком ради мелкой правки).`
           : '';
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote;
+      const truncNote = draftTruncated
+        ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.'
+        : '';
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote + truncNote;
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
@@ -677,6 +708,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       // всегда хранит последний реально написанный текст, даже отклонённый.
       best = lastGenerated || prevDraft || '';
       if(best) onProgress && onProgress({log:{icon:'⚠️', text:'Сцена сохранена без подтверждённого консенсуса (лимит попыток исчерпан) — проверьте текст вручную', state:'warn'}});
+    }
+    // Последний рубеж — на случай, если обрыв всё же дошёл до best (например,
+    // автор вручную нажал «Принять» в гейте Оценщика на обрезанном токенами
+    // черновике, не заметив обрыва в конце длинного текста): не блокируем —
+    // решение автора, — но громко предупреждаем, а не молчим, как раньше.
+    if(best && looksTokenTruncated(best)){
+      onProgress && onProgress({log:{icon:'🚨', text:'Итоговый текст сцены обрывается не на знаке препинания — похоже на обрыв токенами/сетью. Проверьте конец сцены вручную перед публикацией.', state:'warn'}});
     }
 
     // ── 4. Линейный редактор (опц.) — единственный, кто правит текст ──
