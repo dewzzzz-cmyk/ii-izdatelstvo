@@ -1003,6 +1003,17 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
     if(b) b.innerHTML = `<span class="spinner"></span> ${label}`;
   };
   setBusy(true);
+  // Живой инцидент: «Улучшить» за один клик прогнало 3 внутренние итерации
+  // (structureMaxIter), оценка упала 6.2→5.8, и цикл всё равно доработал все
+  // 3 прогона ПОВЕРХ уже испорченной структуры — bestScore считался только
+  // для предупреждения постфактум, а state.structure оставался тем, что
+  // вышло ПОСЛЕДНИМ, даже если это худший результат из всех. Ниже —
+  // автоматический откат: как только прогон вышел хуже лучшего известного,
+  // сразу возвращаем structure+structureEval к состоянию ДО этого прогона
+  // (skeletonVersions/revertSkeleton уже умеют откат на одну версию назад —
+  // pushSkeletonVersion зовётся внутри applySkeleton/applySkeletonPatch) и
+  // пробуем ещё раз от лучшего состояния, а не молча копим деградацию.
+  let revertedCount = 0;
   try{
     for(let iter=1; iter<=maxIter; iter++){
       lastIter = iter;
@@ -1043,6 +1054,24 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
       setClickedBtnBusy(`${label}Оценщик проверяет…`);
       evalResult = await runStructureEval(s, skeleton, prevEval);
       if(evalResult && prevScore!=null) evalResult.prevScore = prevScore;
+
+      // Прогон вышел хуже лучшего известного — откатываем его немедленно
+      // (revertSkeleton возвращает structure+structureEval к состоянию ДО
+      // этого прогона, т.к. pushSkeletonVersion уже сохранил его выше, внутри
+      // applySkeleton/applySkeletonPatch), а не продолжаем правку поверх уже
+      // испорченного варианта. prevEval/prevScore намеренно НЕ трогаем —
+      // следующая попытка (если есть) должна отталкиваться от того же
+      // лучшего состояния, а не от только что отклонённого.
+      if(evalResult && bestScore!=null && evalResult.score < bestScore){
+        revertedCount++;
+        revertSkeleton(s);
+        evalResult = s.structureEval;
+        skeleton = currentSkeletonAsPrevious(s);
+        save();
+        setBusy(true);
+        continue;
+      }
+
       s.structureEval = evalResult;
       save();
       setBusy(true);
@@ -1051,12 +1080,11 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
       prevEval = evalResult; prevScore = evalResult.score;
     }
     if(skeleton) await refreshMissingFacts(s, skeleton);
-    // bestIter=0 ("лучший — исходный сид, ни одна итерация не улучшила")
-    // раньше делал `bestIter &&` ложным (0 falsy), и предупреждение никогда
-    // не показывалось именно в самом частом случае провала — когда ВСЕ
-    // прогоны вышли хуже сида. bestIter!==lastIter корректно ловит и его.
-    if(evalResult && bestIter !== lastIter && evalResult.score < bestScore - 0.5){
-      setStatus(`⚠ Итоговый прогон ${lastIter} (${evalResult.score}/10) вышел хуже прогона ${bestIter} (${bestScore}/10) — кнопкой «↶ скелет» выше можно вернуться на более ранний, лучший вариант (может понадобиться несколько нажатий).`);
+    // С автооткатом выше state.structure в конце цикла ВСЕГДА соответствует
+    // bestScore — предупреждение «итоговый прогон хуже лучшего» больше не
+    // нужно, вместо него сообщаем, сколько попыток было отклонено автоматом.
+    if(revertedCount){
+      setStatus(`⚠ ${revertedCount} из ${lastIter} прогон(ов) вышли хуже — откачены автоматически, оставлен лучший результат ${bestScore.toFixed(1)}/10${bestIter?` (прогон ${bestIter})`:' (исходная структура)'}.`);
     } else if(evalResult && evalResult.score >= STRUCT_AUTOHIDE_SCORE){
       // Балл почти идеальный — панель с оценкой и так больше нечего сообщить
       // (issues/suggestions пусты), а «Улучшить» уже скрыта порогом 8/10 в
