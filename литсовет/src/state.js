@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider } from './providers.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.24.0';
+export const APP_VERSION = '1.25.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -161,35 +161,35 @@ export function defaultState(){
 // Реестр агентов с дефолтами. Каждый включаем/отключаем (диагностический режим).
 export function defaultAgents(){
   return [
-    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:1080, enabled:true, role:'architect',
+    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:1620, enabled:true, role:'architect',
       desc:'Планирует сцену: ключевые детали, шаги, запрещённые слова. Не пишет прозу — готовит каркас для Прозаика.' },
-    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:4320, enabled:true, role:'prose', loop:true,
+    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:6480, enabled:true, role:'prose', loop:true,
       desc:'Пишет прозу сцены по брифу и контексту. В петле с Оценщиком дорабатывает черновик, пока тот не примет.' },
-    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:3840, enabled:true, role:'evaluator',
+    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:5760, enabled:true, role:'evaluator',
       desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },
-    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:2520, strictness:2, enabled:false, role:'voiceguard',
+    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:3780, strictness:2, enabled:false, role:'voiceguard',
       desc:'Сверяет стиль и ритм с образцом вашего голоса, цитируя образец. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
-    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:2520, strictness:2, enabled:true, role:'logic',
+    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:3780, strictness:2, enabled:true, role:'logic',
       desc:'Проверяет физику, время и причинность: возможно ли это в мире сцены. Видит только факты, не стиль. Параллельно.' },
-    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:2520, strictness:2, enabled:true, role:'events',
+    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:3780, strictness:2, enabled:true, role:'events',
       desc:'Проверяет, что персонаж знает/чувствует то, что должен по прошлым событиям. Видит только факты. Параллельно.' },
-    { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:2520, strictness:2, enabled:true, role:'styleguard',
+    { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:3780, strictness:2, enabled:true, role:'styleguard',
       desc:'Ловит нарушения ваших «Правил автора» (do/don\'t) и показывает цитату. Только флагует. Параллельно с другими стражами.' },
-    { id:'imagery',   name:'Страж образов',    icon:'🎨', temp:0.2, maxTokens:2520, strictness:2, enabled:true, role:'imagery',
+    { id:'imagery',   name:'Страж образов',    icon:'🎨', temp:0.2, maxTokens:3780, strictness:2, enabled:true, role:'imagery',
       desc:'Ловит смешанные, абсурдные или физически невозможные метафоры и сравнения, разъехавшийся регистр образа. Не клише — за это отвечает другой страж. Только флагует. Параллельно с другими стражами.' },
-    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:4320, enabled:true, role:'lineedit',
+    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:6480, enabled:true, role:'lineedit',
       desc:'Лёгкая правка: убирает эмоциональные ярлыки, варьирует ритм, чистит клише. Единственный, кто меняет текст после Прозаика.' },
-    { id:'reader',    name:'Читатель',          icon:'📖', temp:0.3, maxTokens:2520, strictness:2, enabled:true, role:'reader',
+    { id:'reader',    name:'Читатель',          icon:'📖', temp:0.3, maxTokens:3780, strictness:2, enabled:true, role:'reader',
       desc:'Смотрит на сцену глазами читателя: не теряется ли интерес, ясна ли ставка, совпадает ли финальная эмоция с задуманной. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
-    { id:'pov',       name:'Страж точки зрения',icon:'👀', temp:0.2, maxTokens:2520, strictness:2, enabled:true, role:'pov',
+    { id:'pov',       name:'Страж точки зрения',icon:'👀', temp:0.2, maxTokens:3780, strictness:2, enabled:true, role:'pov',
       desc:'Ловит head-hopping: незаметные скачки к мыслям/ощущениям другого персонажа внутри сцены без разметки. Только флагует. Параллельно с другими стражами.' },
-    { id:'dialogue',  name:'Страж диалога',     icon:'💬', temp:0.3, maxTokens:2520, strictness:2, enabled:true, role:'dialogue',
+    { id:'dialogue',  name:'Страж диалога',     icon:'💬', temp:0.3, maxTokens:3780, strictness:2, enabled:true, role:'dialogue',
       desc:'Ловит реплики «в лоб» (без подтекста), избыточные теги вместо экшн-бит, неразличимые голоса персонажей. Только флагует. Параллельно с другими стражами.' },
-    { id:'resolution',name:'Страж развязки',     icon:'⏳', temp:0.2, maxTokens:2520, strictness:2, enabled:true, role:'resolution',
+    { id:'resolution',name:'Страж развязки',     icon:'⏳', temp:0.2, maxTokens:3780, strictness:2, enabled:true, role:'resolution',
       desc:'Ловит преждевременную развязку: герой мгновенно принимает невероятное, конфликт гаснет без эскалации, тайна получает ответ без паузы. Только флагует. Параллельно с другими стражами.' },
-    { id:'atmosphere',name:'Страж атмосферы',    icon:'🌲', temp:0.3, maxTokens:2520, strictness:2, enabled:true, role:'atmosphere',
+    { id:'atmosphere',name:'Страж атмосферы',    icon:'🌲', temp:0.3, maxTokens:3780, strictness:2, enabled:true, role:'atmosphere',
       desc:'Ловит недостаток сенсорных деталей (природа, существа, погода) там, где сцена вводит новое или важное место мира — обратный полюс оси «Темп» Оценщика. Только флагует. Параллельно с другими стражами.' },
-    { id:'humor',     name:'Страж жанра',        icon:'🎭', temp:0.3, maxTokens:2520, strictness:2, enabled:true, role:'humor',
+    { id:'humor',     name:'Страж жанра',        icon:'🎭', temp:0.3, maxTokens:3780, strictness:2, enabled:true, role:'humor',
       desc:'Только для иронических жанров (ироничный детектив/фэнтези, юмористическая проза) — ловит упущенные моменты, где жанр явно требует иронии/шутки, а сцена сыграна полностью прямо. На остальных жанрах не запускается. Только флагует. Параллельно с другими стражами.' },
     { id:'bookArchitect', name:'Книжный архитектор', icon:'🏛️', temp:0.6, enabled:true, role:'bookArchitect',
       desc:'Строит скелет книги (главы→сцены) на стадии Структуры. Один запуск на книгу, не часть цикла сцены — maxTokens считается автоматически по объёму книги, не настраивается.' },
@@ -415,6 +415,23 @@ export function setState(s){ _state = s; emit(); }
 export function subscribe(fn){ _subs.add(fn); return ()=>_subs.delete(fn); }
 function emit(){ _subs.forEach(fn=>{ try{ fn(_state); }catch(e){ console.error(e); } }); }
 
+// Стиль баннера — по просьбе автора уменьшен и снабжён отдельной кнопкой
+// закрытия (раньше был на всю ширину экрана, во весь голос, и не закрывался
+// иначе как через полную перезагрузку страницы). Сама тонкая полоска сверху
+// сохранена — это по-прежнему сигнал «сервер не видит последних правок», не
+// декоративный тост, поэтому не прячем совсем, но заметность снижена.
+const BANNER_CSS = 'position:fixed;top:8px;right:8px;z-index:9999;max-width:340px;padding:6px 10px;background:#c0392b;color:#fff;font-size:12px;line-height:1.4;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.25);display:flex;gap:8px;align-items:flex-start';
+function showBanner(text, onclickText, onclick){
+  let b = document.getElementById('_saveBanner');
+  if(!b){
+    b = document.createElement('div'); b.id='_saveBanner'; b.style.cssText=BANNER_CSS;
+    document.body?.appendChild(b);
+  }
+  b.innerHTML = `<span style="flex:1;cursor:${onclick?'pointer':'default'}">${text}</span><span style="cursor:pointer;opacity:.8;flex-shrink:0" title="скрыть">✕</span>`;
+  if(onclick) b.querySelector('span').onclick = onclick;
+  b.lastElementChild.onclick = (e)=>{ e.stopPropagation(); b.remove(); };
+}
+
 function persistToServer(){
   return saveProject(_state)
     .then(()=>pushToServer(_state))
@@ -428,34 +445,41 @@ function persistToServer(){
       // Конфликт ревизий — не «сеть моргнула», а «эта вкладка устарела»:
       // без явного баннера автор видел лишь тихий ⚠ у точки синхронизации и
       // продолжал работать со старой копией, недоумевая, куда делись свежие
-      // изменения (живой репорт «почему я это не вижу?»).
+      // изменения (живой репорт «почему я это не вижу?»). Если после фикса
+      // гонки (см. runPersist ниже) это всё же случилось — значит, на сервер
+      // реально пришла более новая версия ОТКУДА-ТО ЕЩЁ (другая вкладка,
+      // устройство, фоновый скрипт), а не самоконфликт этой же вкладки.
       if(!ok && lastPushConflict){
-        let b = document.getElementById('_saveBanner');
-        if(!b){
-          b = document.createElement('div'); b.id='_saveBanner';
-          b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
-          document.body?.appendChild(b);
-        }
-        b.textContent='⚠ На сервере более новая версия проекта — нажмите здесь, чтобы обновить страницу и загрузить её';
-        b.onclick=()=>location.reload();
+        showBanner('⚠ На сервере более новая версия проекта — нажмите, чтобы обновить страницу и загрузить её', null, ()=>location.reload());
       }
       return ok;
     })
     .catch(e=>{
       console.error('save failed', e);
       setSyncStatus('err');
-      let b = document.getElementById('_saveBanner');
-      if(!b){
-        b = document.createElement('div'); b.id='_saveBanner';
-        b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 16px;background:#c0392b;color:#fff;font-size:13px;text-align:center;cursor:pointer';
-        b.onclick=()=>b.remove(); document.body?.appendChild(b);
-      }
-      b.textContent='⚠ Не удалось сохранить: '+e.message+' · нажмите чтобы скрыть';
+      showBanner('⚠ Не удалось сохранить: '+e.message);
       return false;
     });
 }
 
 let _saveTimer = null;
+// Серия promise: каждый вызов встаёт в хвост и ждёт, пока долетит предыдущий
+// пуш, вместо того чтобы лететь ПАРАЛЛЕЛЬНО с ним. Живой инцидент: на реальной
+// сети (не localhost) ответ сервера иногда занимал больше 400мс дебаунса —
+// следующая правка успевала запустить ВТОРОЙ persistToServer() поверх ещё не
+// завершившегося первого; второй уходил со СТАРЫМ state.rev (первый ещё не
+// успел обновить его своим ответом), сервер видел это как чужой конфликт
+// (409) и автор получал баннер «на сервере более новая версия» — хотя обе
+// версии были от этой же вкладки. Отсюда «баннер вылезает после каждой
+// правки». Теперь новый пуш дожидается предыдущего и уходит с уже верным rev.
+let _pushChain = null;
+function runPersist(){
+  _pushChain = (_pushChain || Promise.resolve()).then(persistToServer);
+  const p = _pushChain;
+  p.finally(()=>{ if(_pushChain===p) _pushChain=null; });
+  return p;
+}
+
 export function save(){
   if(!_state) return;
   _state.updated = Date.now();
@@ -470,7 +494,7 @@ export function save(){
   if(_state.global?.apiKeys) lsSet('litsovet_apikeys', JSON.stringify(_state.global.apiKeys));
   emit();
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(persistToServer, 400);
+  _saveTimer = setTimeout(runPersist, 400);
 }
 
 // Тот же save(), но пуш на сервер не ждёт 400мс дебаунса — для результатов
@@ -493,7 +517,7 @@ export async function saveNow(){
   if(typeof ik === 'string') lsSet('litsovet_ic_apikey', ik);
   if(_state.global?.apiKeys) lsSet('litsovet_apikeys', JSON.stringify(_state.global.apiKeys));
   emit();
-  return persistToServer();
+  return runPersist();
 }
 
 function lsGet(k){ try{ return localStorage.getItem(k); }catch{ return null; } }
@@ -665,6 +689,11 @@ function migrate(s){
     // реакция на конкретный обрыв. Та же логика: трогаем только тех, кто
     // ещё сидит на прошлом (V3-эпохи) дефолте, ручные правки не трогаем.
     const OLD_MAXTOKENS_DEFAULT_V4 = { architect:900, prose:3600, evaluator:3200, voiceguard:2100, logic:2100, events:2100, styleguard:2100, imagery:2100, lineedit:3600, reader:2100, pov:2100, dialogue:2100, resolution:2100, atmosphere:2100, humor:2100 };
+    // Пятый раунд — по прямой просьбе автора после живого инцидента («Оценщик:
+    // ответ не распарсился... лимит был 3840 — повтор с лимитом 7680»): +50% по
+    // всем ролям разом, не точечно под Оценщика — та же логика («ещё сидит на
+    // прошлом дефолте → подтягиваем, ручное значение не трогаем»).
+    const OLD_MAXTOKENS_DEFAULT_V5 = { architect:1080, prose:4320, evaluator:3840, voiceguard:2520, logic:2520, events:2520, styleguard:2520, imagery:2520, lineedit:4320, reader:2520, pov:2520, dialogue:2520, resolution:2520, atmosphere:2520, humor:2520 };
     const defById = Object.fromEntries(d.agents.map(a=>[a.id, a]));
     // Идём по СОХРАНЁННОМУ порядку — пользовательская перестановка сохраняется.
     const storedIds = new Set(s.agents.map(a=>a.id));
@@ -673,7 +702,7 @@ function migrate(s){
       const merged = Object.assign({}, da);
       KEEP.forEach(k=>{
         if(a[k]===undefined) return;
-        if(k==='maxTokens' && (OLD_MAXTOKENS_DEFAULT[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V2[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V3[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V4[a.role]===a.maxTokens)) return; // всё ещё старый дефолт — берём новый
+        if(k==='maxTokens' && (OLD_MAXTOKENS_DEFAULT[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V2[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V3[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V4[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V5[a.role]===a.maxTokens)) return; // всё ещё старый дефолт — берём новый
         merged[k]=a[k];
       });
       return merged;
@@ -684,6 +713,7 @@ function migrate(s){
       if(a.maxTokens===700) return {...a, maxTokens:1400};
       if(a.maxTokens===1400) return {...a, maxTokens:2100};
       if(a.maxTokens===2100) return {...a, maxTokens:2520};
+      if(a.maxTokens===2520) return {...a, maxTokens:3780};
       return a;
     });
     s.agents = [...updated, ...newBuiltins, ...customs];
