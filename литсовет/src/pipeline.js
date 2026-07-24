@@ -369,8 +369,20 @@ export async function runScene(state, scene, opts={}, onProgress){
         // реальной проверки качества. Один ретрай с удвоенным лимитом — тот же
         // приём, что уже стоит на первом черновике Прозаика.
         if(!verdict.ok){
+          // Живой инцидент: сообщение ВСЕГДА винило «обрыв токенами», даже когда
+          // ответ был вдвое короче лимита (значит дело не в лимите, а в том, что
+          // JSON сломан по другой причине — экранирование кавычек, лишний текст
+          // и т.п.) — автору не по чему было отличить «нужен лимит больше» от
+          // «формат ответа сломан». Сверяем реальную длину ответа с потолком.
+          const nearLimit = (eRes.tokensOut||0) >= evalMaxTk*0.85;
           const evalRetryTk = Math.min(7200, evalMaxTk * 2);
-          onProgress && onProgress({log:{icon:'⚠️', text:`Оценщик: ответ не распарсился (похоже на обрыв токенами, лимит был ${evalMaxTk}) — повтор с лимитом ${evalRetryTk}`, state:'warn'}});
+          onProgress && onProgress({log:{icon:'⚠️', text:`Оценщик: ответ не распарсился (${nearLimit?`похоже на обрыв токенами, лимит был ${evalMaxTk}`:`НЕ похоже на обрыв лимита — ответ ${eRes.tokensOut||0} из ${evalMaxTk} ток., скорее всего сломан формат JSON`}) — повтор с лимитом ${evalRetryTk}`, state:'warn'}});
+          // Раньше сырой ответ ПЕРВОЙ (неудачной) попытки нигде не сохранялся —
+          // logStep ниже логирует только финальный eRes (после ретрая), и если
+          // ретрай тоже не распарсился, единственная сохранённая копия — снова
+          // только вторая попытка. Причину первого провала невозможно было
+          // посмотреть постфактум. Логируем её отдельным шагом для диагностики.
+          logStep({ agent:'evaluator-retry', iter, input:`(попытка 1, ${nearLimit?'похоже на обрыв':'формат сломан'})`, output:eRes.text, tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
           eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalRetryTk });
           verdict = parseEvaluator(eRes.text, threshold);
         }
