@@ -528,12 +528,25 @@ export async function regenerateDownstream(state, pivotScene, hint){
     `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"3-4 предложения, см. БРИФ СЦЕНЫ выше","emotion":"…","entryState":"…","targetWords":число,"sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Ровно ${downstream.length} сцен. Только JSON.`,
   ].filter(Boolean).join('\n');
 
+  // Живой инцидент (найдено при разборе МИРОК222, 52 сцены): maxTokens здесь
+  // был жёстко зашит в 3600 независимо от downstream.length — тот же класс
+  // бага, что уже чинили в runBookArchitect (см. её комментарий про «9900
+  // токенов на 60 сцен не хватило»): пивот рано в книге даёт downstream в
+  // 40+ сцен, каждая требует бриф 3-4 предложения (BRIEF_DETAIL_NOTE) +
+  // entryState — 3600 токенов на такой объём гарантированно обрежет JSON.
+  // Формула — та же пропорция (300 ток/сцена + запас), что и improve-режим
+  // runBookArchitect, +20% по общему проходу этой сессии.
+  const maxTokens = Math.round(Math.max(3600, Math.min(28000, downstream.length*300 + 1200)) * 1.2);
   let lastErr='';
+  startRun(null, 'Архитектор (каскадная перегенерация)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:3600 });
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
+    logStep({ agent:'bookArchitectDownstream', iter:attempt+1, input:`(каскад ${downstream.length} сцен, лимит ${maxTokens})`, output:res.text,
+      tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:!!(arr&&arr.length), error:(arr&&arr.length)?undefined:'невалидный JSON' } });
     if(arr && arr.length){
+      endRun('done');
       // применяем позиционно; число сцен не меняем (берём min для устойчивости)
       const applied = [];
       for(let i=0;i<Math.min(arr.length, downstream.length);i++){
@@ -569,6 +582,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
     }
     lastErr='невалидный JSON';
   }
+  endRun('error');
   throw new Error('Каскадная перегенерация не удалась: '+lastErr);
 }
 
