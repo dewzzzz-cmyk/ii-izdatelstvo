@@ -731,7 +731,7 @@ export function structureEvalMessages(state, skeleton, prevEval){
     skeletonText,
     '',
     'Оцени структуру. Верни JSON:',
-    '{ "score": среднее_float_0-10, "axes": { "arc": 0-10, "pacing": 0-10, "conflict": 0-10, "balance": 0-10, "ending": 0-10 }, "issues": ["до 4 реальных проблем, кратко и конкретно"], "suggestions": ["до 4 конкретных улучшений со ссылками на главы/сцены"], "affectedChapters": [номера глав (1-based) из issues выше, без соседних непроблемных] }',
+    '{ "score": среднее_float_0-10, "axes": { "arc": 0-10, "pacing": 0-10, "conflict": 0-10, "balance": 0-10, "ending": 0-10 }, "issues": ["до 10 реальных проблем, кратко и конкретно"], "suggestions": ["до 10 конкретных улучшений со ссылками на главы/сцены"], "affectedChapters": [номера глав (1-based) из issues выше, без соседних непроблемных] }',
     'Если структура хороша — скажи это в suggestions. issues может быть пустым. Только JSON.',
   ].filter(Boolean).join('\n');
 
@@ -746,7 +746,10 @@ export async function runStructureEval(state, skeleton, prevEval){
   // устранено по каждой прошлой проблеме — ответ ощутимо растёт по итерациям
   // (замерено вживую: 603 → 703 → 705 → 787 из 800). При 800 3-4-я итерация
   // обрезает JSON. Запас на затухание роста, а не голая экстраполяция тренда.
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:1500, retries:g.retries });
+  // 1500→3000: лимит issues/suggestions поднят с 4 до 10 (автор просил
+  // проверить, поможет ли больше видимых находок за раз) — вдвое больше
+  // пунктов при том же формате ответа примерно вдвое увеличивает его длину.
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:3000, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || typeof j.score !== 'number') throw new Error('Оценщик вернул нераспознаваемый ответ — попробуйте ещё раз.');
   return {
@@ -758,8 +761,11 @@ export async function runStructureEval(state, skeleton, prevEval){
       balance:  Math.max(0,Math.min(10, (j.axes||{}).balance  ?? j.score)),
       ending:   Math.max(0,Math.min(10, (j.axes||{}).ending   ?? j.score)),
     },
-    issues:      Array.isArray(j.issues)      ? j.issues.slice(0,4).map(String)      : [],
-    suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,4).map(String) : [],
+    // Клэмп 4→10 — иначе поднятый выше лимит в тексте промпта был бы
+    // косметикой: модель могла честно вернуть 10 пунктов, а этот .slice
+    // молча обрезал бы их обратно до 4 после парсинга.
+    issues:      Array.isArray(j.issues)      ? j.issues.slice(0,10).map(String)      : [],
+    suggestions: Array.isArray(j.suggestions) ? j.suggestions.slice(0,10).map(String) : [],
     // Номера глав (1-based), которые реально нужно трогать, чтобы устранить issues —
     // источник для точечных правок (structurePatchMode, см. bookArchitectPatchMessages).
     // Клэмп к реальному числу глав скелета — модель иногда придумывает номер за пределами книги.
