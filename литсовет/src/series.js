@@ -55,7 +55,7 @@ export async function importSeriesBook(state, title, text){
 
   // 2. Канон/персонажи/сводка — через LLM
   const knownNames = (state.characters||[]).map(c=>c.name).filter(Boolean);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:extractMessages(title, text, knownNames), maxTokens:2000 });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:extractMessages(title, text, knownNames), maxTokens:2400 });
   const j = extractJSON(res.text) || {};
 
   // персонажи (findOrCreateCharacter — защита от дублей форм имени)

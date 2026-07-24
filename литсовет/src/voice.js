@@ -76,7 +76,7 @@ export async function analyzeStyleManner(sample, state){
       'Верни JSON: { "rules": ["правило1", "правило2", …] }. Только JSON.',
     ].join('\n') },
   ];
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1200 });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1440 });
   const j = extractJSON(res.text);
   return Array.isArray(j?.rules) ? j.rules.filter(Boolean) : [];
 }
@@ -96,7 +96,7 @@ export async function generalizeToRule(text, state){
       'Переформулируй как ОБЩЕЕ правило-принцип для автора: одно предложение, без ссылок на конкретную сцену, фразу или имя персонажа. Верни только текст правила, без кавычек и пояснений.',
     ].join('\n') },
   ];
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:200 });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:240 });
   return (res.text||'').trim().replace(/^["«]+|["»]+$/g,'');
 }
 

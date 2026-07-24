@@ -88,7 +88,7 @@ export async function maybeRollup(state){
   const prevSynopsis = runningSynopsis(state);
   const parts = [prevSynopsis, ...overflow.map(o=>o.text)].filter(Boolean);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3,
-    messages: bookSummaryMessages(state.project.title||'книга', parts), maxTokens:600, retries:g.retries });
+    messages: bookSummaryMessages(state.project.title||'книга', parts), maxTokens:720, retries:g.retries });
   const synopsis = parseSummary(res.text);
   if(synopsis){
     state.memory.books = state.memory.books || {};
@@ -128,7 +128,7 @@ export async function summarizeScene(state, scene){
   const prevNode = curIdx>0 ? [...scenesInOrder.slice(0, curIdx)].reverse().find(n=>(state.memory?.scenes||{})[n.id]?.current || n.text) : null;
   const prevSummary = prevNode ? ((state.memory?.scenes||{})[prevNode.id]?.current || prevNode.text.slice(-400)) : '';
   const msgs = sceneSummaryMessages(scene, scene.text, knownNames, prevSummary);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:500, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:600, retries:g.retries });
   const parsed = parseSceneSummary(res.text);
   if(!parsed) return null;
 
@@ -171,7 +171,7 @@ export async function summarizeScene(state, scene){
   if(conflictCandidates.length){
     try{
       const msgs = factConflictMessages(conflictCandidates);
-      const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:600, retries:g.retries });
+      const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:720, retries:g.retries });
       parseFactConflicts(res.text).forEach(c=>{
         const pair = conflictCandidates[c.index-1]; if(!pair) return;
         recordFactConflict(state, { newFact:pair.newText, oldFact:pair.oldText, explain:c.explain, sceneId:scene.id, sceneTitle:scene.title });
@@ -189,7 +189,7 @@ export async function summarizeChapter(state, chapter){
   const sums = scenes.map(s=>memText(state.memory.scenes, s.id)).filter(Boolean);
   if(!sums.length || !g.apiKey) return null;
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3,
-    messages: chapterSummaryMessages(chapter.title, sums), maxTokens:500, retries:g.retries });
+    messages: chapterSummaryMessages(chapter.title, sums), maxTokens:600, retries:g.retries });
   const summary = parseSummary(res.text);
   state.memory.chapters = state.memory.chapters || {};
   if(summary) putVersioned(state.memory.chapters, chapter.id, summary);

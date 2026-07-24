@@ -50,7 +50,7 @@ export async function suggestIllustrations(state){
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const scenes = doneScenesOrdered(state);
   const msgs = illustrationSuggestMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:1500, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:1800, retries:g.retries });
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.candidates) ? j.candidates : null;
   if(!arr) throw new Error('Не удалось разобрать ответ арт-директора.');
@@ -207,7 +207,7 @@ export async function suggestOneIllustration(state, target){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const msgs = singleTargetMessages(state, target);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:500, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:600, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || !j.prompt) throw new Error('Не удалось разобрать ответ арт-директора.');
   let sceneId = null, sceneTitle = '';

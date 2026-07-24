@@ -29,12 +29,12 @@ export async function runAgentOnDemand(state, scene, agent){
 
   if(role==='evaluator'){
     const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
-    const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
+    const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??840 });
     return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7.5) };
   }
   if(role==='architect'){
     const msgs = architectMessages(state, scene);
-    const res = await callLLM({ ...base, temperature:agent.temp??0.4, messages:msgs, maxTokens:agent.maxTokens??600 });
+    const res = await callLLM({ ...base, temperature:agent.temp??0.4, messages:msgs, maxTokens:agent.maxTokens??720 });
     return { kind:'architect', plan: parseArchitect(res.text) };
   }
   if(role==='lineedit'){
@@ -44,8 +44,8 @@ export async function runAgentOnDemand(state, scene, agent){
     // дописан. Без проверки длины обрубленный ответ тихо заменял всю сцену.
     const draftWords = (draft.match(/\S+/g)||[]).length;
     // 3.5 ток/слово (не 2.5) — см. тот же расчёт и обоснование в pipeline.js.
-    const dynMin = Math.max(2500, Math.round(draftWords * 3.5));
-    const maxTk = Math.max(agent.maxTokens ?? 3600, dynMin);
+    const dynMin = Math.round(Math.max(2500, Math.round(draftWords * 3.5)) * 1.2);
+    const maxTk = Math.max(agent.maxTokens ?? 4320, dynMin);
     const res = await callLLM({ ...base, temperature:agent.temp??0.3, messages:msgs, maxTokens:maxTk });
     if(!res.text || res.text.length < draft.length*0.5)
       throw new Error(`Ответ короче половины исходного текста (похоже на обрыв лимитом ${maxTk} ток.) — попробуйте ещё раз.`);
@@ -75,7 +75,7 @@ export async function runAgentOnDemand(state, scene, agent){
   else if(role==='atmosphere')msgs = atmosphereGuardMessages(draft, agent.strictness, state.project?.genre);
   else if(role==='humor')     msgs = humorGuardMessages(draft, agent.strictness, state.project?.genre);
   else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
-  const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??700 });
+  const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??840 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 
@@ -87,7 +87,7 @@ export async function askSceneQuestion(state, scene, question){
   if(!draft) throw new Error('Сначала напишите текст сцены — вопрос задавать не к чему.');
   if(!question || !question.trim()) throw new Error('Пустой вопрос.');
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
-  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:700 });
+  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:840 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 
@@ -103,7 +103,7 @@ export async function patchScene(state, scene, instruction){
   // Тот же расчёт, что и у Прозаика в pipeline.js (см. обоснование там): реальная
   // плотность ≈2.78 ток/слово на уже написанном тексте книги — старый потолок в
   // 4000 не оставлял запаса под текст [РАЗБОР] перед переписанной прозой.
-  const cap = Math.min(9000, Math.max(1800, Math.round(draft.length/2) + 1200));
+  const cap = Math.round(Math.min(9000, Math.max(1800, Math.round(draft.length/2) + 1200)) * 1.2);
   const res = await callLLM({ ...base, temperature:0.4,
     messages: surgicalReviseMessages(draft, instruction, state.style?.rules), maxTokens:cap });
   // Ответ приходит в формате [РАЗБОР]/[ТЕКСТ] (см. surgicalReviseMessages) — без

@@ -31,7 +31,7 @@ export async function transformSelection(state, action, selected, before, after)
   const res = await callLLM({
     baseURL:g.baseURL, apiKey:g.apiKey, model:g.model,
     temperature: prose.temp ?? 0.8, messages:[{role:'system',content:sys},{role:'user',content:user}],
-    maxTokens: 700, retries: g.retries,
+    maxTokens: 840, retries: g.retries,
   });
   return res.text.trim();
 }

@@ -289,7 +289,8 @@ export async function runBookArchitect(state, opts={}){
   // 60 сцен × 140 = 9900 ток. бюджета, реальный ответ обрезался на ~31870
   // символах (≈3.2 симв/ток на этой модели) не дойдя до конца JSON.
   const perSceneTokens = opts.previousSkeleton ? 300 : 220;
-  const archMaxTokens = Math.max(4000, Math.min(30000, effectiveScenes * perSceneTokens + 1500));
+  // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
+  const archMaxTokens = Math.round(Math.max(4000, Math.min(30000, effectiveScenes * perSceneTokens + 1500)) * 1.2);
   let lastErr = '';
   // Живой инцидент: автор видел «спиннер навсегда» на скелете из 47+ сцен —
   // единственный вызов callLLM во всём приложении без onToken (см. остальные
@@ -420,7 +421,8 @@ export async function runBookArchitectPatch(state, opts={}){
     const chNode = chapterNodes[num-1];
     return chNode ? n + structure.filter(s=>s.type==='scene' && s.chapterId===chNode.id).length : n;
   }, 0);
-  const maxTokens = Math.max(2000, Math.min(12000, sceneCountInTargets*300 + 800));
+  // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
+  const maxTokens = Math.round(Math.max(2000, Math.min(12000, sceneCountInTargets*300 + 800)) * 1.2);
   let lastErr = '';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
@@ -460,7 +462,7 @@ export async function regenerateScene(state, scene, hint){
   ].filter(Boolean).join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:500 });
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:600 });
     const j = extractJSON(res.text);
     if(j && typeof j.brief==='string'){
       return {
@@ -509,7 +511,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
 
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:3000 });
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:3600 });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
     if(arr && arr.length){
@@ -749,7 +751,8 @@ export async function runStructureEval(state, skeleton, prevEval){
   // 1500→3000: лимит issues/suggestions поднят с 4 до 10 (автор просил
   // проверить, поможет ли больше видимых находок за раз) — вдвое больше
   // пунктов при том же формате ответа примерно вдвое увеличивает его длину.
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:3000, retries:g.retries });
+  // 3000→3600: +20% по запросу автора (общий проход по всем лимитам токенов).
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:3600, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || typeof j.score !== 'number') throw new Error('Оценщик вернул нераспознаваемый ответ — попробуйте ещё раз.');
   return {
@@ -798,7 +801,7 @@ export async function regenerateChapter(state, chapter, hint){
   ].join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:2000 });
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:2400 });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
     if(arr && arr.length){

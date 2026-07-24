@@ -56,7 +56,7 @@ export async function proofreadText(text, state){
   if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
   text = (text||'').trim();
   if(text.length < 20) throw new Error('Слишком короткий текст.');
-  const maxTk = Math.min(8000, Math.round(text.length / 2) + 800); // кириллица ≈ 2 симв./токен
+  const maxTk = Math.round(Math.min(8000, Math.round(text.length / 2) + 800) * 1.2); // кириллица ≈ 2 симв./токен
   const res = await callLLM({
     baseURL: g.baseURL, apiKey: g.apiKey, model: g.model,
     temperature: 0.1, messages: [

@@ -46,7 +46,7 @@ export async function extractCraftSignature(state, scene){
   const g = state.global;
   if(!g?.apiKey || !scene?.text) return null;
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2,
-    messages: craftSignatureMessages(scene.text), maxTokens:500, retries:g.retries });
+    messages: craftSignatureMessages(scene.text), maxTokens:600, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j) return null;
   return {

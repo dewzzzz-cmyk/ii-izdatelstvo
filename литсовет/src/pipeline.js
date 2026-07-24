@@ -140,7 +140,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       const aMsgs = architectMessages(state, scene);
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'architect', text:'Архитектор планирует сцену…'});
-        const aRes = await callLLM({ ...llmBase, temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??600 });
+        const aRes = await callLLM({ ...llmBase, temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??720 });
         const plan = parseArchitect(aRes.text);
         architectText = architectToText(plan, scene);
         if(plan && plan.presentChars.length) scene.presentChars = plan.presentChars;
@@ -257,7 +257,8 @@ export async function runScene(state, scene, opts={}, onProgress){
         // Масштабируем запас от длины самой директивы (chars/2 — та же
         // кир.-эвристика, что и для прозы), а не фиксированной константой.
         const debateAllowance = Math.max(1500, Math.round(directive.length/2) + 500);
-        const cap = Math.min(14000, Math.max(2500, Math.round(prevDraft.length/2) + debateAllowance));
+        // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
+        const cap = Math.round(Math.min(14000, Math.max(2500, Math.round(prevDraft.length/2) + debateAllowance)) * 1.2);
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
@@ -292,7 +293,8 @@ export async function runScene(state, scene, opts={}, onProgress){
         const sceneWords = scene.targetWords || 700;
         // 3.5 ток/слово (не 2.5) — с запасом над реальной плотностью ≈2.78,
         // измеренной на уже написанных сценах книги (см. cap чуть выше по файлу).
-        const dynMin = Math.max(2500, Math.round(sceneWords * 3.5));
+        // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
+        const dynMin = Math.round(Math.max(2500, Math.round(sceneWords * 3.5)) * 1.2);
         const proseMaxTk = proseAg.maxTokens != null ? Math.max(proseAg.maxTokens, dynMin) : dynMin;
         pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb, streamRetry);
         // Первый черновик не проходит через parseDebateRevision (нет секции [ТЕКСТ] —
@@ -304,7 +306,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // Раньше потолок в 8000 срезал повтор до +28% вместо честного ×2 для
           // сцен с proseMaxTk уже за 4000 (2500+ слов) — повтор с почти тем же
           // лимитом почти гарантированно упирался туда же.
-          const retryMaxTk = Math.min(16000, proseMaxTk * 2);
+          const retryMaxTk = Math.min(19200, proseMaxTk * 2);
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
           // Раньше результат повтора принимался безусловно — если обрыв повторялся
@@ -350,13 +352,13 @@ export async function runScene(state, scene, opts={}, onProgress){
           const sorted = [...doneWords].sort((a,b)=>a-b);
           paceBaseline = { medianWords: sorted[Math.floor(sorted.length/2)], sceneWords: (pRes.text.match(/\S+/g)||[]).length };
         }
-        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline });
+        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline, recentEndings: state.recentSceneEndings });
         // Anchor-score: передаём baseline итерации 1 чтобы Оценщик не дрейфовал между итерациями
         if(iter > 1 && anchorVerdict?.ok){
           const baseStr = Object.entries(anchorVerdict.scores).map(([k,v])=>`${AXIS_LABELS[k]||k}:${v}`).join(', ');
           eMsgs[1].content += `\n\nИтерация ${iter}. Базовые оценки черновика 1: [${baseStr}]. Оценивай ТЕКУЩИЙ черновик относительно baseline — ось должна расти там где проблема устранена, и падать если добавлена новая.`;
         }
-        const evalMaxTk = evalAg.maxTokens ?? 900;
+        const evalMaxTk = evalAg.maxTokens ?? 1080;
         let eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalMaxTk });
         verdict = parseEvaluator(eRes.text, threshold);
         // Живой инцидент: реальный usage апстрима (не оценка) показал tokensOut
@@ -367,7 +369,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // реальной проверки качества. Один ретрай с удвоенным лимитом — тот же
         // приём, что уже стоит на первом черновике Прозаика.
         if(!verdict.ok){
-          const evalRetryTk = Math.min(6000, evalMaxTk * 2);
+          const evalRetryTk = Math.min(7200, evalMaxTk * 2);
           onProgress && onProgress({log:{icon:'⚠️', text:`Оценщик: ответ не распарсился (похоже на обрыв токенами, лимит был ${evalMaxTk}) — повтор с лимитом ${evalRetryTk}`, state:'warn'}});
           eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalRetryTk });
           verdict = parseEvaluator(eRes.text, threshold);
@@ -842,8 +844,9 @@ export async function runScene(state, scene, opts={}, onProgress){
       // же формула (3.5 ток/слово, с запасом над измеренной плотностью ≈2.78),
       // что и у Прозаика чуть выше по файлу.
       const bestWords = (best.match(/\S+/g)||[]).length;
-      const leDynMin = Math.max(2500, Math.round(bestWords * 3.5));
-      const leMaxTk = Math.max(leAg.maxTokens ?? 3600, leDynMin);
+      // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
+      const leDynMin = Math.round(Math.max(2500, Math.round(bestWords * 3.5)) * 1.2);
+      const leMaxTk = Math.max(leAg.maxTokens ?? 4320, leDynMin);
       let leNote = '';
       // Якоря финальной оценки (verdict.anchors — фразы, которые Оценщик
       // явно попросил сохранить дословно) + замечания, которые Прозаик уже
@@ -904,6 +907,10 @@ export async function runScene(state, scene, opts={}, onProgress){
     // state.usedCliches, чтобы СЛЕДУЮЩАЯ сцена книги видела их с итерации 1.
     // Обрезаем до последних 150 — иначе список бесконечно растёт на длинной книге.
     state.usedCliches = [...bannedCliches].slice(-150);
+    // Тот же принцип для концовки этой сцены (см. recentSceneEndings в
+    // state.js) — следующая сцена увидит, чем закончились недавние, чтобы
+    // Оценщик мог поймать повтор ПРИЁМА закрытия, не только дословной фразы.
+    if(best) state.recentSceneEndings = [...(state.recentSceneEndings||[]), best.trim().slice(-200)].slice(-10);
 
     const run = endRun('done');
     return { text: best || '', eval: bestEval, flags: bestFlags, runId, run };
@@ -920,7 +927,7 @@ export async function runScene(state, scene, opts={}, onProgress){
 async function guardJob(state, role, llmBase, messages, flagsOut, onProgress, scene){
   const a = ag(state, role);
   try{
-    const res = await callLLM({ ...llmBase, temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??700 });
+    const res = await callLLM({ ...llmBase, temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??840 });
     const flags = runGuardParse(res.text);
     flagsOut[role] = flags;
     // Страж-читатель уже отвечает на вопрос о пассивности героя (readerGuardMessages,

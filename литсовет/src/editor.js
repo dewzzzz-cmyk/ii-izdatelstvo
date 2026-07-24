@@ -80,7 +80,7 @@ export async function suggestEdits(text, state){
   if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
   text = (text || '').trim();
   if(text.length < 40) throw new Error('Слишком короткий текст.');
-  const maxTk = Math.min(2000, Math.round(text.length / 3) + 600);
+  const maxTk = Math.round(Math.min(2000, Math.round(text.length / 3) + 600) * 1.2);
   const res = await callLLM({
     baseURL: g.baseURL, apiKey: g.apiKey, model: g.model,
     temperature: 0.3, messages: [

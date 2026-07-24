@@ -95,7 +95,7 @@ export async function runBetaRead(state){
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 2) throw new Error('Нужно хотя бы 2 законченные сцены (нужны начало и финал).');
   const msgs = betaReaderMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1500, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:2160, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j) throw new Error('Не удалось разобрать ответ бета-ридера.');
   return {
@@ -210,7 +210,7 @@ export async function runWorldDepthCheck(state){
   if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
   if(!hasWorldDepthFacts(state)) throw new Error('В Библии нет фактов категории «магия/технология»/«система» — заполните их на вкладке «Мир».');
   const msgs = worldDepthMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1200, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1440, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j) throw new Error('Не удалось разобрать ответ.');
   return {
@@ -261,7 +261,7 @@ export async function runFlatCharacterCheck(state){
   if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
   if(!hasCharactersToCheck(state)) throw new Error('Нужно хотя бы 2 персонажа в карточках (Память → Персонажи).');
   const msgs = flatCharacterMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1200, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:1440, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || !Array.isArray(j.items)) throw new Error('Не удалось разобрать ответ.');
   return j.items.slice(0,4).map(x=>({
@@ -277,7 +277,7 @@ export async function runCriticReview(state){
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 2) throw new Error('Нужно хотя бы 2 законченные сцены (нужны начало и финал).');
   const msgs = criticReviewMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.5, messages:msgs, maxTokens:3200, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.5, messages:msgs, maxTokens:3840, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j) throw new Error('Не удалось разобрать ответ критика.');
   return {
@@ -298,7 +298,7 @@ export async function runChekhovCheck(state){
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 3) throw new Error('Нужно хотя бы 3 законченные сцены.');
   const msgs = chekhovMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:1800, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:2160, retries:g.retries });
   const j = extractJSON(res.text);
   if(!j || !Array.isArray(j.setups)) throw new Error('Не удалось разобрать ответ.');
   return j.setups.slice(0,8).map(s=>({
@@ -349,7 +349,7 @@ export async function suggestTitles(state){
   if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
   if(!canSuggestTitles(state)) throw new Error('Нужна хотя бы идея книги и 2 написанные главы.');
   const msgs = titleSuggestMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.9, messages:msgs, maxTokens:900, retries:g.retries });
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.9, messages:msgs, maxTokens:1080, retries:g.retries });
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.titles) ? j.titles : null;
   if(!arr) throw new Error('Не удалось разобрать ответ.');
