@@ -1184,6 +1184,7 @@ export function renderStructure(els){
           <button class="btn btn-primary" id="genSkeleton">${hasSkeleton?'Перегенерировать':'Сгенерировать скелет'}</button>
           ${(s.skeletonVersions&&s.skeletonVersions.length)?`<button class="btn" id="revertSkeleton" title="Вернуть прошлый скелет">↶ скелет (${s.skeletonVersions.length})</button>`:''}
           ${(hasSkeleton && !s.structureEval)?`<button class="btn" id="evalOnly" data-tip="Оценить ТЕКУЩУЮ структуру Оценщиком без перегенерации — например, после отката «↶ скелет», когда оценка пропала, а «Улучшить по замечаниям» без неё недоступна.">⭐ Оценить структуру</button>`:''}
+          ${hasSkeleton?`<button class="btn" id="exStructurePdf" data-tip="Скелет книги (главы/сцены/брифы/эмоции) + канон мира + общая информация о книге одним PDF — не готовая проза, для загрузки во внешний ИИ на отдельную проверку.">📤 Скелет+мир (.pdf)</button>`:''}
           <span class="muted" id="genStatus"></span>
         </div>
         <label class="row" style="gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:var(--text-2)">
@@ -1305,6 +1306,9 @@ export function renderStructure(els){
       return;
     }
   };
+
+  const exStructurePdf = document.getElementById('exStructurePdf');
+  if(exStructurePdf) exStructurePdf.onclick = ()=>exportStructurePdf(s);
 
   const regenWithEval = document.getElementById('regenWithEval');
   if(regenWithEval) regenWithEval.onclick = async ()=>{
@@ -2016,6 +2020,76 @@ export function renderRoadmap(s){
 function illustrationForScene(s, sceneId){
   const it = (s.illustrations?.items||[]).find(i=>i.type==='scene' && i.sceneId===sceneId);
   return it ? it.dataUrl : null;
+}
+
+// Экспорт скелета+мира+общей информации в PDF (печать) — по запросу автора:
+// отдельно от готовой прозы (см. exportPdf ниже), для загрузки во внешний
+// ИИ на проверку структуры/канона до того, как сцены написаны, или чтобы
+// свериться с ними без готового текста. Тот же приём — печать через
+// window.print(), без библиотек (проект без зависимостей).
+function exportStructurePdf(s){
+  const p = s.project||{};
+  const title = esc(p.title||'Книга');
+  const meta = [
+    p.genre ? `Жанр: ${esc(p.genre)}${p.subgenre?', '+esc(p.subgenre):''}` : '',
+    p.audience ? `Аудитория: ${esc(p.audience)}` : '',
+    p.era ? `Эпоха: ${esc(p.era)}` : '',
+    p.type==='series' ? `Серия: «${esc(p.seriesTitle||'без названия')}» — книга ${p.seriesBook||1} из ${p.seriesTotal||3}` : '',
+    p.targetWords ? `Целевой объём: ${p.targetWords.toLocaleString('ru')} слов` : '',
+  ].filter(Boolean).join(' · ');
+  const synopsis = p.synopsis||p.idea||'';
+
+  const chapters = (s.structure||[]).filter(n=>n.type==='chapter');
+  const scenesOf = chId => (s.structure||[]).filter(n=>n.type==='scene' && n.chapterId===chId);
+  const totalScenes = (s.structure||[]).filter(n=>n.type==='scene').length;
+  const totalWords = (s.structure||[]).filter(n=>n.type==='scene').reduce((a,n)=>a+(n.targetWords||0),0);
+
+  const structureHtml = !chapters.length ? '<p class="muted">Скелет ещё не сгенерирован.</p>' : chapters.map((ch,ci)=>{
+    const scenesHtml = scenesOf(ch.id).map((sc,si)=>`
+      <div class="skel-scene">
+        <div class="skel-scene-h">${ci+1}.${si+1}. «${esc(sc.title)}» <span class="skel-tag">${sc.sceneType==='sequel'?'секвель':'сцена'}</span> <span class="skel-tag">~${sc.targetWords||0} сл.</span></div>
+        ${sc.brief?`<div class="skel-field"><b>Бриф:</b> ${esc(sc.brief)}</div>`:''}
+        ${sc.emotion?`<div class="skel-field"><b>Эмоция:</b> ${esc(sc.emotion)}</div>`:''}
+        ${sc.entryState?`<div class="skel-field"><b>На входе:</b> ${esc(sc.entryState)}</div>`:''}
+      </div>`).join('');
+    return `<div class="skel-chapter"><h3>Глава ${ci+1}: ${esc(ch.title)} <span class="skel-tag">${esc(ch.arc||'')}</span></h3>${scenesHtml}</div>`;
+  }).join('');
+
+  const bible = s.bible||[];
+  const worldHtml = !bible.length ? '<p class="muted">Канон мира пока пуст.</p>' : (()=>{
+    const byCat = {};
+    bible.forEach(b=>{ const cat = b.category||'общее'; (byCat[cat]=byCat[cat]||[]).push(b); });
+    return Object.entries(byCat).map(([cat, facts])=>`
+      <div class="skel-cat"><h4>${esc(cat)}</h4>${facts.map(f=>`<div class="skel-field">${f.keys?`<b>${esc(f.keys)}:</b> `:''}${esc(f.text)}</div>`).join('')}</div>`).join('');
+  })();
+
+  const chars = s.characters||[];
+  const charsHtml = !chars.length ? '' : `<div class="skel-cat"><h4>Персонажи (карточки)</h4>${chars.map(c=>`
+    <div class="skel-field"><b>${esc(c.name)}:</b> ${esc(c.desc||'')}${c.stateNote?` — <i>текущее состояние: ${esc(c.stateNote)}</i>`:''}</div>`).join('')}</div>`;
+
+  const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title} — скелет и мир</title><style>
+    @page{margin:2cm 2.5cm}body{font-family:Georgia,serif;font-size:11pt;line-height:1.5;color:#111;max-width:720px;margin:0 auto}
+    h1{font-size:20pt;text-align:center;margin:1cm 0 .3cm}.meta{text-align:center;color:#555;font-size:10pt;margin-bottom:1.2cm}
+    h2{font-size:15pt;margin:1.4cm 0 .4cm;border-bottom:1px solid #ccc;padding-bottom:.2cm;page-break-before:always}
+    h3{font-size:12pt;margin:.7cm 0 .3cm}h4{font-size:11pt;margin:.5cm 0 .2cm;color:#333}
+    .skel-scene{margin:.25cm 0 .35cm;padding-left:.3cm;border-left:2px solid #ddd}
+    .skel-scene-h{font-weight:bold;margin-bottom:.1cm}
+    .skel-field{margin:.05cm 0;font-size:10.5pt}
+    .skel-tag{display:inline-block;font-size:8.5pt;font-weight:normal;color:#666;border:1px solid #ccc;border-radius:8px;padding:0 6px;margin-left:4px}
+    .muted{color:#888;font-style:italic}
+    .skel-chapter,.skel-cat{page-break-inside:avoid}
+  </style></head><body>
+    <h1>${title}</h1>
+    <div class="meta">${meta}${meta && synopsis ? '<br>' : ''}${synopsis?esc(synopsis):''}</div>
+    <h2>Структура (${chapters.length} гл. · ${totalScenes} сцен · ~${totalWords.toLocaleString('ru')} сл.)</h2>
+    ${structureHtml}
+    <h2>Мир (канон)</h2>
+    ${worldHtml}
+    ${charsHtml}
+    <script>window.onload=()=>window.print()<\/script>
+  </body></html>`;
+  const w = window.open('', '_blank'); if(!w) return;
+  w.document.write(html); w.document.close();
 }
 
 function exportPdf(s){
