@@ -3,10 +3,11 @@
 
 import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject, lastPushConflict } from './storage.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
+import { TEXT_PROVIDERS, matchTextProvider } from './providers.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.22.0';
+export const APP_VERSION = '1.23.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -127,6 +128,14 @@ export function defaultState(){
                                 // слайдер maxTokens для этой роли не показываем (см. ui/diagnostics.js): он
                                 // сломал бы авто-масштабирование под объём книги. Множитель даёт ту же
                                 // ручку «дать больше места», не отменяя саму формулу.
+      // Ключи API по провайдеру ('deepseek'|'openai'|'gemini'|'qwen') — заполняется
+      // автоматически при сохранении Настроек (см. ui/app.js), чтобы роль,
+      // переопределившая себе другого провайдера (agent.provider, панель агентов
+      // ui/diagnostics.js → llmFor() ниже), могла использовать этот же ключ снова,
+      // не вводя его заново. Имя поля 'apiKeys' (не providerKeys) намеренно —
+      // совпадает с SECRET_KEYS в storage.js, поэтому автоматически ТОЛЬКО в
+      // памяти, как и одиночный apiKey (см. восстановление из localStorage ниже).
+      apiKeys: {},
     },
     log: [],
     ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false, editorAuto: false },
@@ -361,17 +370,29 @@ export function ag(state, role){
   return (state.agents||[]).find(a=>a.role===role || a.id===role) || {};
 }
 
-// Конфиг вызова LLM для конкретного агента: если у агента заданы свои
-// apiURL/apiKey/model (см. per-роль переопределение провайдера в
-// ui/diagnostics.js), они перекрывают глобальные — иначе наследуется
-// state.global как раньше. Позволяет, например, посадить Прозаика на более
-// сильную модель, а Стражей/Оценщика оставить на дешёвой — раньше вся книга
-// целиком шла через один global.model без исключений.
+// Конфиг вызова LLM для конкретного агента: если у агента задан свой
+// provider (см. per-роль переключатель провайдера/модели в
+// ui/diagnostics.js — выпадающие списки из providers.js, не свободный
+// текст), URL и ключ берутся оттуда — иначе наследуется state.global как
+// раньше. Ключ ищется в global.apiKeys[provider] (заполняется автоматически
+// при сохранении Настроек, см. ui/app.js); если его там нет, но именно этот
+// провайдер сейчас выбран глобально — используем текущий global.apiKey.
+// Модель агента (agent.model) при этом независима от provider: можно
+// оставить провайдера как в настройках, но взять другую его модель.
 export function llmFor(state, agent){
   const g = state.global;
+  if(agent && agent.provider){
+    const p = TEXT_PROVIDERS.find(x=>x.v===agent.provider && x.v!=='custom');
+    if(p){
+      const apiKey = (g.apiKeys && g.apiKeys[agent.provider])
+        || (matchTextProvider(g.baseURL)===agent.provider ? g.apiKey : '')
+        || g.apiKey;
+      return { baseURL: p.baseURL, apiKey, model: agent.model || p.model, retries: g.retries };
+    }
+  }
   return {
-    baseURL: (agent && agent.apiURL) || g.baseURL,
-    apiKey: (agent && agent.apiKey) || g.apiKey,
+    baseURL: g.baseURL,
+    apiKey: g.apiKey,
     model: (agent && agent.model) || g.model,
     retries: g.retries,
   };
@@ -435,6 +456,10 @@ export function save(){
   if(typeof k === 'string') lsSet('litsovet_apikey', k);
   const ik = _state.illustrations?.apiKey;
   if(typeof ik === 'string') lsSet('litsovet_ic_apikey', ik);
+  // Ключи по провайдеру (per-роль override, см. llmFor) — тот же принцип:
+  // не уходят на сервер/диск (см. SECRET_KEYS в storage.js), восстанавливаются
+  // из localStorage при загрузке (см. init() ниже).
+  if(_state.global?.apiKeys) lsSet('litsovet_apikeys', JSON.stringify(_state.global.apiKeys));
   emit();
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(persistToServer, 400);
@@ -458,12 +483,16 @@ export async function saveNow(){
   if(typeof k === 'string') lsSet('litsovet_apikey', k);
   const ik = _state.illustrations?.apiKey;
   if(typeof ik === 'string') lsSet('litsovet_ic_apikey', ik);
+  if(_state.global?.apiKeys) lsSet('litsovet_apikeys', JSON.stringify(_state.global.apiKeys));
   emit();
   return persistToServer();
 }
 
 function lsGet(k){ try{ return localStorage.getItem(k); }catch{ return null; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch{} }
+// global.apiKeys хранится в localStorage как JSON (см. save()) — тот же
+// принцип, что у одиночного litsovet_apikey, просто структура сложнее.
+function lsGetApiKeys(){ try{ return JSON.parse(lsGet('litsovet_apikeys') || '{}'); }catch{ return {}; } }
 
 export async function init(){
   // Синхронизируем с сервером в фоне ДО загрузки активного проекта
@@ -473,15 +502,16 @@ export async function init(){
 
   const savedKey = lsGet('litsovet_apikey') || '';
   const savedIcKey = lsGet('litsovet_ic_apikey') || '';
+  const savedApiKeys = lsGetApiKeys();
   const lastId = lsGet('litsovet_last');
   if(lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; loaded.illustrations = loaded.illustrations||{}; loaded.illustrations.apiKey = savedIcKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; loaded.global.apiKeys = savedApiKeys; loaded.illustrations = loaded.illustrations||{}; loaded.illustrations.apiKey = savedIcKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   // Если lastId не нашёлся локально — мог прийти с сервера
   if(hadNew && lastId){
     const loaded = await loadProject(lastId).catch(()=>null);
-    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; loaded.illustrations = loaded.illustrations||{}; loaded.illustrations.apiKey = savedIcKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
+    if(loaded){ loaded.global = loaded.global||{}; loaded.global.apiKey = savedKey; loaded.global.apiKeys = savedApiKeys; loaded.illustrations = loaded.illustrations||{}; loaded.illustrations.apiKey = savedIcKey; _state = migrate(loaded); setSyncStatus('ok'); emit(); return _state; }
   }
   _state = defaultState();
   lsSet('litsovet_last', _state.id);
@@ -492,9 +522,11 @@ export async function init(){
 
 export function newProject(){
   const prevKey = _state?.global?.apiKey || '';
+  const prevApiKeys = _state?.global?.apiKeys || {};
   const prevIc = _state?.illustrations || {};
   _state = defaultState();
   _state.global.apiKey = prevKey;
+  _state.global.apiKeys = prevApiKeys;
   _state.illustrations.apiKey = prevIc.apiKey || '';
   // Провайдер/модель/качество/размер идут вместе с ключом — ключ одного
   // провайдера не работает у другого (иначе после первого нового проекта
@@ -516,7 +548,7 @@ export async function switchProject(id){
     if(proj) await saveProject(proj).catch(()=>{});
   }
   if(!proj) return false;
-  proj.global = proj.global||{}; proj.global.apiKey = _state?.global?.apiKey||'';
+  proj.global = proj.global||{}; proj.global.apiKey = _state?.global?.apiKey||''; proj.global.apiKeys = _state?.global?.apiKeys||{};
   proj.illustrations = proj.illustrations||{}; proj.illustrations.apiKey = _state?.illustrations?.apiKey||'';
   _state = migrate(proj);
   lsSet('litsovet_last', id);

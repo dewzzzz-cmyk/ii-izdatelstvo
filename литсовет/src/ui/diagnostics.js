@@ -5,6 +5,7 @@ import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
 import { openRuleModal } from './rule-modal.js';
+import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider } from '../providers.js';
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 // Нормализует прозаический текст для HTML: одиночный \n внутри абзаца → пробел, двойной \n\n → <br><br>
@@ -103,17 +104,39 @@ function renderAgentParams(a, global){
 // Переопределение модели/провайдера для ОДНОЙ роли — по умолчанию все агенты
 // делят один state.global.model/baseURL/apiKey (единственная модель на весь
 // пайплайн), что не даёт посадить, например, Прозаика на более сильную/дорогую
-// модель, оставив Стражей/Оценщика на дешёвой. Пустые поля = наследуют global
-// (см. llmFor() в state.js) — заполнение не обязательно ни для одной роли.
+// модель, оставив Стражей/Оценщика на дешёвой. Выпадающие списки из
+// providers.js (те же, что в Настройках) — не свободный текст: провайдер
+// выбирается из известных, ключ НЕ вводится здесь повторно, а берётся из
+// global.apiKeys[provider] (см. llmFor() в state.js и «Ключи других
+// провайдеров» в Настройках, ui/app.js). Пусто = наследует global.
 function renderAgentOverride(a, global){
-  const active = !!(a.model || a.apiURL || a.apiKey);
+  const active = !!(a.provider || a.model);
+  const effProvider = a.provider || matchTextProvider(global.baseURL);
+  const known = TEXT_MODEL_OPTIONS[effProvider] || [];
+  const modelVal = a.model || '';
+  const opts = modelVal && !known.includes(modelVal) ? [modelVal, ...known] : known;
+  const defaultProviderLabel = (TEXT_PROVIDERS.find(p=>p.v===matchTextProvider(global.baseURL))||{}).label || global.baseURL || '—';
+  const providerDefaultModel = a.provider ? ((TEXT_PROVIDERS.find(p=>p.v===a.provider)||{}).model||'') : (global.model||'');
   return `<details class="ap-override"${active?' open':''}>
     <summary class="ap-override-summary">🔌 Модель/провайдер для этой роли${active?' <span class="ap-override-badge">переопределено</span>':''}</summary>
     <div class="ap-override-body">
-      <div class="ap-hint">пусто — использует общие настройки (⚙); заполните, чтобы посадить именно эту роль на другую модель или провайдера</div>
-      <input type="text" class="ap-ov-model" data-aid="${a.id}" placeholder="модель (сейчас по умолч.: ${esc(global.model||'—')})" value="${esc(a.model||'')}">
-      <input type="text" class="ap-ov-url" data-aid="${a.id}" placeholder="URL API (сейчас по умолч.: ${esc(global.baseURL||'—')})" value="${esc(a.apiURL||'')}">
-      <input type="password" class="ap-ov-key" data-aid="${a.id}" placeholder="ключ API (пусто — как в ⚙)" value="${esc(a.apiKey||'')}">
+      <div class="ap-hint">пусто — использует общие настройки (⚙); ключи для провайдеров берутся тоже оттуда — «Ключи других провайдеров» в Настройках</div>
+      <div class="ap-ov-row">
+        <span class="ap-ov-label">Провайдер</span>
+        <select class="ap-ov-provider" data-aid="${a.id}">
+          <option value="">как в настройках (${esc(defaultProviderLabel)})</option>
+          ${TEXT_PROVIDERS.filter(p=>p.v!=='custom').map(p=>`<option value="${p.v}"${a.provider===p.v?' selected':''}>${esc(p.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="ap-ov-row">
+        <span class="ap-ov-label">Модель</span>
+        <select class="ap-ov-model" data-aid="${a.id}">
+          <option value="">как в настройках${providerDefaultModel?` (${esc(providerDefaultModel)})`:''}</option>
+          ${opts.map(m=>`<option value="${esc(m)}"${m===modelVal?' selected':''}>${esc(m)}</option>`).join('')}
+          <option value="__custom__">✎ другая модель…</option>
+        </select>
+        <input type="text" class="ap-ov-model-custom" data-aid="${a.id}" placeholder="название модели" style="display:none;margin-top:6px">
+      </div>
     </div>
   </details>`;
 }
@@ -522,6 +545,10 @@ export function renderAgentPipeline(){
   return `
     ${flowHtml}
     <div style="display:flex;gap:5px;flex-wrap:wrap;padding:6px 12px 0" id="agentFilterBar">${filterTabs}</div>
+    <div style="display:flex;gap:6px;padding:6px 12px 0" id="agentBulkBar" data-tip="Действует на агентов текущего фильтра выше (${esc(_agentFilter)}), не на всех сразу">
+      <button class="btn" id="agentEnableAll" style="flex:1;font-size:11px">✓ Включить все</button>
+      <button class="btn" id="agentDisableAll" style="flex:1;font-size:11px">✕ Выключить все</button>
+    </div>
     <div class="diag-section" id="agentRows">${rows||'<div class="empty-state">Нет агентов в этой категории.</div>'}</div>
     <button class="btn btn-block" id="addAgentBtn" style="margin:6px 12px;width:calc(100% - 24px)" data-tip="Добавить своего стража: он проверит сцену по вашему описанию и поставит флаги. Не меняет текст.">+ Добавить стража</button>
     <div class="ph">Прогоны</div>
@@ -577,13 +604,43 @@ function bindAgents(){
   bindToggles();
   // фильтр категорий агентов
   document.querySelectorAll('.ap-fcat').forEach(b=>b.onclick=()=>{ _agentFilter=b.dataset.fcat; rerenderDiag(); });
+  // включить/выключить всех агентов ТЕКУЩЕГО фильтра разом — раньше приходилось
+  // щёлкать тумблер каждого стража по одному, что особенно неудобно на большом
+  // списке (11+ стражей), когда автору нужно временно отключить их все разом.
+  document.getElementById('agentEnableAll')?.addEventListener('click', ()=>{
+    const s=getState();
+    (s.agents||[]).filter(a=>agentMatchesFilter(a,_agentFilter)).forEach(a=>{ a.enabled=true; });
+    save();
+  });
+  document.getElementById('agentDisableAll')?.addEventListener('click', ()=>{
+    const s=getState();
+    (s.agents||[]).filter(a=>agentMatchesFilter(a,_agentFilter)).forEach(a=>{ a.enabled=false; });
+    save();
+  });
   // тумблер вкл/выкл — теперь привязан один раз в bindToggles() (см. выше)
   // промпт кастомного агента
   document.querySelectorAll('.ap-prompt').forEach(t=>t.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.aid); if(a){ a.prompt=t.value; save(); } }));
-  // переопределение модели/провайдера для этой роли (пусто — наследует global, см. llmFor())
-  document.querySelectorAll('.ap-ov-model').forEach(inp=>inp.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.model=inp.value.trim()||undefined; save(); } }));
-  document.querySelectorAll('.ap-ov-url').forEach(inp=>inp.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.apiURL=inp.value.trim()||undefined; save(); } }));
-  document.querySelectorAll('.ap-ov-key').forEach(inp=>inp.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.apiKey=inp.value.trim()||undefined; save(); } }));
+  // переопределение провайдера для этой роли (пусто — наследует global, см. llmFor()) —
+  // выбор из списка, не свободный текст; ключ отдельно не спрашиваем, берётся
+  // из global.apiKeys[provider] (см. «Ключи других провайдеров» в Настройках).
+  document.querySelectorAll('.ap-ov-provider').forEach(sel=>sel.onchange=()=>{
+    const s=getState(); const a=s.agents.find(x=>x.id===sel.dataset.aid); if(a){ a.provider=sel.value||undefined; save(); }
+  });
+  // модель этой роли — независима от провайдера (можно оставить провайдера
+  // «как в настройках», но взять другую его модель). «✎ другая модель…»
+  // раскрывает текстовый ввод рядом, тот же приём, что в Настройках.
+  document.querySelectorAll('.ap-ov-model').forEach(sel=>sel.onchange=()=>{
+    const s=getState(); const a=s.agents.find(x=>x.id===sel.dataset.aid); if(!a) return;
+    if(sel.value==='__custom__'){
+      const custom=document.querySelector(`.ap-ov-model-custom[data-aid="${a.id}"]`);
+      if(custom){ custom.style.display=''; custom.focus(); }
+      return;
+    }
+    a.model=sel.value||undefined; save();
+  });
+  document.querySelectorAll('.ap-ov-model-custom').forEach(inp=>inp.addEventListener('change',()=>{
+    const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.model=inp.value.trim()||undefined; save(); }
+  }));
   // «фактический страж» — бежит каждую итерацию, а не только на принятом тексте
   document.querySelectorAll('.ap-factual').forEach(cb=>cb.onchange=()=>{ const s=getState(); const a=s.agents.find(x=>x.id===cb.dataset.aid); if(a){ a.factual=cb.checked; save(); rerenderDiag(); } });
   // удалить кастомного агента

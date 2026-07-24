@@ -276,8 +276,11 @@ textarea{resize:vertical;min-height:60px}
 .ap-override-summary{font-size:11px;color:var(--text-2);cursor:pointer;padding:5px 0;list-style:none}
 .ap-override-summary::-webkit-details-marker{display:none}
 .ap-override-badge{font-size:10px;color:#fff;background:var(--accent);border-radius:8px;padding:1px 6px;margin-left:4px}
-.ap-override-body{display:flex;flex-direction:column;gap:6px;padding:2px 0 8px}
+.ap-override-body{display:flex;flex-direction:column;gap:8px;padding:2px 0 8px}
 .ap-override-body input{width:100%;box-sizing:border-box;font-size:11px;padding:5px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text)}
+.ap-ov-row{display:flex;flex-direction:column;gap:3px}
+.ap-ov-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.02em}
+.ap-ov-row select{width:100%;box-sizing:border-box;font-size:11px;padding:5px 8px;border:1px solid var(--border-2);border-radius:6px;background:var(--surface);color:var(--text)}
 .ap-mode{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .mode-mini{display:flex;border:1px solid var(--border-2);border-radius:var(--radius);overflow:hidden}
 .mm-btn{font-size:11px;padding:3px 10px;border:none;background:var(--surface);color:var(--text-3)}

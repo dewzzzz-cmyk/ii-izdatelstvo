@@ -11,41 +11,9 @@ import { exportCheckpoint, listProjects, listServerProjects } from '../storage.j
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
 import { MODEL_OPTIONS } from '../imagegen.js';
+import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider } from '../providers.js';
 
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-// Известные OpenAI-совместимые текстовые провайдеры — пресет URL+модель,
-// но поля ниже остаются свободным текстом: если пресет неточен (эндпоинты
-// меняются), автор просто поправит вручную, ничего не заблокировано.
-const TEXT_PROVIDERS = [
-  { v:'deepseek', label:'DeepSeek',       baseURL:'https://api.deepseek.com', model:'deepseek-chat' },
-  { v:'openai',   label:'OpenAI',         baseURL:'https://api.openai.com/v1', model:'gpt-5' },
-  { v:'gemini',   label:'Google Gemini',  baseURL:'https://generativelanguage.googleapis.com/v1beta/openai/', model:'gemini-2.5-flash' },
-  { v:'qwen',     label:'Qwen (Alibaba)', baseURL:'https://dashscope.aliyuncs.com/compatible-mode/v1', model:'qwen-plus' },
-  { v:'custom',   label:'Другой…',        baseURL:'', model:'' },
-];
-function matchTextProvider(baseURL){
-  const found = TEXT_PROVIDERS.find(p=>p.v!=='custom' && p.baseURL===baseURL);
-  return found ? found.v : 'custom';
-}
-
-// Подсказки моделей для текстового провайдера — то же поле остаётся
-// свободным текстом (можно вписать что угодно), но раньше выбор был вообще
-// не виден: TEXT_PROVIDERS хранит только ОДНУ модель на провайдера по
-// умолчанию, хотя у DeepSeek их реально две с разной ценой и поведением
-// (см. PRICES в state.js — единственный источник уже проверенных id, не
-// придуманные названия). Список — подсказка (datalist), не жёсткий список:
-// печатать своё значение можно и дальше.
-// deepseek-chat/deepseek-reasoner официально устаревают 2026-07-24 (замена —
-// deepseek-v4-flash/deepseek-v4-pro), но старые имена пока работают ради
-// совместимости — оставляем их в списке, чтобы уже сохранённый выбор не
-// потерялся сам по себе.
-const TEXT_MODEL_OPTIONS = {
-  deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
-  openai: ['gpt-4o', 'gpt-4o-mini'],
-  gemini: ['gemini-2.5-flash'],
-  qwen: ['qwen-plus'],
-};
 
 const IC_MODEL_DEFAULT = { gemini:'gemini-2.5-flash-image', openai:'gpt-image-1', qwen:'wanx2.1-t2i-turbo', recraft:'recraftv4_1' };
 
@@ -296,6 +264,17 @@ async function openSettings(){
             <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??32000)}" min="8000" max="150000" step="4000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
           </div></div>
 
+        <div class="field" style="margin-top:14px"><label>Ключи других провайдеров <span class="hint">чтобы отдельная роль (панель агентов справа → ⚙ у роли) могла переключиться на другого провайдера/модель без повторного ввода ключа</span></label>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${TEXT_PROVIDERS.filter(p=>p.v!=='custom').map(p=>{
+              const val = g.apiKeys?.[p.v] || (matchTextProvider(g.baseURL)===p.v ? g.apiKey : '') || '';
+              return `<div class="row" style="gap:8px;align-items:center">
+                <span style="width:120px;font-size:12px;color:var(--text-2);flex-shrink:0">${escAttr(p.label)}</span>
+                ${keyRow('setPKey_'+p.v, val, 'sk-...')}
+              </div>`;
+            }).join('')}
+          </div></div>
+
         <div class="settings-section">Иллюстрации</div>
         <div class="field"><span class="hint">свой ключ, отдельно от текстовой модели — тратит деньги за картинку</span></div>
         <div class="row" style="gap:8px">
@@ -341,6 +320,20 @@ async function openSettings(){
     g.apiKey = document.getElementById('setKey').value.trim();
     g.baseURL = document.getElementById('setUrl').value.trim();
     g.model = readModel();
+    // Запоминаем ключ ПО ПРОВАЙДЕРУ (не только как «текущий» g.apiKey) — чтобы
+    // роль, переопределившая себе другого провайдера (панель агентов, см.
+    // ui/diagnostics.js), могла использовать этот же ключ снова, не вводя его
+    // заново на каждой роли. 'custom' пропускаем — для него нет фиксированного
+    // baseURL, привязать ключ не к чему.
+    const pid = matchTextProvider(g.baseURL);
+    g.apiKeys = g.apiKeys || {};
+    if(pid !== 'custom' && g.apiKey) g.apiKeys[pid] = g.apiKey;
+    // Явные поля «Ключи других провайдеров» — сохраняем то, что автор вписал
+    // туда сам, даже для провайдера, который сейчас не выбран основным.
+    TEXT_PROVIDERS.filter(p=>p.v!=='custom').forEach(p=>{
+      const v = (document.getElementById('setPKey_'+p.v)?.value||'').trim();
+      if(v) g.apiKeys[p.v] = v;
+    });
     const bv = parseInt(document.getElementById('setBudgetNum').value); if(bv>=8000) g.budgetTokens = bv;
     s.illustrations = s.illustrations || {};
     s.illustrations.provider = document.getElementById('setIcProvider').value;
