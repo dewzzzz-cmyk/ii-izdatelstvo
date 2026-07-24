@@ -38,7 +38,7 @@ export async function runAgentOnDemand(state, scene, agent){
     return { kind:'architect', plan: parseArchitect(res.text) };
   }
   if(role==='lineedit'){
-    const msgs = lineEditMessages(draft, state.style?.forbidden);
+    const msgs = lineEditMessages(draft, state.style?.forbidden, '', { anchors: scene.lastEval?.anchors, rejectedNotes: scene.rejectedNotes });
     // Тот же приём, что и в pipeline.js: Линейный редактор возвращает ВЕСЬ текст
     // сцены целиком, статичный maxTokens обрубал длинные сцены раньше, чем текст
     // дописан. Без проверки длины обрубленный ответ тихо заменял всю сцену.

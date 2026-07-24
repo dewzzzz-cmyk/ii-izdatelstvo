@@ -845,10 +845,18 @@ export async function runScene(state, scene, opts={}, onProgress){
       const leDynMin = Math.max(2500, Math.round(bestWords * 3.5));
       const leMaxTk = Math.max(leAg.maxTokens ?? 3600, leDynMin);
       let leNote = '';
+      // Якоря финальной оценки (verdict.anchors — фразы, которые Оценщик
+      // явно попросил сохранить дословно) + замечания, которые Прозаик уже
+      // осознанно отклонил как приём (scene.rejectedNotes) — обе категории
+      // «уже решено, не трогать» передаём Линейному редактору в промпт (см.
+      // lineEditMessages), а якоря ещё и проверяем ПОСЛЕ его правки тем же
+      // способом, что уже стоит в цикле Прозаик⇄Стражи (anchorSurvives) —
+      // раньше только этот шаг во всём пайплайне не имел такой проверки.
+      const leAnchors = prevIterAnchors;
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
-          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote), maxTokens:leMaxTk });
+          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote, { anchors: leAnchors, rejectedNotes: scene.rejectedNotes }), maxTokens:leMaxTk });
           // Защита от усечённого ответа — раньше проверяла ТОЛЬКО длину (>50% исходного).
           // Живой прогон показал обрыв на 90% длины (3710 из 4139 симв., без завершающей
           // пунктуации, посреди слова) — формально проходил порог длины и сохранялся как
@@ -860,7 +868,15 @@ export async function runScene(state, scene, opts={}, onProgress){
             logStep({ agent:'lineedit', input:'(черновик)'+(leNote?' + заметка автора: '+leNote:''), output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
             onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
             const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
-            if(gt.approve){ best = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text; break; }
+            if(gt.approve){
+              const candidate = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text;
+              const leLostAnchors = leAnchors.filter(a=>!anchorSurvives(candidate, a));
+              if(leLostAnchors.length){
+                onProgress && onProgress({log:{icon:'📌', text:`Линейный редактор потерял закреплённый якорь («${leLostAnchors[0].slice(0,60)}»${leLostAnchors.length>1?` +${leLostAnchors.length-1}`:''}) — правка отклонена, текст остаётся как до Линейного редактора`, state:'warn'}});
+                break;
+              }
+              best = candidate; break;
+            }
             // переписать с заметкой — раньше gt.note нигде не читался, и повтор
             // был идентичен первому запросу (отличался только сэмплированием)
             if(!gt.note){ break; }
