@@ -6,12 +6,17 @@ import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.19.4';
+export const APP_VERSION = '1.19.5';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
   'deepseek-chat':     { in:0.14, out:0.28 },
   'deepseek-reasoner': { in:0.55, out:2.19 },
+  // Официальные цены DeepSeek (api-docs.deepseek.com/quick_start/pricing,
+  // проверено 2026-07-24) — cache-miss тариф на вход, т.к. приложение не
+  // различает cache hit/miss в usage-ответе апстрима.
+  'deepseek-v4-flash': { in:0.14,  out:0.28 },
+  'deepseek-v4-pro':   { in:0.435, out:0.87 },
   'gpt-4o':            { in:2.5,  out:10 },
   'gpt-4o-mini':      { in:0.15, out:0.6 },
 };
