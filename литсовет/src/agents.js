@@ -51,11 +51,14 @@ export function architectMessages(state, scene, bookContext){
 export function parseArchitect(text){
   const j = extractJSON(text);
   if(!j) return null;
+  // toStr (см. ниже, у parseEvaluator) — та же защита: architectToText делает
+  // anchors.join('; ')/beats.join(' → ') прямо в промпт Прозаика, нестроковый
+  // элемент утёк бы туда как «[object Object]» уже на ПЕРВОМ черновике сцены.
   return {
-    anchors: Array.isArray(j.anchors)? j.anchors : [],
-    presentChars: Array.isArray(j.presentChars)? j.presentChars : [],
-    forbiddenWords: Array.isArray(j.forbiddenWords)? j.forbiddenWords : [],
-    beats: Array.isArray(j.beats)? j.beats : [],
+    anchors: Array.isArray(j.anchors)? j.anchors.map(toStr) : [],
+    presentChars: Array.isArray(j.presentChars)? j.presentChars.map(toStr) : [],
+    forbiddenWords: Array.isArray(j.forbiddenWords)? j.forbiddenWords.map(toStr) : [],
+    beats: Array.isArray(j.beats)? j.beats.map(toStr) : [],
     goal: typeof j.goal==='string'? j.goal : '',
     obstacle: typeof j.obstacle==='string'? j.obstacle : '',
     historicalDetail: typeof j.historicalDetail==='string'? j.historicalDetail : '',
@@ -230,6 +233,25 @@ export function evaluatorMessages(scene, draft, voiceExamples, bookContext, rule
   return [{role:'system',content:sys},{role:'user',content:user}];
 }
 
+// Живой инцидент: модель иногда возвращает элемент массива (notes/anchors/
+// questions/...) как ОБЪЕКТ ({quote, reason} и т.п.) вместо простой строки,
+// хотя схема просит строки. Ни один из массивов parseEvaluator ниже не
+// приводился к строке (в отличие от .map(String) в bookreview.js) — «голый»
+// объект утекал как «[object Object]» в лог автору, а хуже — в buildUnifiedDirective
+// (verdict.anchors.join('; '), verdict.notes[...]), которая шлёт эту директиву
+// Прозаику на СЛЕДУЮЩЕЙ итерации: одна нестроковая запись превращала указание
+// Прозаику в мусор и правдоподобно объясняла каскад «черновик всё хуже».
+// toStr пытается достать текст из типичных полей, а не молча терять содержимое.
+function toStr(x){
+  if(typeof x === 'string') return x;
+  if(x == null) return '';
+  if(typeof x === 'object'){
+    const cand = x.text ?? x.quote ?? x.note ?? x.value ?? x.question ?? x.phrase ?? x.fragment;
+    if(typeof cand === 'string') return cand;
+    try{ return JSON.stringify(x); }catch{ return String(x); }
+  }
+  return String(x);
+}
 // threshold проверяется здесь; weighted считаем САМИ из осей (не доверяем модели — иначе подгонит под verdict).
 export function parseEvaluator(text, threshold){
   const j = extractJSON(text);
@@ -253,14 +275,14 @@ export function parseEvaluator(text, threshold){
     weighted: Math.round(weighted*10)/10,
     minAxis,
     pass,
-    notes: Array.isArray(j.notes) ? j.notes : [],
-    abstractions: Array.isArray(j.abstractions) ? j.abstractions : [],
-    padding: Array.isArray(j.padding) ? j.padding : [],
-    repetition: Array.isArray(j.repetition) ? j.repetition : [],
-    cliches: Array.isArray(j.cliches) ? j.cliches : [],
+    notes: Array.isArray(j.notes) ? j.notes.map(toStr) : [],
+    abstractions: Array.isArray(j.abstractions) ? j.abstractions.map(toStr) : [],
+    padding: Array.isArray(j.padding) ? j.padding.map(toStr) : [],
+    repetition: Array.isArray(j.repetition) ? j.repetition.map(toStr) : [],
+    cliches: Array.isArray(j.cliches) ? j.cliches.map(toStr) : [],
     clicheCategory: typeof j.clicheCategory === 'string' ? j.clicheCategory.trim() : '',
-    anchors: Array.isArray(j.anchors) ? j.anchors : [],
-    questions: Array.isArray(j.questions) ? j.questions : [],
+    anchors: Array.isArray(j.anchors) ? j.anchors.map(toStr) : [],
+    questions: Array.isArray(j.questions) ? j.questions.map(toStr) : [],
   };
 }
 function clamp(n){ return Math.max(0, Math.min(10, n)); }
