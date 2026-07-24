@@ -306,7 +306,11 @@ export async function runScene(state, scene, opts={}, onProgress){
           // Раньше потолок в 8000 срезал повтор до +28% вместо честного ×2 для
           // сцен с proseMaxTk уже за 4000 (2500+ слов) — повтор с почти тем же
           // лимитом почти гарантированно упирался туда же.
-          const retryMaxTk = Math.min(19200, proseMaxTk * 2);
+          // Тот же защитный Math.max, что и у Оценщика ниже по файлу: для очень
+          // длинных целевых сцен (targetWords в тысячах) proseMaxTk сам может
+          // превысить 9600, и Math.min(19200, proseMaxTk*2) без Math.max отдал
+          // бы ретрай МЕНЬШЕ исходного лимита — тот же обрыв гарантированно.
+          const retryMaxTk = Math.max(proseMaxTk + 1, Math.min(19200, proseMaxTk * 2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
           // Раньше результат повтора принимался безусловно — если обрыв повторялся
@@ -375,7 +379,13 @@ export async function runScene(state, scene, opts={}, onProgress){
           // и т.п.) — автору не по чему было отличить «нужен лимит больше» от
           // «формат ответа сломан». Сверяем реальную длину ответа с потолком.
           const nearLimit = (eRes.tokensOut||0) >= evalMaxTk*0.85;
-          const evalRetryTk = Math.min(7200, evalMaxTk * 2);
+          // Живой инцидент: автор поднял слайдер Оценщика до 8000 (максимум
+          // слайдера) — старый потолок ретрая (константа 7200) оказался НИЖЕ
+          // исходного лимита, так что «повтор с большим лимитом» на самом деле
+          // повторял с МЕНЬШИМ (7200 < 8000), гарантированно тем же обрывом.
+          // Math.max ниже гарантирует, что ретрай никогда не будет уже исходной
+          // попытки, независимо от того, что задал автор на слайдере.
+          const evalRetryTk = Math.max(evalMaxTk + 1, Math.min(19200, evalMaxTk * 2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Оценщик: ответ не распарсился (${nearLimit?`похоже на обрыв токенами, лимит был ${evalMaxTk}`:`НЕ похоже на обрыв лимита — ответ ${eRes.tokensOut||0} из ${evalMaxTk} ток., скорее всего сломан формат JSON`}) — повтор с лимитом ${evalRetryTk}`, state:'warn'}});
           // Раньше сырой ответ ПЕРВОЙ (неудачной) попытки нигде не сохранялся —
           // logStep ниже логирует только финальный eRes (после ретрая), и если
@@ -529,8 +539,16 @@ export async function runScene(state, scene, opts={}, onProgress){
             else
               onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
           }
-          if(agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length)
-            guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
+          if(agentEnabled('styleguard')){
+            // Тот же паттерн, что у Стража голоса чуть выше: раньше при пустых
+            // style.rules страж молча не запускался вовсе — автор видел тумблер
+            // включённым и был уверен, что проверка идёт, хотя guardJobs её
+            // просто никогда не получал. Теперь явно предупреждаем, как и там.
+            if((state.style?.rules||[]).filter(Boolean).length)
+              guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
+            else
+              onProgress && onProgress({log:{icon:'🚦', text:'Страж стиля: пропущен — добавьте правила автора в настройках «Голос»', state:'warn'}});
+          }
           if(agentEnabled('reader'))
             guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress, scene));
           if(agentEnabled('imagery'))
