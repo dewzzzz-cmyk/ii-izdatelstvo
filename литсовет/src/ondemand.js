@@ -11,7 +11,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
          humorGuardMessages, parseDebateRevision, looksTokenTruncated } from './guards.js';
 import { bookContextBlock } from './context.js';
-import { effectiveRules } from './state.js';
+import { effectiveRules, ag, llmFor } from './state.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
 //   kind:'evaluator' → { verdict }      (оценка по рубрике + клише + замечания)
@@ -24,7 +24,7 @@ export async function runAgentOnDemand(state, scene, agent){
   const draft = (scene.text||'').trim();
   if(!draft && agent.role!=='architect')
     throw new Error('Сначала напишите или вставьте текст сцены — оценивать нечего.');
-  const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
+  const base = llmFor(state, agent);
   const role = agent.role;
 
   if(role==='evaluator'){
@@ -94,12 +94,13 @@ export async function askSceneQuestion(state, scene, question){
 // Точечная правка: внести ТОЛЬКО одно замечание в текущий текст сцены,
 // не переписывая остальное и не запуская цикл агентов. Возвращает весь текст.
 export async function patchScene(state, scene, instruction){
-  const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // Точечная правка пишет прозу — использует конфиг LLM Прозаика (в т.ч. его
+  // переопределение модели/провайдера, если задано), а не голый state.global.
+  const base = llmFor(state, ag(state,'prose'));
+  if(!base.apiKey) throw new Error('Не задан API-ключ (⚙).');
   const draft = (scene.text||'').trim();
   if(!draft) throw new Error('Нет текста сцены.');
   if(!instruction || !instruction.trim()) throw new Error('Пустое замечание.');
-  const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
   // Тот же расчёт, что и у Прозаика в pipeline.js (см. обоснование там): реальная
   // плотность ≈2.78 ток/слово на уже написанном тексте книги — старый потолок в
   // 4000 не оставлял запаса под текст [РАЗБОР] перед переписанной прозой.

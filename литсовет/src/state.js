@@ -6,7 +6,7 @@ import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.21.2';
+export const APP_VERSION = '1.22.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -359,6 +359,22 @@ export function removeAgent(state, id){
 // и Книжным архитектором для чтения temp/maxTokens конкретной роли.
 export function ag(state, role){
   return (state.agents||[]).find(a=>a.role===role || a.id===role) || {};
+}
+
+// Конфиг вызова LLM для конкретного агента: если у агента заданы свои
+// apiURL/apiKey/model (см. per-роль переопределение провайдера в
+// ui/diagnostics.js), они перекрывают глобальные — иначе наследуется
+// state.global как раньше. Позволяет, например, посадить Прозаика на более
+// сильную модель, а Стражей/Оценщика оставить на дешёвой — раньше вся книга
+// целиком шла через один global.model без исключений.
+export function llmFor(state, agent){
+  const g = state.global;
+  return {
+    baseURL: (agent && agent.apiURL) || g.baseURL,
+    apiKey: (agent && agent.apiKey) || g.apiKey,
+    model: (agent && agent.model) || g.model,
+    retries: g.retries,
+  };
 }
 
 // ---- Глобальное состояние сессии ----

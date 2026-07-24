@@ -6,7 +6,7 @@
 import { callLLM, extractJSON } from './llm.js';
 import { genreBeatsNote, genreWantsHumor } from './genres.js';
 import { bibleForPrompt } from './bible.js';
-import { ag } from './state.js';
+import { ag, llmFor } from './state.js';
 import { startRun, logStep, endRun } from './diagnostics.js';
 
 const ARCS = ['завязка','развитие','кульминация','развязка'];
@@ -319,7 +319,7 @@ export async function runBookArchitect(state, opts={}){
   startRun(null, 'Книжный архитектор');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     streamedChars = 0;
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens, retries:g.retries }, onChunk);
+    const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens }, onChunk);
     const v = validateSkeleton(res.text);
     logStep({ agent:'bookArchitect', iter:attempt+1, input:`(генерация скелета, лимит ${archMaxTokens})`, output:res.text,
       tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });
@@ -449,7 +449,7 @@ export async function runBookArchitectPatch(state, opts={}){
   // startRun/logStep) — точечная правка тоже ни разу не писала в diagnostics.
   startRun(null, 'Архитектор (точечная правка)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
+    const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
     const v = validateSkeletonPatch(res.text, affectedChapters);
     logStep({ agent:'bookArchitectPatch', iter:attempt+1, input:`(правка глав ${affectedChapters.join(', ')}, лимит ${maxTokens})`, output:res.text,
       tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });

@@ -14,7 +14,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          looksTokenTruncated } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
-import { recordObservedPattern, ag, effectiveRules } from './state.js';
+import { recordObservedPattern, ag, effectiveRules, llmFor } from './state.js';
 import { genreWantsHumor } from './genres.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -128,7 +128,6 @@ export async function runScene(state, scene, opts={}, onProgress){
   if(_running) throw new Error('Уже идёт прогон — дождитесь завершения.');
   _running = true;
   const g = state.global;
-  const llmBase = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
   const prevSceneText = opts.prevSceneText || prevDoneSceneText(state, scene);
   const runId = startRun(scene.id, 'Сцена: ' + (scene.title||scene.id));
 
@@ -140,7 +139,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       const aMsgs = architectMessages(state, scene, bookContextBlock(state, scene));
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'architect', text:'Архитектор планирует сцену…'});
-        const aRes = await callLLM({ ...llmBase, temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??720 });
+        const aRes = await callLLM({ ...llmFor(state,ac), temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??720 });
         const plan = parseArchitect(aRes.text);
         architectText = architectToText(plan, scene);
         if(plan && plan.presentChars.length) scene.presentChars = plan.presentChars;
@@ -262,7 +261,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
-        pRes = await callLLM({ ...llmBase, temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb, streamRetry);
+        pRes = await callLLM({ ...llmFor(state,proseAg), temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb, streamRetry);
         const parsed = parseDebateRevision(pRes.text);
         if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
         if(parsed.rejected && parsed.rejected.length){
@@ -307,7 +306,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
         const dynMin = Math.round(Math.max(2500, Math.round(sceneWords * 3.5)) * 1.2);
         const proseMaxTk = proseAg.maxTokens != null ? Math.max(proseAg.maxTokens, dynMin) : dynMin;
-        pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb, streamRetry);
+        pRes = await callLLM({ ...llmFor(state,proseAg), temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: proseMaxTk }, streamCb, streamRetry);
         // Первый черновик не проходит через parseDebateRevision (нет секции [ТЕКСТ] —
         // это просто сырая проза), поэтому обрыв по лимиту токенов раньше не ловился
         // вообще: текст молча уходил дальше по пайплайну оборванным на полуслове.
@@ -323,7 +322,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // бы ретрай МЕНЬШЕ исходного лимита — тот же обрыв гарантированно.
           const retryMaxTk = Math.max(proseMaxTk + 1, Math.min(19200, proseMaxTk * 2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
-          pRes = await callLLM({ ...llmBase, temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
+          pRes = await callLLM({ ...llmFor(state,proseAg), temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
           // Раньше результат повтора принимался безусловно — если обрыв повторялся
           // (редко, но бывает: тот же лимит или второй сетевой обрыв подряд), никто
           // это уже не перепроверял. draftTruncated ниже по циклу всё равно не даст
@@ -374,7 +373,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           eMsgs[1].content += `\n\nИтерация ${iter}. Базовые оценки черновика 1: [${baseStr}]. Оценивай ТЕКУЩИЙ черновик относительно baseline — ось должна расти там где проблема устранена, и падать если добавлена новая.`;
         }
         const evalMaxTk = evalAg.maxTokens ?? 1080;
-        let eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalMaxTk });
+        let eRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalMaxTk });
         verdict = parseEvaluator(eRes.text, threshold);
         // Живой инцидент: реальный usage апстрима (не оценка) показал tokensOut
         // РОВНО на заявленном maxTokens — JSON оборвался и не распарсился
@@ -404,7 +403,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // только вторая попытка. Причину первого провала невозможно было
           // посмотреть постфактум. Логируем её отдельным шагом для диагностики.
           logStep({ agent:'evaluator-retry', iter, input:`(попытка 1, ${nearLimit?'похоже на обрыв':'формат сломан'})`, output:eRes.text, tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
-          eRes = await callLLM({ ...llmBase, temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalRetryTk });
+          eRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalRetryTk });
           verdict = parseEvaluator(eRes.text, threshold);
         }
         // Якорь ставим на ПЕРВЫЙ успешно распарсенный вердикт, не строго на итерации
@@ -533,12 +532,12 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(hasGuards){
         const guardJobs = [];
         // Фактические стражи — запускаем на каждой итерации
-        if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', llmBase, logicGuardMessages(state, scene, pRes.text, ag(state,'logic').strictness), flags, onProgress));
-        if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', llmBase, eventsGuardMessages(state, scene, pRes.text, ag(state,'events').strictness), flags, onProgress));
+        if(agentEnabled('logic'))  guardJobs.push(guardJob(state,'logic', logicGuardMessages(state, scene, pRes.text, ag(state,'logic').strictness), flags, onProgress));
+        if(agentEnabled('events')) guardJobs.push(guardJob(state,'events', eventsGuardMessages(state, scene, pRes.text, ag(state,'events').strictness), flags, onProgress));
         // Кастомные стражи, отмеченные автором как «фактические» (a.factual) — тоже
         // каждую итерацию, не только когда текст уже принят.
         (state.agents||[]).filter(a=>a.custom && a.enabled!==false && a.factual).forEach(a=>{
-          guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
+          guardJobs.push(guardJob(state, a.id, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
         });
         // Литературные стражи — раньше только когда текст принят или за одну
         // итерацию до конца (иначе их находки физически некому применить — после
@@ -552,7 +551,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           literaryChecked = true;
           if(agentEnabled('voiceguard')){
             if(voiceExamples.length > 0)
-              guardJobs.push(guardJob(state,'voiceguard', llmBase, voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags, onProgress));
+              guardJobs.push(guardJob(state,'voiceguard', voiceGuardMessages(scene, pRes.text, voiceExamples, ag(state,'voiceguard').strictness), flags, onProgress));
             else
               onProgress && onProgress({log:{icon:'👁', text:'Страж голоса: пропущен — добавьте образцы голоса в настройках «Голос»', state:'warn'}});
           }
@@ -562,28 +561,28 @@ export async function runScene(state, scene, opts={}, onProgress){
             // включённым и был уверен, что проверка идёт, хотя guardJobs её
             // просто никогда не получал. Теперь явно предупреждаем, как и там.
             if((state.style?.rules||[]).filter(Boolean).length)
-              guardJobs.push(guardJob(state,'styleguard', llmBase, styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
+              guardJobs.push(guardJob(state,'styleguard', styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
             else
               onProgress && onProgress({log:{icon:'🚦', text:'Страж стиля: пропущен — добавьте правила автора в настройках «Голос»', state:'warn'}});
           }
           if(agentEnabled('reader'))
-            guardJobs.push(guardJob(state,'reader', llmBase, readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress, scene));
+            guardJobs.push(guardJob(state,'reader', readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress, scene));
           if(agentEnabled('imagery'))
-            guardJobs.push(guardJob(state,'imagery', llmBase, imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'imagery', imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, state.project?.genre), flags, onProgress));
           if(agentEnabled('pov'))
-            guardJobs.push(guardJob(state,'pov', llmBase, povGuardMessages(pRes.text, ag(state,'pov').strictness), flags, onProgress));
+            guardJobs.push(guardJob(state,'pov', povGuardMessages(pRes.text, ag(state,'pov').strictness), flags, onProgress));
           if(agentEnabled('dialogue'))
-            guardJobs.push(guardJob(state,'dialogue', llmBase, dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags, onProgress));
+            guardJobs.push(guardJob(state,'dialogue', dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags, onProgress));
           if(agentEnabled('resolution'))
-            guardJobs.push(guardJob(state,'resolution', llmBase, resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness), flags, onProgress));
+            guardJobs.push(guardJob(state,'resolution', resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness), flags, onProgress));
           if(agentEnabled('atmosphere'))
-            guardJobs.push(guardJob(state,'atmosphere', llmBase, atmosphereGuardMessages(pRes.text, ag(state,'atmosphere').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'atmosphere', atmosphereGuardMessages(pRes.text, ag(state,'atmosphere').strictness, state.project?.genre), flags, onProgress));
           // Только для иронических жанров (см. genreWantsHumor) — на остальных
           // проверка бессмысленна и просто тратила бы токены на пустой критерий.
           if(agentEnabled('humor') && wantsHumor)
-            guardJobs.push(guardJob(state,'humor', llmBase, humorGuardMessages(pRes.text, ag(state,'humor').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'humor', humorGuardMessages(pRes.text, ag(state,'humor').strictness, state.project?.genre), flags, onProgress));
           (state.agents||[]).filter(a=>a.custom && a.enabled!==false && !a.factual).forEach(a=>{
-            guardJobs.push(guardJob(state, a.id, llmBase, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
+            guardJobs.push(guardJob(state, a.id, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
           });
         }
         if(guardJobs.length){
@@ -914,7 +913,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
-          const leRes = await callLLM({ ...llmBase, temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote, { anchors: leAnchors, rejectedNotes: scene.rejectedNotes }), maxTokens:leMaxTk });
+          const leRes = await callLLM({ ...llmFor(state,leAg), temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote, { anchors: leAnchors, rejectedNotes: scene.rejectedNotes }), maxTokens:leMaxTk });
           // Защита от усечённого ответа — раньше проверяла ТОЛЬКО длину (>50% исходного).
           // Живой прогон показал обрыв на 90% длины (3710 из 4139 симв., без завершающей
           // пунктуации, посреди слова) — формально проходил порог длины и сохранялся как
@@ -979,10 +978,10 @@ export async function runScene(state, scene, opts={}, onProgress){
 }
 
 // Запуск одного Стража с устойчивостью к падению (спека 11: не валим весь прогон).
-async function guardJob(state, role, llmBase, messages, flagsOut, onProgress, scene){
+async function guardJob(state, role, messages, flagsOut, onProgress, scene){
   const a = ag(state, role);
   try{
-    const res = await callLLM({ ...llmBase, temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??840 });
+    const res = await callLLM({ ...llmFor(state,a), temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??840 });
     const flags = runGuardParse(res.text);
     flagsOut[role] = flags;
     // Страж-читатель уже отвечает на вопрос о пассивности героя (readerGuardMessages,

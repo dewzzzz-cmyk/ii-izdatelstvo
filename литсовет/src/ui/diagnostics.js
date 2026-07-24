@@ -95,8 +95,27 @@ function renderAgentParams(a, global){
         <div class="ap-hint">${sp.hint}</div>
       </div>`;
     }).join('')}
+    ${renderAgentOverride(a, global)}
     ${a.custom?`<button class="btn ag-remove" data-aid="${a.id}" style="font-size:11px;color:var(--err)">🗑 Удалить стража</button>`:''}
   </div>`;
+}
+
+// Переопределение модели/провайдера для ОДНОЙ роли — по умолчанию все агенты
+// делят один state.global.model/baseURL/apiKey (единственная модель на весь
+// пайплайн), что не даёт посадить, например, Прозаика на более сильную/дорогую
+// модель, оставив Стражей/Оценщика на дешёвой. Пустые поля = наследуют global
+// (см. llmFor() в state.js) — заполнение не обязательно ни для одной роли.
+function renderAgentOverride(a, global){
+  const active = !!(a.model || a.apiURL || a.apiKey);
+  return `<details class="ap-override"${active?' open':''}>
+    <summary class="ap-override-summary">🔌 Модель/провайдер для этой роли${active?' <span class="ap-override-badge">переопределено</span>':''}</summary>
+    <div class="ap-override-body">
+      <div class="ap-hint">пусто — использует общие настройки (⚙); заполните, чтобы посадить именно эту роль на другую модель или провайдера</div>
+      <input type="text" class="ap-ov-model" data-aid="${a.id}" placeholder="модель (сейчас по умолч.: ${esc(global.model||'—')})" value="${esc(a.model||'')}">
+      <input type="text" class="ap-ov-url" data-aid="${a.id}" placeholder="URL API (сейчас по умолч.: ${esc(global.baseURL||'—')})" value="${esc(a.apiURL||'')}">
+      <input type="password" class="ap-ov-key" data-aid="${a.id}" placeholder="ключ API (пусто — как в ⚙)" value="${esc(a.apiKey||'')}">
+    </div>
+  </details>`;
 }
 const SEV_RANK = { critical:0, warning:1, ok:2 };
 
@@ -561,6 +580,10 @@ function bindAgents(){
   // тумблер вкл/выкл — теперь привязан один раз в bindToggles() (см. выше)
   // промпт кастомного агента
   document.querySelectorAll('.ap-prompt').forEach(t=>t.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===t.dataset.aid); if(a){ a.prompt=t.value; save(); } }));
+  // переопределение модели/провайдера для этой роли (пусто — наследует global, см. llmFor())
+  document.querySelectorAll('.ap-ov-model').forEach(inp=>inp.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.model=inp.value.trim()||undefined; save(); } }));
+  document.querySelectorAll('.ap-ov-url').forEach(inp=>inp.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.apiURL=inp.value.trim()||undefined; save(); } }));
+  document.querySelectorAll('.ap-ov-key').forEach(inp=>inp.addEventListener('change',()=>{ const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.apiKey=inp.value.trim()||undefined; save(); } }));
   // «фактический страж» — бежит каждую итерацию, а не только на принятом тексте
   document.querySelectorAll('.ap-factual').forEach(cb=>cb.onchange=()=>{ const s=getState(); const a=s.agents.find(x=>x.id===cb.dataset.aid); if(a){ a.factual=cb.checked; save(); rerenderDiag(); } });
   // удалить кастомного агента
