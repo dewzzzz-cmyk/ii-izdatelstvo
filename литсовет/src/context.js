@@ -162,7 +162,17 @@ export function buildSceneContext(state, scene, opts={}){
   const curIdx = scenesInOrder.findIndex(n=>n.id===scene.id);
   const isFirstScene = curIdx === 0;
   const prevSceneNode = curIdx > 0 ? scenesInOrder[curIdx-1] : null;
-  const user = buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style);
+  // chapter.arc (завязка/развитие/кульминация/развязка) — заполняется Книжным
+  // архитектором на этапе Структуры и читается Оценщиком структуры (пропорции
+  // актов, где должна быть кульминация), но нигде в самой генерации прозы не
+  // использовался: Прозаик не знал, пишет ли он спокойную завязку или главу
+  // кульминации книги — только сцена/секвель (более мелкая, посценная метка),
+  // не положение ГЛАВЫ в общей дуге. Живой вопрос автора: «в написание
+  // попадает только бриф?» — нет, но этот конкретный кусок структуры
+  // действительно терялся между Структурой и Написанием.
+  const chapterNode = (state.structure||[]).find(n=>n.type==='chapter' && n.id===scene.chapterId);
+  const chapterArc = chapterNode?.arc || '';
+  const user = buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style, chapterArc);
 
   return {
     messages: [
@@ -204,7 +214,13 @@ function sceneContinuityNote(opts, prevSceneNode){
   return '';
 }
 
-function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style){
+const CHAPTER_ARC_NOTE = {
+  завязка: 'Глава книги: ЗАВЯЗКА — устанавливай мир/героя/конфликт, держи напряжение умеренным, не разряжай интригу раньше времени.',
+  развитие: 'Глава книги: РАЗВИТИЕ — наращивай ставки и осложнения, не давай герою лёгких побед.',
+  кульминация: 'Глава книги: КУЛЬМИНАЦИЯ — это пик книги. Держи максимальное напряжение, не смягчай конфликт ради комфорта читателя, не разрешай его раньше времени.',
+  развязка: 'Глава книги: РАЗВЯЗКА — конфликт уже разрешён или разрешается здесь; фокус на последствиях и эмоциональной точке, не заводи новый виток напряжения без явной причины.',
+};
+function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style, chapterArc){
   const lines = [];
   const revising = !!opts.prevDraft;
   // При доработке директива идёт первой — иначе тонет в контексте ниже брифа и объёма
@@ -213,6 +229,7 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style){
     ? 'ЗАДАЧА: доработай предыдущий черновик по замечаниям выше. Сохрани удачные образы и ритм, исправь указанное. НЕ переписывай с нуля.'
     : 'ЗАДАЧА: напиши прозу этой сцены.');
   lines.push('Бриф сцены: ' + (scene.brief || scene.title || '(нет)'));
+  if(CHAPTER_ARC_NOTE[chapterArc]) lines.push(CHAPTER_ARC_NOTE[chapterArc]);
   // entryState — заполняется Архитектором книги на этапе структуры, если на входе
   // в сцену у героя уже есть предмет/знание/состояние, не самоочевидное из брифа
   // предыдущей сцены (живой инцидент: герой в тексте заявил цель «в гильдию

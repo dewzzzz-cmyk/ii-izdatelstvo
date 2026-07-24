@@ -1015,10 +1015,22 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
   // pushSkeletonVersion зовётся внутри applySkeleton/applySkeletonPatch) и
   // пробуем ещё раз от лучшего состояния, а не молча копим деградацию.
   let revertedCount = 0;
+  // Живой инцидент: тот же класс проблемы, что и с баллом Оценщика (см.
+  // комментарий выше), но с другим симптомом — «Улучшить» усушило книгу с
+  // ~90к до ~70,6к слов (17→11 глав, 52→44 сцены) за несколько прогонов, и
+  // ни один прогон формально не «провалился» по баллу (Оценщик судит
+  // архитектуру, не объём) — откат по score его не ловил вообще. Считаем
+  // суммарный targetWords скелета до/после каждого прогона: похудение книги
+  // больше чем на 10% при «улучшении» (не при первой генерации — там base=0,
+  // проверка естественно не сработает) — та же деградация, что и провал по
+  // баллу, откатываем тем же путём.
+  const skeletonWords = sk => sk ? sk.chapters.reduce((n,ch)=>n+(ch.scenes||[]).reduce((m,sc)=>m+(Number(sc.targetWords)||0),0), 0) : 0;
+  let shrunkCount = 0;
   try{
     for(let iter=1; iter<=maxIter; iter++){
       lastIter = iter;
       const label = maxIter>1 ? `Прогон ${iter}/${maxIter}: ` : '';
+      const wordsBefore = skeletonWords(currentSkeletonAsPrevious(s));
       // Точечная правка (structurePatchMode) — только когда есть предыдущая оценка
       // С реальными affectedChapters. Первая генерация (prevEval==null) и обычный
       // режим (тумблер выключен) всегда идут старым путём — полной пересборкой.
@@ -1072,6 +1084,19 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
         setBusy(true);
         continue;
       }
+      // Тот же откат, что и выше, но по объёму, а не по баллу — см. комментарий
+      // у skeletonWords выше. wordsBefore>0 исключает самую первую генерацию
+      // (структура была пуста, сравнивать не с чем).
+      const wordsAfter = skeletonWords(skeleton);
+      if(prevEval && wordsBefore>0 && wordsAfter < wordsBefore*0.9){
+        shrunkCount++;
+        revertSkeleton(s);
+        evalResult = s.structureEval;
+        skeleton = currentSkeletonAsPrevious(s);
+        save();
+        setBusy(true);
+        continue;
+      }
 
       s.structureEval = evalResult;
       save();
@@ -1084,8 +1109,11 @@ async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
     // С автооткатом выше state.structure в конце цикла ВСЕГДА соответствует
     // bestScore — предупреждение «итоговый прогон хуже лучшего» больше не
     // нужно, вместо него сообщаем, сколько попыток было отклонено автоматом.
-    if(revertedCount){
-      setStatus(`⚠ ${revertedCount} из ${lastIter} прогон(ов) вышли хуже — откачены автоматически, оставлен лучший результат ${bestScore.toFixed(1)}/10${bestIter?` (прогон ${bestIter})`:' (исходная структура)'}.`);
+    if(revertedCount || shrunkCount){
+      const parts = [];
+      if(revertedCount) parts.push(`${revertedCount} из ${lastIter} прогон(ов) вышли хуже по баллу`);
+      if(shrunkCount) parts.push(`${shrunkCount} из ${lastIter} усохли по объёму (>10%)`);
+      setStatus(`⚠ ${parts.join(', ')} — откачены автоматически, оставлен лучший результат ${bestScore.toFixed(1)}/10${bestIter?` (прогон ${bestIter})`:' (исходная структура)'}.`);
     } else if(evalResult && evalResult.score >= STRUCT_AUTOHIDE_SCORE){
       // Балл почти идеальный — панель с оценкой и так больше нечего сообщить
       // (issues/suggestions пусты), а «Улучшить» уже скрыта порогом 8/10 в
