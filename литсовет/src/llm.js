@@ -62,13 +62,32 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let text = '';
+      // Живой инцидент: маркер [[LITSOVET:USAGE:{...}]], который сервер
+      // дописывает в САМ КОНЕЦ потока (см. USAGE_MARKER_RE ниже), утёк в
+      // видимый автору текст («Добро пожаловать».\n[[LITSOVET:USAGE:...]]).
+      // Причина: onToken(chunk) звал наружу СЫРЫЕ чанки по мере поступления —
+      // некоторые вызывающие (напр. ui/stages.js, прямое присваивание
+      // scene.text=prog.text при живом стриме) показывают и даже могут
+      // сохранить их автору РАНЬШЕ, чем этот же код ниже успевает вырезать
+      // маркер из финального text. Придерживаем хвост потока на LOOKBACK
+      // символов — с большим запасом длиннее любого реального маркера — и
+      // отдаём в onToken только то, что заведомо старше этого хвоста; сам
+      // маркер, где бы он ни начался, никогда не покидает эту функцию.
+      const LOOKBACK = 400;
+      let emitted = '';
+      const flushSafe = ()=>{
+        if(text.length - emitted.length <= LOOKBACK) return;
+        const safeUpto = text.length - LOOKBACK;
+        const chunk = text.slice(emitted.length, safeUpto);
+        emitted = text.slice(0, safeUpto);
+        if(onToken && chunk) onToken(chunk);
+      };
       while(true){
         const {value, done} = await reader.read();
         if(done) break;
         armTimeout(); // стрим живой — не даём таймауту убить длинный здоровый ответ
-        const chunk = dec.decode(value, {stream:true});
-        text += chunk;
-        if(onToken) onToken(chunk);
+        text += dec.decode(value, {stream:true});
+        flushSafe();
       }
       // Сервер дописывает этот маркер в тело ответа, если апстрим оборвался
       // посреди генерации (см. server.js) — раньше такой обрыв был неотличим от
@@ -91,6 +110,9 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
           if(typeof usage.completion_tokens === 'number') realTokensOut = usage.completion_tokens;
         }catch{}
       }
+      // Досылаем остаток, придержанный LOOKBACK-буфером выше — text уже
+      // очищен от обоих маркеров, так что здесь гарантированно чистый хвост.
+      if(onToken && text.length > emitted.length) onToken(text.slice(emitted.length));
       const finalTokensIn = realTokensIn ?? tokensIn;
       const tokensOut = realTokensOut ?? estimateTokens(text);
       const p = PRICES[model] || {in:0.14, out:0.28};
