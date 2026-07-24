@@ -137,7 +137,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     let architectText = '';
     if(agentEnabled('architect')){
       const ac = ag(state,'architect');
-      const aMsgs = architectMessages(state, scene);
+      const aMsgs = architectMessages(state, scene, bookContextBlock(state, scene));
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'architect', text:'Архитектор планирует сцену…'});
         const aRes = await callLLM({ ...llmBase, temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??720 });

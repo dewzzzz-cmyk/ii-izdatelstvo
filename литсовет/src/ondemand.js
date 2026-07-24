@@ -33,7 +33,7 @@ export async function runAgentOnDemand(state, scene, agent){
     return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7.5) };
   }
   if(role==='architect'){
-    const msgs = architectMessages(state, scene);
+    const msgs = architectMessages(state, scene, bookContextBlock(state, scene));
     const res = await callLLM({ ...base, temperature:agent.temp??0.4, messages:msgs, maxTokens:agent.maxTokens??720 });
     return { kind:'architect', plan: parseArchitect(res.text) };
   }
