@@ -90,6 +90,92 @@ function serveStatic(req, res){
   });
 }
 
+// Клод (Anthropic) — /v1/messages, не /chat/completions: другой формат
+// запроса (system — отдельное поле верхнего уровня, не messages[role=system];
+// max_tokens обязателен, не опционален), другие заголовки (x-api-key +
+// anthropic-version, не Authorization: Bearer) и другой формат SSE-стрима
+// (event content_block_delta с delta.text, не choices[0].delta.content).
+// ВАЖНО: это именно платный API-ключ с console.anthropic.com (pay-as-you-go),
+// НЕ подписка Claude.ai Pro/Max — та не даёт программного доступа, только
+// веб/приложение; ключей от неё этот проксі не примет (апстрим ответит 401).
+function isAnthropicURL(baseURL){ return /anthropic\.com/i.test(baseURL); }
+
+async function handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStream){
+  // system-сообщения у Anthropic не часть messages[] — отдельное поле;
+  // остальные роли (user/assistant) прокидываются как есть.
+  const msgs = b.messages || [];
+  const systemText = msgs.filter(m=>m.role==='system').map(m=>m.content).join('\n\n');
+  const chatMsgs = msgs.filter(m=>m.role!=='system').map(m=>({role:m.role, content:m.content}));
+  const reqBody = {
+    model,
+    messages: chatMsgs,
+    stream: wantStream,
+    // max_tokens у Anthropic ОБЯЗАТЕЛЕН (не опционален, как у OpenAI-формата
+    // выше) — без страховочного дефолта запрос без явного b.max_tokens
+    // просто падал бы 400 у апстрима.
+    max_tokens: b.max_tokens || 4096,
+    temperature: typeof b.temperature==='number' ? b.temperature : 1.0,
+  };
+  if(systemText) reqBody.system = systemText;
+  let up;
+  try{
+    up = await fetch(`${baseURL}/v1/messages`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key':apiKey, 'anthropic-version':'2023-06-01' },
+      body: JSON.stringify(reqBody),
+    });
+  }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
+  if(!up.ok || !up.body){ const t=await up.text().catch(()=> ''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,400)); }
+
+  if(!wantStream){
+    let fullBody = '';
+    const reader2 = up.body.getReader(); const dec2 = new TextDecoder();
+    try{
+      while(true){ const {value, done} = await reader2.read(); if(done) break; fullBody += dec2.decode(value, {stream:true}); }
+      fullBody += dec2.decode();
+    }catch(e){ return send(res, 502, 'READ_ERROR: '+e.message); }
+    let content = '', usage = null;
+    try{
+      const j = JSON.parse(fullBody);
+      content = (j.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('');
+      // Клиент (llm.js) читает usage.prompt_tokens/completion_tokens (формат
+      // OpenAI) — переводим из input_tokens/output_tokens Anthropic сюда же,
+      // чтобы не трогать общий парсинг usage на клиенте ради одного провайдера.
+      if(j.usage) usage = { prompt_tokens: j.usage.input_tokens, completion_tokens: j.usage.output_tokens };
+    }catch{}
+    res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-cache'});
+    res.end(content + (usage ? `\n[[LITSOVET:USAGE:${JSON.stringify(usage)}]]` : '')); return;
+  }
+
+  res.writeHead(200, { 'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'no-cache' });
+  const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
+  let inTokens = 0, outTokens = 0;
+  const emitLine=(line)=>{
+    const s=line.trim(); if(!s.startsWith('data:')) return;
+    const data=s.slice(5).trim(); if(!data) return;
+    try{
+      const parsed = JSON.parse(data);
+      if(parsed.type==='content_block_delta' && parsed.delta?.type==='text_delta') res.write(parsed.delta.text);
+      if(parsed.type==='message_start' && parsed.message?.usage?.input_tokens) inTokens = parsed.message.usage.input_tokens;
+      if(parsed.type==='message_delta' && parsed.usage?.output_tokens) outTokens = parsed.usage.output_tokens;
+    }catch{}
+  };
+  let streamBroke = false;
+  try{
+    while(true){
+      const {value,done}=await reader.read(); if(done) break;
+      buf += dec.decode(value,{stream:true});
+      const lines=buf.split('\n'); buf=lines.pop();
+      for(const line of lines) emitLine(line);
+    }
+    buf += dec.decode();
+    if(buf) emitLine(buf);
+  }catch{ streamBroke = true; }
+  if(streamBroke) res.write('\n[[LITSOVET:STREAM_TRUNCATED]]');
+  else if(inTokens || outTokens) res.write(`\n[[LITSOVET:USAGE:${JSON.stringify({prompt_tokens:inTokens, completion_tokens:outTokens})}]]`);
+  res.end();
+}
+
 async function handleGenerate(req, res){
   readBody(req, res, 5e5, async (raw)=>{
     let b={}; try{ b=JSON.parse(raw||'{}'); }catch{}
@@ -99,6 +185,7 @@ async function handleGenerate(req, res){
     const baseURL = (b.baseURL||'https://api.deepseek.com').replace(/\/+$/,'');
     const model = b.model || 'deepseek-chat';
     if(!apiKey) return send(res, 400, 'NO_KEY: не задан API-ключ (откройте настройки).');
+    if(isAnthropicURL(baseURL)) return handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStream);
     let up;
     try{
       up = await fetch(`${baseURL}/chat/completions`, {

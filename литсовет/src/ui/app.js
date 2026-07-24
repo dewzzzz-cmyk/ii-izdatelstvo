@@ -271,7 +271,8 @@ async function openSettings(){
               return `<div class="row" style="gap:8px;align-items:center">
                 <span style="width:120px;font-size:12px;color:var(--text-2);flex-shrink:0">${escAttr(p.label)}</span>
                 ${keyRow('setPKey_'+p.v, val, 'sk-...')}
-              </div>`;
+              </div>
+              ${p.v==='anthropic'?'<div class="hint" style="margin:-2px 0 4px 128px">это платный API-ключ с console.anthropic.com (pay-as-you-go) — подписка Claude.ai Pro/Max программного доступа не даёт, её ключа тут нет и быть не может</div>':''}`;
             }).join('')}
           </div></div>
 

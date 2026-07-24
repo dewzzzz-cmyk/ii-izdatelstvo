@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider } from './providers.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.23.0';
+export const APP_VERSION = '1.24.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -20,6 +20,14 @@ export const PRICES = {
   'deepseek-v4-pro':   { in:0.435, out:0.87 },
   'gpt-4o':            { in:2.5,  out:10 },
   'gpt-4o-mini':      { in:0.15, out:0.6 },
+  // Anthropic (console.anthropic.com, pay-as-you-go) — claude-opus-4-8
+  // подтверждена по официальному прайсу на момент добавления (2026-07-25);
+  // claude-sonnet-5/claude-haiku-4-5 оценены по историческим тарифам своих
+  // тиров (Sonnet/Haiku) — сверьте на anthropic.com/pricing, если цифры
+  // разошлись после релиза этих моделей.
+  'claude-opus-4-8':   { in:5,    out:25 },
+  'claude-sonnet-5':   { in:3,    out:15 },
+  'claude-haiku-4-5':  { in:1,    out:5 },
 };
 
 let _id = 0;

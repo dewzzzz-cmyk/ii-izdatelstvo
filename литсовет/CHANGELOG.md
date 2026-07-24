@@ -4,6 +4,32 @@
 Бампается при каждом серьёзном фиксе пайплайна/сервера — не при мелкой
 правке промпта или косметике UI.
 
+## 1.24.0 — 2026-07-25
+
+- **Добавлен Claude (Anthropic) как провайдер.** Клод использует другой API,
+  не OpenAI-совместимый `/chat/completions` — своя эндпоинт-схема
+  (`/v1/messages`), заголовки (`x-api-key`+`anthropic-version`, не
+  `Authorization: Bearer`), формат запроса (system — отдельное поле, не
+  `messages[role=system]`; `max_tokens` обязателен) и формат SSE-стрима
+  (`content_block_delta` с `delta.text`, не `choices[0].delta.content`).
+  `server.js` получил отдельную ветку `handleAnthropicGenerate()` —
+  определяется по `baseURL` (`api.anthropic.com`), переводит usage
+  (`input_tokens`/`output_tokens`) в формат, который уже понимает клиент
+  (`prompt_tokens`/`completion_tokens`), не трогая общий путь для остальных
+  провайдеров. Добавлены модели (`claude-opus-4-8`, `claude-sonnet-5`,
+  `claude-haiku-4-5`) в `providers.js` (общий список для Настроек и
+  per-роли — см. 1.23.0) и цены в `PRICES` (`state.js`), чтобы счётчик
+  расхода не считал Клода по тарифу DeepSeek по умолчанию.
+  **Важно (объяснено в UI рядом с полем ключа в Настройках):** нужен
+  платный API-ключ с console.anthropic.com (pay-as-you-go) — подписка
+  Claude.ai Pro/Max программного доступа не даёт, её ключ здесь не подойдёт.
+  Живая проверка: запрос через `/api/generate` с `baseURL:
+  api.anthropic.com` и заведомо неверным ключом дошёл до реального
+  `api.anthropic.com/v1/messages` и вернулся с настоящей ошибкой
+  `authentication_error` (не «эндпоинт не найден» и не ошибкой формата
+  запроса) — подтверждает, что маршрутизация, заголовки и тело запроса
+  собраны верно.
+
 ## 1.23.0 — 2026-07-24
 
 - **Переопределение модели/провайдера по роли — теперь выбор из списка, не
