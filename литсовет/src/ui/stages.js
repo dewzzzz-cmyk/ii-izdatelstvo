@@ -1,7 +1,8 @@
 // Рендереры стадий. ПП1+2: Концепция (онбординг+режим), Голос (образец→примеры),
 // Структура (минимальный список сцен), Написание (редактор + запуск ядра).
 
-import { getState, save, uid, addRule, charNamesMatch } from '../state.js';
+import { getState, save, uid, addRule, charNamesMatch, ag } from '../state.js';
+import { runAgentOnDemand } from '../ondemand.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
 import { ART_STYLES } from '../artStyles.js';
@@ -1506,6 +1507,7 @@ export function renderWrite(els){
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
       ${(scene.status==='done' && scene.targetWords && scene.words && scene.words < scene.targetWords*0.6)?`<span class="stale-badge" title="Правки Оценщика/Прозаика режут текст, но объём в директиву не попадает — короче цели могло получиться и намеренно (хороший ритм), и просто из-за накопленных сокращений. Проверьте на слух.">📏 ${scene.words} из ${scene.targetWords} слов</span>`:''}
       <span style="flex:1"></span>
+      ${(scene.text && !scene.lastEval)?'<button class="iconbtn" id="reEvalScene" data-tip="Оценка пропала — правка рукой/Линейным редактором обнуляет её, т.к. относилась к прежнему тексту. Оценивает ТЕКУЩИЙ текст заново, не переписывая его.">⭐ Оценить заново</button>':''}
       ${scene.text?'<button class="iconbtn" id="edProof" data-tip="ИИ-корректор: орфография, пунктуация, согласование. Стиль не трогает — покажет список правок перед применением.">Аа✓</button>':''}
       ${scene.text?`<button class="iconbtn" id="edStyle" data-tip="Редактор: ищет клише, эмоциональные ярлыки, однообразный ритм. В ручном режиме подсвечивает фрагменты прямо в тексте — примите (✓) или отклоните (✗) каждый. В авто — применяет сразу.">${_edReviewOn?'✕ Завершить редактуру':'📝 Редактор'}</button>
       <div class="mode-mini" id="edStyleModeWrap" data-tip="Авто — правки применяются сразу без вопросов, изменения остаются в тексте даже если потом переключить обратно на ручной. Ручной — подсвечивает и спрашивает по каждой.">
@@ -1606,6 +1608,22 @@ export function renderWrite(els){
   document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
+  // Живой запрос автора: правка рукой (и Линейный редактор) намеренно
+  // обнуляют scene.lastEval/flags — они относились к тексту ДО правки и
+  // сверять их с новым текстом нельзя (см. edEl blur выше). Раньше вернуть
+  // оценку можно было только полным перезапуском всего пайплайна (Прозаик
+  // заново, Стражи заново) — расточительно, если автор просто поправил
+  // пару слов. Оценивает ТЕКУЩИЙ текст как есть, ничего не переписывая.
+  const reEval = document.getElementById('reEvalScene');
+  if(reEval) reEval.onclick = async ()=>{
+    reEval.disabled = true; reEval.innerHTML = '<span class="spinner"></span> Оцениваю…';
+    try{
+      const result = await runAgentOnDemand(s, scene, ag(s,'evaluator'));
+      scene.lastEval = result.verdict && result.verdict.ok ? result.verdict : null;
+      if(!scene.lastEval) alert('Оценщик вернул нераспознаваемый ответ — попробуйте ещё раз.');
+      save();
+    }catch(e){ alert('Не удалось оценить: '+e.message); reEval.disabled=false; reEval.innerHTML='⭐ Оценить заново'; }
+  };
   // Находка из Бета-ридера/Ружей Чехова/Критика (Редактура) с готовой директивой —
   // см. goToSceneWithDirective. Применяем один раз при рендере: автор видит
   // текст в поле, правит/жмёт «Переписать» сам — ничего не запускается сюда сама собой.
@@ -1673,6 +1691,12 @@ export function renderWrite(els){
 
   const cc=document.getElementById('closeChapter');
   if(cc) cc.onclick = async ()=>{ cc.disabled=true; cc.innerHTML='<span class="spinner"></span> Закрываю…'; await closeChapter(s, ch.id); };
+  const ccNoHand=document.getElementById('closeChapterNoHand');
+  if(ccNoHand) ccNoHand.onclick = async ()=>{
+    if(!confirm('Закрыть главу без правки рукой? Требование режима «Режиссёр» будет пропущено для этой главы.')) return;
+    ccNoHand.disabled=true; ccNoHand.innerHTML='<span class="spinner"></span> Закрываю…';
+    await closeChapter(s, ch.id);
+  };
 
   const nx=document.getElementById('nextScene');
   if(nx){ const idx=scenes.findIndex(sc=>sc.id===scene.id); const nextSc=scenes[idx+1]; if(nextSc) nx.onclick=()=>{ if(_busy) return; s.ui.activeScene=nextSc.id; save(); }; }
@@ -2376,11 +2400,19 @@ function renderEditorialStop(s, ch, isFactoryMode){
   const needHand = needsAuthorHand(s);
   const scenes = scenesOfChapter(s, ch.id);
   const handOk = !needHand || scenes.some(sc=>sc.handDone);
+  // Живой запрос автора: в режиме «Режиссёр» кнопка «Закрыть главу →» до
+  // правки рукой заблокирована намеренно (сама суть режима) — но иногда
+  // автор осознанно хочет пропустить это именно для этой главы, не
+  // выключая режим для всей книги. Отдельная кнопка-обход рядом, а не
+  // снятие блокировки основной — чтобы обычное поведение не изменилось.
   return `<div class="stop-banner">
     <div class="sb-title">✋ Редакторский стоп · глава «${esc(ch.title)}»</div>
     <div class="sb-text">Все сцены главы написаны. Прочитайте главу целиком перед следующей.${needHand?' Режим «Режиссёр»: перепишите хотя бы один абзац своей рукой.':''}</div>
     ${needHand&&!handOk?'<div class="sb-warn">⚠ Пока ни один абзац не переписан автором — отредактируйте текст любой сцены главы.</div>':''}
-    <button class="btn ${handOk?'btn-primary':''}" id="closeChapter" ${handOk?'':'disabled'}>Закрыть главу →</button>
+    <div class="row" style="gap:8px">
+      <button class="btn ${handOk?'btn-primary':''}" id="closeChapter" ${handOk?'':'disabled'}>Закрыть главу →</button>
+      ${needHand&&!handOk?'<button class="btn" id="closeChapterNoHand" title="Закрыть без правки рукой — только для этой главы, режим «Режиссёр» для книги не меняется">Закрыть без правок</button>':''}
+    </div>
   </div>`;
 }
 
