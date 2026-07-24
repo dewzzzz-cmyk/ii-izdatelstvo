@@ -6,7 +6,7 @@ import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.20.9';
+export const APP_VERSION = '1.21.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Перенос из ИИ-Издательства.
 export const PRICES = {
@@ -112,6 +112,11 @@ export function defaultState(){
       structurePatchMode: false, // «Улучшить» правит только главы из affectedChapters Оценщика, остальные
                                 // (включая уже написанные сцены) не проходят через LLM вообще — иначе по
                                 // умолчанию как раньше: каждая итерация пересобирает весь скелет целиком
+      architectTokenMultiplier: 1, // множитель поверх авто-рассчитанного потолка токенов Архитектора
+                                // (runBookArchitect/runBookArchitectPatch/regenerateDownstream) — обычный
+                                // слайдер maxTokens для этой роли не показываем (см. ui/diagnostics.js): он
+                                // сломал бы авто-масштабирование под объём книги. Множитель даёт ту же
+                                // ручку «дать больше места», не отменяя саму формулу.
     },
     log: [],
     ui: { stage: 'concept', rightTab: 'roadmap', mobPanel: 'center', chatEditMode: false, editorAuto: false },

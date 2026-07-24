@@ -290,8 +290,15 @@ export async function runBookArchitect(state, opts={}){
   // 60 сцен × 140 = 9900 ток. бюджета, реальный ответ обрезался на ~31870
   // символах (≈3.2 симв/ток на этой модели) не дойдя до конца JSON.
   const perSceneTokens = opts.previousSkeleton ? 300 : 220;
-  // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
-  const archMaxTokens = Math.round(Math.max(4000, Math.min(30000, effectiveScenes * perSceneTokens + 1500)) * 1.2);
+  // +20% по запросу автора (общий проход по всем лимитам токенов приложения),
+  // потолок поднят 30000→40000, и сверху ещё множитель из настроек автора
+  // (state.global.architectTokenMultiplier, слайдер «Запас токенов» у роли
+  // bookArchitect в ui/diagnostics.js) — обычный maxTokens-слайдер этой роли
+  // не показываем (сломал бы авто-масштабирование по объёму книги), но автор
+  // должен иметь ручку «дать ещё больше места», не дожидаясь очередного
+  // ручного бампа константы в коде при каждой новой длинной книге.
+  const archMult = state.global.architectTokenMultiplier || 1;
+  const archMaxTokens = Math.round(Math.max(4000, Math.min(40000, effectiveScenes * perSceneTokens + 1500)) * 1.2 * archMult);
   let lastErr = '';
   // Живой инцидент: автор видел «спиннер навсегда» на скелете из 47+ сцен —
   // единственный вызов callLLM во всём приложении без onToken (см. остальные
@@ -434,8 +441,9 @@ export async function runBookArchitectPatch(state, opts={}){
     const chNode = chapterNodes[num-1];
     return chNode ? n + structure.filter(s=>s.type==='scene' && s.chapterId===chNode.id).length : n;
   }, 0);
-  // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
-  const maxTokens = Math.round(Math.max(2000, Math.min(12000, sceneCountInTargets*300 + 800)) * 1.2);
+  // +20% по запросу автора (общий проход по всем лимитам токенов приложения),
+  // потолок поднят 12000→16000, и множитель из настроек (см. runBookArchitect).
+  const maxTokens = Math.round(Math.max(2000, Math.min(16000, sceneCountInTargets*300 + 800)) * 1.2 * (g.architectTokenMultiplier || 1));
   let lastErr = '';
   // Тот же пробел, что был у runBookArchitect (см. её комментарий выше про
   // startRun/logStep) — точечная правка тоже ни разу не писала в diagnostics.
@@ -536,7 +544,9 @@ export async function regenerateDownstream(state, pivotScene, hint){
   // entryState — 3600 токенов на такой объём гарантированно обрежет JSON.
   // Формула — та же пропорция (300 ток/сцена + запас), что и improve-режим
   // runBookArchitect, +20% по общему проходу этой сессии.
-  const maxTokens = Math.round(Math.max(3600, Math.min(28000, downstream.length*300 + 1200)) * 1.2);
+  // Потолок поднят 28000→36000, и тот же множитель настроек, что у
+  // runBookArchitect/runBookArchitectPatch — одна ручка на все три функции.
+  const maxTokens = Math.round(Math.max(3600, Math.min(36000, downstream.length*300 + 1200)) * 1.2 * (g.architectTokenMultiplier || 1));
   let lastErr='';
   startRun(null, 'Архитектор (каскадная перегенерация)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
