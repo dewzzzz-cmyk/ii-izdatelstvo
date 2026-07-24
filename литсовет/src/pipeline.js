@@ -285,7 +285,18 @@ export async function runScene(state, scene, opts={}, onProgress){
           onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: правка обрывается не на знаке препинания (похоже на обрыв токенами, хотя тег [ТЕКСТ] был на месте) — используем предыдущий черновик', state:'warn'}});
           pRes.text = prevDraft;
         }
-        if(pRes.text && pRes.text.length < prevDraft.length*0.6 && !SHORTEN_HINT_RE.test(directive)) pRes.text = prevDraft;
+        // Живой инцидент: «Оценщик: 1/10 · Черновик отсутствует — предоставлен
+        // пустой текст». Причина — здесь стояло `pRes.text && pRes.text.length
+        // < ...`: если parsed.prose оказывался ПУСТОЙ строкой (тег [ТЕКСТ] был,
+        // но без [РАЗБОР] и без содержимого — узкий случай, который не ловит
+        // parsed.truncated выше, т.к. тот требует hasDebate), `pRes.text && ...`
+        // был ЛОЖЬЮ уже на пустой строке — откат к prevDraft не срабатывал
+        // именно тогда, когда он нужнее всего. Итог: пустая «правка» уходила
+        // прямиком Стражам и Оценщику как черновик сцены, тратя вызов впустую.
+        if((!pRes.text || pRes.text.length < prevDraft.length*0.6) && !SHORTEN_HINT_RE.test(directive)){
+          if(!pRes.text) onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: правка вернула пустой текст — используем предыдущий черновик', state:'warn'}});
+          pRes.text = prevDraft;
+        }
         logInput = '(разбор замечаний + точечная правка) ' + (directive||'');
       } else {
         onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
