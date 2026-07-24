@@ -5,7 +5,14 @@ import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
 import { openRuleModal } from './rule-modal.js';
-import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider } from '../providers.js';
+import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider, priceLabel } from '../providers.js';
+
+// Та же подсказка цены, что и в Настройках (ui/app.js) — «gpt-4o — $2.5/$10
+// за 1M ток.» видимым текстом в опции, не только по наведению.
+function modelOptionLabel(m){
+  const price = priceLabel(m);
+  return price ? `${m} — ${price}` : m;
+}
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 // Нормализует прозаический текст для HTML: одиночный \n внутри абзаца → пробел, двойной \n\n → <br><br>
@@ -131,8 +138,8 @@ function renderAgentOverride(a, global){
       <div class="ap-ov-row">
         <span class="ap-ov-label">Модель</span>
         <select class="ap-ov-model" data-aid="${a.id}">
-          <option value="">как в настройках${providerDefaultModel?` (${esc(providerDefaultModel)})`:''}</option>
-          ${opts.map(m=>`<option value="${esc(m)}"${m===modelVal?' selected':''}>${esc(m)}</option>`).join('')}
+          <option value="">как в настройках${providerDefaultModel?` (${esc(modelOptionLabel(providerDefaultModel))})`:''}</option>
+          ${opts.map(m=>`<option value="${esc(m)}"${m===modelVal?' selected':''}>${esc(modelOptionLabel(m))}</option>`).join('')}
           <option value="__custom__">✎ другая модель…</option>
         </select>
         <input type="text" class="ap-ov-model-custom" data-aid="${a.id}" placeholder="название модели" style="display:none;margin-top:6px">

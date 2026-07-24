@@ -11,7 +11,15 @@ import { exportCheckpoint, listProjects, listServerProjects } from '../storage.j
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
 import { MODEL_OPTIONS } from '../imagegen.js';
-import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider } from '../providers.js';
+import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider, priceLabel } from '../providers.js';
+
+// Текст опции модели с ценой рядом — «gpt-4o — $2.5/$10 за 1M ток.» —
+// видимой подсказкой прямо в списке, не только по наведению (title на
+// option не читается на тач-устройствах вообще).
+function modelOptionLabel(m){
+  const price = priceLabel(m);
+  return price ? `${m} — ${price}` : m;
+}
 
 function escAttr(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -251,7 +259,7 @@ async function openSettings(){
               const known = TEXT_MODEL_OPTIONS[matchTextProvider(g.baseURL)] || [];
               const opts = known.includes(g.model) || !g.model ? known : [g.model, ...known];
               return `<select id="setModel">
-                ${opts.map(m=>`<option value="${escAttr(m)}"${m===g.model?' selected':''}>${escAttr(m)}</option>`).join('')}
+                ${opts.map(m=>`<option value="${escAttr(m)}"${m===g.model?' selected':''}>${escAttr(modelOptionLabel(m))}</option>`).join('')}
                 <option value="__custom__">✎ другая модель…</option>
               </select>
               <input type="text" id="setModelCustom" placeholder="название модели" style="display:none;margin-top:6px">`;
@@ -354,7 +362,7 @@ async function openSettings(){
     if(!sel) return;
     const known = TEXT_MODEL_OPTIONS[providerKey] || [];
     const opts = known.includes(selectValue) || !selectValue ? known : [selectValue, ...known];
-    sel.innerHTML = opts.map(m=>`<option value="${escAttr(m)}"${m===selectValue?' selected':''}>${escAttr(m)}</option>`).join('')
+    sel.innerHTML = opts.map(m=>`<option value="${escAttr(m)}"${m===selectValue?' selected':''}>${escAttr(modelOptionLabel(m))}</option>`).join('')
       + '<option value="__custom__">✎ другая модель…</option>';
     document.getElementById('setModelCustom').style.display = 'none';
   };
