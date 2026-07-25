@@ -149,6 +149,99 @@ function renderAgentOverride(a, global){
 }
 const SEV_RANK = { critical:0, warning:1, ok:2 };
 
+// Панель «выбрать несколько замечаний → один прогон» — общая для флагов
+// Стражей и для замечаний Оценщика («Как улучшить оценку»): раньше на каждое
+// замечание Оценщика можно было нажать «→ Прозаику» только по одному, и
+// правка занимала N отдельных запросов вместо одного с объединённой
+// директивой (у флагов Стражей такой батч уже был). `prefix` даёт каждому
+// списку свои DOM id (flagSelAll/noteSelAll и т.д.), чтобы панели не
+// конфликтовали друг с другом на одной странице.
+function multiSelectToolbarHTML(prefix, count, rewriteLabel){
+  if(count<2) return '';
+  return `<div class="flags-toolbar" id="${prefix}Toolbar">
+      <label class="fl-selall"><input type="checkbox" id="${prefix}SelAll"> Выбрать все (${count})</label>
+      <span id="${prefix}SelCount" class="muted" style="font-size:12px"></span>
+      <button class="btn" id="${prefix}MultiFix" style="display:none" data-tip="Точечная правка сразу по всем выбранным замечаниям">→ Прозаику</button>
+      <button class="btn" id="${prefix}MultiRewrite" style="display:none" data-tip="Переписать сцену с учётом всех выбранных замечаний">↺ ${rewriteLabel}</button>
+    </div>`;
+}
+
+// Вешает обработчики на панель из multiSelectToolbarHTML(prefix, ...) и на
+// чекбоксы `.${cbClass}` внутри неё. parentClass — класс строки-обёртки
+// замечания (для подсветки выбранных) и одновременно клика в любом месте
+// строки, а не только по самому чекбоксу.
+function bindMultiSelectToolbar(prefix, cbClass, parentClass){
+  const fixBtn=document.getElementById(prefix+'MultiFix');
+  if(!fixBtn) return; // <2 замечаний — панели нет
+
+  document.querySelectorAll('.'+parentClass).forEach(item=>{
+    item.addEventListener('click', e=>{
+      if(e.target.closest('button')||e.target.closest('input[type=checkbox]')||e.target.closest('label')) return;
+      const cb=item.querySelector('.'+cbClass); if(!cb) return;
+      cb.checked=!cb.checked; cb.dispatchEvent(new Event('change',{bubbles:true}));
+    });
+  });
+
+  function updateBar(){
+    const cbs=[...document.querySelectorAll('.'+cbClass)];
+    const n=cbs.filter(c=>c.checked).length;
+    const countEl=document.getElementById(prefix+'SelCount');
+    const rwBtn=document.getElementById(prefix+'MultiRewrite');
+    if(n>0){
+      countEl.textContent=`${n} выбрано`;
+      fixBtn.style.display=''; fixBtn.textContent=`→ Прозаику (${n})`;
+      rwBtn.style.display=''; rwBtn.dataset.baseLabel = rwBtn.dataset.baseLabel || rwBtn.textContent;
+      rwBtn.textContent=`${rwBtn.dataset.baseLabel} (${n})`;
+    } else {
+      countEl.textContent=''; fixBtn.style.display='none'; rwBtn.style.display='none';
+    }
+    const selAll=document.getElementById(prefix+'SelAll');
+    if(selAll){ selAll.checked=n===cbs.length && n>0; selAll.indeterminate=n>0&&n<cbs.length; }
+  }
+
+  document.querySelectorAll('.'+cbClass).forEach(cb=>cb.addEventListener('change', ()=>{
+    cb.closest('.'+parentClass)?.classList.toggle('flag-selected', cb.checked);
+    updateBar();
+  }));
+
+  const selAll=document.getElementById(prefix+'SelAll');
+  if(selAll) selAll.onchange=()=>{
+    document.querySelectorAll('.'+cbClass).forEach(cb=>{
+      cb.checked=selAll.checked;
+      cb.closest('.'+parentClass)?.classList.toggle('flag-selected', selAll.checked);
+    });
+    updateBar();
+  };
+
+  function combinedDirective(){
+    const checks=[...document.querySelectorAll('.'+cbClass+':checked')];
+    if(!checks.length) return null;
+    return checks.map((c,i)=>`${i+1}. ${c.dataset.fix}`).join('\n');
+  }
+
+  fixBtn.onclick=()=>{
+    const d=combinedDirective(); if(!d) return;
+    if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    fixBtn.textContent='⏳ Запускаю…'; fixBtn.disabled=true;
+    document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d}}));
+  };
+
+  const rwBtn=document.getElementById(prefix+'MultiRewrite');
+  if(rwBtn) rwBtn.onclick=()=>{
+    if(rwBtn.dataset.confirmed==='1'){
+      const d=combinedDirective(); if(!d) return;
+      if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+      rwBtn.textContent='⏳ Запускаю…'; rwBtn.disabled=true;
+      document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d, rewrite:true}}));
+      return;
+    }
+    const orig=rwBtn.textContent;
+    rwBtn.dataset.confirmed='1'; rwBtn.textContent='Нажми ещё раз — точно?';
+    rwBtn.style.cssText='background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)';
+    setTimeout(()=>{ if(rwBtn.dataset.confirmed==='1'){ delete rwBtn.dataset.confirmed; rwBtn.textContent=orig; rwBtn.style.cssText=''; } }, 3000);
+  };
+}
+
 function renderFlags(scene){
   if(!scene || !scene.flags) return '';
   const all = [];
@@ -159,12 +252,7 @@ function renderFlags(scene){
   const warn = all.filter(f=>f.severity==='warning').length;
   const fixable = all.filter(f=>f.severity!=='ok').length;
   return `<div class="ph">Флаги сцены <span style="font-weight:400;text-transform:none;letter-spacing:0">${crit?crit+' критич':''}${crit&&warn?', ':''}${warn?warn+' предупр':''}${!crit&&!warn?'норма':''}</span></div>
-    ${fixable>1?`<div class="flags-toolbar" id="flagsToolbar">
-      <label class="fl-selall"><input type="checkbox" id="flagSelAll"> Выбрать все (${fixable})</label>
-      <span id="flagSelCount" class="muted" style="font-size:12px"></span>
-      <button class="btn" id="flagMultiFix" style="display:none" data-tip="Точечная правка сразу по всем выбранным замечаниям">→ Прозаику</button>
-      <button class="btn" id="flagMultiRewrite" style="display:none" data-tip="Переписать сцену с учётом всех выбранных замечаний">↺ Переписать все</button>
-    </div>`:''}
+    ${multiSelectToolbarHTML('flag', fixable, 'Переписать все')}
     <div class="flags-list" id="flagsList">
       ${all.map((f,i)=>`<div class="flag-item${f.severity!=='ok'?' flag-selectable':''}" data-fi="${i}">
         ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+(f.detail||''))}" data-fi="${i}"></label>`:''}
@@ -202,79 +290,7 @@ function bindFlagFix(){
     setTimeout(()=>{ if(b.dataset.confirmed==='1'){ delete b.dataset.confirmed; b.textContent=orig; b.style.cssText=''; } }, 3000);
   });
 
-  // multi-select: click anywhere on flag-item (except buttons/checkbox) toggles checkbox
-  document.querySelectorAll('.flag-selectable').forEach(item=>{
-    item.addEventListener('click', e=>{
-      if(e.target.closest('button')||e.target.closest('.flag-cb-wrap')) return;
-      const cb=item.querySelector('.flag-cb'); if(!cb) return;
-      cb.checked=!cb.checked; cb.dispatchEvent(new Event('change',{bubbles:true}));
-    });
-  });
-
-  function updateMultiBar(){
-    const cbs=[...document.querySelectorAll('.flag-cb')];
-    const checked=cbs.filter(c=>c.checked);
-    const n=checked.length;
-    const fixBtn=document.getElementById('flagMultiFix');
-    const rwBtn=document.getElementById('flagMultiRewrite');
-    const countEl=document.getElementById('flagSelCount');
-    if(!fixBtn) return;
-    if(n>0){
-      countEl.textContent=`${n} выбрано`;
-      fixBtn.style.display=''; fixBtn.textContent=`→ Прозаику (${n})`;
-      rwBtn.style.display=''; rwBtn.textContent=`↺ Переписать выбранные (${n})`;
-    } else {
-      countEl.textContent='';
-      fixBtn.style.display='none';
-      rwBtn.style.display='none';
-    }
-    // sync select-all checkbox state
-    const selAll=document.getElementById('flagSelAll');
-    if(selAll){ selAll.checked=n===cbs.length && n>0; selAll.indeterminate=n>0&&n<cbs.length; }
-  }
-
-  document.querySelectorAll('.flag-cb').forEach(cb=>cb.addEventListener('change', ()=>{
-    cb.closest('.flag-selectable')?.classList.toggle('flag-selected', cb.checked);
-    updateMultiBar();
-  }));
-
-  const selAll=document.getElementById('flagSelAll');
-  if(selAll) selAll.onchange=()=>{
-    document.querySelectorAll('.flag-cb').forEach(cb=>{
-      cb.checked=selAll.checked;
-      cb.closest('.flag-selectable')?.classList.toggle('flag-selected', selAll.checked);
-    });
-    updateMultiBar();
-  };
-
-  function combinedDirective(){
-    const checks=[...document.querySelectorAll('.flag-cb:checked')];
-    if(!checks.length) return null;
-    return checks.map((c,i)=>`${i+1}. ${c.dataset.fix}`).join('\n');
-  }
-
-  const fixBtn=document.getElementById('flagMultiFix');
-  if(fixBtn) fixBtn.onclick=()=>{
-    const d=combinedDirective(); if(!d) return;
-    if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
-    fixBtn.textContent='⏳ Запускаю…'; fixBtn.disabled=true;
-    document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d}}));
-  };
-
-  const rwBtn=document.getElementById('flagMultiRewrite');
-  if(rwBtn) rwBtn.onclick=()=>{
-    if(rwBtn.dataset.confirmed==='1'){
-      const d=combinedDirective(); if(!d) return;
-      if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
-      rwBtn.textContent='⏳ Запускаю…'; rwBtn.disabled=true;
-      document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d, rewrite:true}}));
-      return;
-    }
-    const orig=rwBtn.textContent;
-    rwBtn.dataset.confirmed='1'; rwBtn.textContent='Нажми ещё раз — точно?';
-    rwBtn.style.cssText='background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)';
-    setTimeout(()=>{ if(rwBtn.dataset.confirmed==='1'){ delete rwBtn.dataset.confirmed; rwBtn.textContent=orig; rwBtn.style.cssText=''; } }, 3000);
-  };
+  bindMultiSelectToolbar('flag', 'flag-cb', 'flag-selectable');
 }
 
 // Анализ сцены (правая панель, верх): строка вопроса + флаги Стражей.
@@ -330,7 +346,10 @@ function renderSceneScores(scene){
 // .flag-fix/.flag-rewrite — те же классы, что у карточек Стражей чуть ниже
 // на этой же панели: bindFlagFix() их уже слушает, отдельная привязка не нужна.
 function renderEvalDetails(v){
-  const nt = (v.notes||[]).length ? `<div class="ares-h">Как улучшить оценку</div>${v.notes.map(n=>`<div class="ares-note"><span>${esc(n)}</span>
+  const notes = v.notes||[];
+  const nt = notes.length ? `<div class="ares-h">Как улучшить оценку</div>${multiSelectToolbarHTML('note', notes.length, 'Переписать с учётом выбранных')}${notes.map(n=>`<div class="ares-note ares-selectable">
+    <label class="ares-cb-wrap"><input type="checkbox" class="note-cb" data-fix="${esc(n)}"></label>
+    <span>${esc(n)}</span>
     <div class="ares-acts">
       <button class="flag-fix" data-fix="${esc(n)}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
       <button class="flag-rewrite" data-fix="${esc(n)}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
@@ -344,6 +363,7 @@ function renderEvalDetails(v){
 }
 
 function bindEvalDetails(){
+  bindMultiSelectToolbar('note', 'note-cb', 'ares-selectable');
   document.querySelectorAll('.eval-details .ares-rule').forEach(b=>b.onclick=()=>{
     openRuleModal(b.dataset.rule, { onSave:()=>{ b.textContent='✓ правило'; b.classList.add('done'); b.disabled=true; } });
   });

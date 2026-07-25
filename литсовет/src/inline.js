@@ -3,6 +3,7 @@
 // «до» и «после». Результат сплайсится обратно в прозу на место выделения.
 
 import { callLLM } from './llm.js';
+import { ag, llmFor } from './state.js';
 
 const ACTIONS = {
   rewrite:   'Перепиши этот фрагмент иначе, сохранив смысл и его роль в сцене.',
@@ -14,9 +15,17 @@ const ACTIONS = {
 
 // Возвращает новый текст фрагмента (для continue — только продолжение).
 export async function transformSelection(state, action, selected, before, after){
-  const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ.');
-  const prose = (state.agents||[]).find(a=>a.role==='prose') || {};
+  // Точечная правка выделения пишет прозу — использует конфиг LLM Прозаика
+  // (включая его переопределение провайдера/модели, если задано), а не
+  // голый state.global. Раньше это было единственное место в приложении,
+  // куда не долетел переход на llmFor() (см. pipeline.js/ondemand.js) — если
+  // автор настроил Прозаика на другого провайдера и не заполнил ГЛОБАЛЬНЫЙ
+  // ключ отдельно, «Переписать»/«Сократить»/… в плавающем меню редактора
+  // молча падали на «Не задан API-ключ», хотя ключ для реально используемого
+  // провайдера был на месте.
+  const prose = ag(state, 'prose');
+  const llm = llmFor(state, prose);
+  if(!llm.apiKey) throw new Error('Не задан API-ключ.');
   const sys = 'Ты — прозаик-редактор. Тебе дают ФРАГМЕНТ сцены и его ГРАНИЦЫ — текст сверху (до фрагмента) и снизу (после). Перепиши ТОЛЬКО фрагмент по инструкции так, чтобы он БЕЗ ШВА стыковался с границами: продолжай последнюю фразу границы сверху и плавно подводи к первой фразе границы снизу — согласуй время, лицо, тон и пунктуацию на обоих стыках. НЕ переписывай границы, не повторяй их, не трогай остальную сцену. Сохраняй голос и стиль автора.';
   const user = [
     'ГРАНИЦА СВЕРХУ (не менять; фрагмент должен её продолжать):\n' + (before || '(это начало сцены — стыка сверху нет)'),
@@ -29,9 +38,9 @@ export async function transformSelection(state, action, selected, before, after)
     'Верни ТОЛЬКО новый текст фрагмента, без кавычек, заголовков и пояснений.',
   ].join('\n');
   const res = await callLLM({
-    baseURL:g.baseURL, apiKey:g.apiKey, model:g.model,
+    ...llm,
     temperature: prose.temp ?? 0.8, messages:[{role:'system',content:sys},{role:'user',content:user}],
-    maxTokens: 840, retries: g.retries,
+    maxTokens: 840,
   });
   return res.text.trim();
 }

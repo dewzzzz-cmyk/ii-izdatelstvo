@@ -1,7 +1,7 @@
 // Рендереры стадий. ПП1+2: Концепция (онбординг+режим), Голос (образец→примеры),
 // Структура (минимальный список сцен), Написание (редактор + запуск ядра).
 
-import { getState, save, uid, addRule, charNamesMatch, ag } from '../state.js';
+import { getState, save, uid, addRule, charNamesMatch, ag, llmFor } from '../state.js';
 import { runAgentOnDemand } from '../ondemand.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
@@ -2809,7 +2809,11 @@ function boundaryAfter(full, end, win=500){
 // Точечная правка: меняем ТОЛЬКО выделенный фрагмент и вставляем на место.
 async function applyInlineEdit(scene, edEl, action, start, end){
   const s=getState();
-  if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+  // Проверяем ключ РЕАЛЬНО используемого провайдера (Прозаик мог быть
+  // переопределён на другого — см. llmFor()), не голый global.apiKey: иначе
+  // «Переписать»/«Сократить»/… в плавающем меню молча падали с «Не задан
+  // API-ключ», даже когда ключ для настроенного провайдера был на месте.
+  if(!llmFor(s, ag(s,'prose')).apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
   const full = edEl.textContent;
   const selected = full.slice(start, end);
   if(!selected.trim()) return;

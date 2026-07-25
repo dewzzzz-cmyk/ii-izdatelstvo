@@ -213,6 +213,10 @@ textarea{resize:vertical;min-height:60px}
 .ares-note{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;font-size:13px;line-height:1.5;padding:6px 0;border-bottom:1px solid var(--border)}
 .ares-note span{flex:1}
 .ares-acts{display:flex;flex-direction:column;gap:4px;flex-shrink:0;margin-top:4px}
+.ares-selectable{cursor:pointer;transition:background .12s}
+.ares-selectable:hover{background:var(--hover)}
+.ares-cb-wrap{flex-shrink:0;padding-top:3px;line-height:0}
+.ares-cb-wrap input{cursor:pointer;accent-color:var(--accent);width:14px;height:14px}
 .ares-patch,.ares-todir{font-size:11px;padding:3px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .ares-patch{border:1px solid var(--accent);background:var(--accent);color:#fff}
 .ares-patch:hover:not(:disabled){filter:brightness(1.08)}
