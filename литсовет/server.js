@@ -316,6 +316,27 @@ async function handleWiki(req, res){
   });
 }
 
+// Некоторые провайдеры (замечено на Recraft — векторные модели/стили в их
+// API) могут под тем же полем b64_json вернуть НЕ растровые байты, а текст
+// (SVG-разметку) — сервер до сих пор считал это успехом, отдавал клиенту
+// `data:image/png;base64,<эти же байты>`, картинка сохранялась в проект как
+// обычно, но браузер не может декодировать SVG-текст как PNG: автор видел
+// «сгенерировано», но сама картинка нигде не отображалась и не открывалась —
+// без единого сообщения об ошибке, гадать пришлось бы вслепую. Проверяем
+// магическое число первых байт ПЕРЕД тем, как объявлять генерацию успешной.
+function looksLikeRasterImage(b64){
+  try{
+    const head = Buffer.from(String(b64||'').slice(0, 32), 'base64');
+    if(head.length < 4) return false;
+    if(head[0]===0x89 && head[1]===0x50 && head[2]===0x4E && head[3]===0x47) return true; // PNG
+    if(head[0]===0xFF && head[1]===0xD8 && head[2]===0xFF) return true; // JPEG
+    if(head[0]===0x47 && head[1]===0x49 && head[2]===0x46) return true; // GIF
+    if(head.length>=12 && head.slice(0,4).toString('ascii')==='RIFF' && head.slice(8,12).toString('ascii')==='WEBP') return true;
+    return false;
+  }catch{ return false; }
+}
+const NOT_RASTER_ERR = 'UPSTREAM_FORMAT: провайдер вернул не растровое изображение (похоже на SVG/векторный формат) — такую картинку браузер не может отрисовать. Попробуйте другую модель этого провайдера в настройках (⚙ → Иллюстрации) или другого провайдера.';
+
 // ── Генерация иллюстраций (Gemini/Nano Banana или OpenAI) ──
 // Ключ/провайдер приходят в теле запроса от клиента (как и в handleGenerate) —
 // сервер ничего не хранит, только проксирует к нужному upstream и возвращает
@@ -341,6 +362,7 @@ async function handleGenerateImage(req, res){
         const d = await up.json();
         const b64 = d?.data?.[0]?.b64_json;
         if(!b64) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
+        if(!looksLikeRasterImage(b64)) return send(res, 502, NOT_RASTER_ERR);
         return send(res, 200, JSON.stringify({dataUrl:'data:image/png;base64,'+b64}), 'application/json; charset=utf-8');
       } else if(provider==='gemini'){
         const model = b.model || 'gemini-2.5-flash-image';
@@ -355,6 +377,11 @@ async function handleGenerateImage(req, res){
         const imgPart = parts.find(p=>p.inlineData && p.inlineData.data);
         if(!imgPart) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
         const mime = imgPart.inlineData.mimeType || 'image/png';
+        // Проверяем только когда mime САМ заявляет растровый формат — если
+        // провайдер честно вернул image/svg+xml, это ДЕЙСТВИТЕЛЬНО отрисуется
+        // в <img> без проблем (SVG data URI браузеры умеют); ловим только
+        // случай, когда заявлен растр, а по факту байты им не являются.
+        if(/^image\/(png|jpe?g|gif|webp)$/i.test(mime) && !looksLikeRasterImage(imgPart.inlineData.data)) return send(res, 502, NOT_RASTER_ERR);
         return send(res, 200, JSON.stringify({dataUrl:`data:${mime};base64,`+imgPart.inlineData.data}), 'application/json; charset=utf-8');
       } else if(provider==='recraft'){
         // Recraft V4.1 — синхронный REST API, OpenAI-совместимый формат ответа
@@ -372,6 +399,7 @@ async function handleGenerateImage(req, res){
         const d = await up.json();
         const b64 = d?.data?.[0]?.b64_json;
         if(!b64) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
+        if(!looksLikeRasterImage(b64)) return send(res, 502, NOT_RASTER_ERR);
         return send(res, 200, JSON.stringify({dataUrl:'data:image/png;base64,'+b64}), 'application/json; charset=utf-8');
       } else {
         // Qwen/DashScope (Wanxiang) — асинхронный API: сабмит задачи → поллинг статуса →
