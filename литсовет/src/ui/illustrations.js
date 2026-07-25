@@ -501,6 +501,7 @@ function bindHandlers(els, s){
   });
 
   document.querySelectorAll('.ill-retitle').forEach(b=>b.onclick=async ()=>{
+    if(_busy) return;
     const id = b.dataset.id;
     const it = (s.illustrations.items||[]).find(x=>x.id===id);
     if(!it || !it.baseDataUrl) return;

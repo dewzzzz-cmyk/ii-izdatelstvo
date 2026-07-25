@@ -283,7 +283,14 @@ export function restoreImageVersion(item, verIdx){
   const current = { dataUrl: item.dataUrl, prompt: item.prompt, createdAt: item.createdAt };
   item.versions.splice(verIdx, 1);
   item.dataUrl = chosen.dataUrl; item.prompt = chosen.prompt; item.createdAt = chosen.createdAt;
-  item.baseDataUrl = null; // версии не хранят baseDataUrl — гасим «Обновить название» до следующей регенерации
+  // Обложка: версии не хранят baseDataUrl — гасим «Обновить название» до следующей
+  // регенерации. Карта: НЕ трогаем baseDataUrl здесь — версии карты хранят уже
+  // СКОМПОЗИЧЕННЫЕ (с подписями) картинки (см. applyMapLabels/pushImageVersion),
+  // а не чистый фон. Если бы мы сбрасывали baseDataUrl тут тоже, следующее
+  // наложение подписи (applyMapLabels: `if(!item.baseDataUrl) item.baseDataUrl =
+  // item.dataUrl`) взяло бы за "чистую базу" уже подписанную картинку и наложило
+  // бы текст поверх текста.
+  if(item.type==='cover') item.baseDataUrl = null;
   item.versions.unshift(current);
   const cap = versionsCapFor(item);
   if(item.versions.length > cap) item.versions.length = cap;
