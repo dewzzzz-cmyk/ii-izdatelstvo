@@ -110,15 +110,7 @@ export async function suggestIllustrations(state){
 // полностью убрать риск нельзя, только уменьшить (или выключить текст совсем — noText).
 export function textInstruction(ic){
   if(ic?.noText) return 'Do not include any readable text, letters, numbers or writing anywhere in the image.';
-  // Раньше для обложки инструкция ограничивалась «если есть текст — пусть будет
-  // русский», но НИКОГДА не называла сам текст — генератор картинок книгу не
-  // читал и придумывал правдоподобное, но постороннее название. Явно передаём
-  // реальное название книги, только когда есть что передать (обложка + заголовок задан).
-  const titleClause = (ic?.type==='cover' && ic?.title)
-    ? ` The book title rendered on the cover must be EXACTLY this text, unchanged and not translated or shortened: «${ic.title}».`
-    : '';
-  if(ic?.ruText) return 'If the image contains any readable text or lettering (book title, map labels, signs), it must be written in Russian (Cyrillic script), not English — and rendered LARGE, bold and sparse: a few big, clear words, not small or dense text. Small/dense text reliably comes out garbled — prefer omitting a label entirely over rendering it small.' + titleClause;
-  if(titleClause) return 'If the image contains any readable text or lettering, render it LARGE, bold and sparse — a few big, clear words, not small or dense text.' + titleClause;
+  if(ic?.ruText) return 'If the image contains any readable text or lettering (map labels, signs), it must be written in Russian (Cyrillic script), not English — and rendered LARGE, bold and sparse: a few big, clear words, not small or dense text. Small/dense text reliably comes out garbled — prefer omitting a label entirely over rendering it small.';
   return '';
 }
 // Эффективное «текст на картинке» для конкретного кандидата/элемента галереи:
@@ -145,11 +137,17 @@ export async function generateIllustrationFor(state, candidate){
   const artStyle = ART_STYLES.find(s=>s.id===state.style?.artStyleId);
   if(artStyle) parts.push(artStyle.promptFragment);
   if(state.style?.colorMode==='bw') parts.push('black and white, monochrome, no color');
-  const noText = !effectiveTextOn(candidate, ic);
-  const txtInstr = textInstruction({ noText, ruText: ic.ruText, type: candidate.type, title: state.project?.title }); if(txtInstr) parts.push(txtInstr);
+  const isCover = candidate.type==='cover';
+  const wantsText = effectiveTextOn(candidate, ic);
+  // Обложка: реальный текст названия теперь ВСЕГДА накладывается нами через
+  // compositeCoverTitle, а не рисуется AI — поэтому AI для обложки всегда
+  // просится обойтись без текста вообще, независимо от wantsText. wantsText
+  // для обложки управляет только тем, наложим ли МЫ текст после генерации.
+  const noText = isCover ? true : !wantsText;
+  const txtInstr = textInstruction({ noText, ruText: ic.ruText }); if(txtInstr) parts.push(txtInstr);
   const portraitInstr = portraitInstruction(ic, candidate.type); if(portraitInstr) parts.push(portraitInstr);
   const prompt = parts.length ? `${candidate.prompt}\n\n${parts.join('. ')}` : candidate.prompt;
-  const size = (candidate.type==='cover' && ic.portraitCover) ? PORTRAIT_SIZE : ic.size;
+  const size = (isCover && ic.portraitCover) ? PORTRAIT_SIZE : ic.size;
   const { dataUrl } = await generateImage({
     provider: ic.provider||'gemini',
     apiKey: ic.apiKey,
@@ -159,7 +157,11 @@ export async function generateIllustrationFor(state, candidate){
     quality: ic.quality,
     proxyToken: state.global?.proxyToken,
   });
-  return dataUrl;
+  if(isCover && wantsText){
+    const composed = await compositeCoverTitle(dataUrl, state.project?.title, state.project?.author);
+    return { dataUrl: composed, baseDataUrl: dataUrl };
+  }
+  return { dataUrl, baseDataUrl: null };
 }
 
 // ── 1b) Ручной режим: точечное предложение промпта для ОДНОЙ выбранной цели ──
@@ -281,6 +283,7 @@ export function restoreImageVersion(item, verIdx){
   const current = { dataUrl: item.dataUrl, prompt: item.prompt, createdAt: item.createdAt };
   item.versions.splice(verIdx, 1);
   item.dataUrl = chosen.dataUrl; item.prompt = chosen.prompt; item.createdAt = chosen.createdAt;
+  item.baseDataUrl = null; // версии не хранят baseDataUrl — гасим «Обновить название» до следующей регенерации
   item.versions.unshift(current);
   const cap = versionsCapFor(item);
   if(item.versions.length > cap) item.versions.length = cap;
@@ -431,6 +434,72 @@ export async function applyMapLabels(item){
   const composited = await compositeMapLabels(base, item.labels||[]);
   if(composited !== item.dataUrl){ pushImageVersion(item); item.dataUrl = composited; }
   return composited;
+}
+
+// Настоящий текст названия на обложке (canvas), а не то, что нарисует сама
+// AI-модель — та же причина и тот же приём, что и у compositeMapLabels выше:
+// мелкий/плотный текст даёт нечитаемые артефакты у всех современных
+// image-моделей без исключения. baseDataUrl — чистый фон без текста (см.
+// generateIllustrationFor выше — AI теперь всегда просится рисовать обложку
+// БЕЗ текста, реальное название/автор накладываются здесь).
+export function compositeCoverTitle(baseDataUrl, title, author){
+  const t = String(title||'').trim();
+  if(!t) return Promise.resolve(baseDataUrl); // нечего накладывать (черновой проект без названия)
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      try{
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const a = String(author||'').trim();
+        const titleSize = Math.max(28, Math.round(canvas.width * 0.075));
+        const authorSize = Math.max(16, Math.round(canvas.width * 0.032));
+        const maxTextWidth = canvas.width - canvas.width*0.16;
+        const titleFont = `700 ${titleSize}px Georgia, 'Times New Roman', serif`;
+        const titleLines = wrapCoverText(ctx, t, titleFont, maxTextWidth, 3);
+        const lineH = titleSize * 1.15;
+        const blockH = titleLines.length*lineH + (a ? authorSize*1.8 : 0);
+        const blockY = canvas.height*0.78 - blockH/2; // центр текстового блока — на 78% высоты картинки
+        const plateH = blockH + titleSize*0.9;
+        ctx.fillStyle = 'rgba(10,8,6,0.55)';
+        ctx.fillRect(0, blockY - titleSize*0.5, canvas.width, plateH);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#f7edd8';
+        ctx.font = titleFont;
+        titleLines.forEach((line,i)=> ctx.fillText(line, canvas.width/2, blockY + lineH*(i+0.8)));
+        if(a){
+          ctx.font = `italic ${authorSize}px Georgia, 'Times New Roman', serif`;
+          ctx.fillText(a, canvas.width/2, blockY + titleLines.length*lineH + authorSize*1.3);
+        }
+        resolve(canvas.toDataURL('image/png'));
+      }catch(e){ reject(e); }
+    };
+    img.onerror = ()=>reject(new Error('Не удалось загрузить обложку для наложения названия.'));
+    img.src = baseDataUrl;
+  });
+}
+
+// Перенос длинного названия на несколько строк по словам — canvas не делает
+// этого сам. maxLines защищает от бесконечно длинного названия — лишние слова
+// в последнюю разрешённую строку просто не попадают.
+function wrapCoverText(ctx, text, font, maxWidth, maxLines){
+  ctx.font = font;
+  const words = text.split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for(const w of words){
+    const test = cur ? cur+' '+w : w;
+    if(ctx.measureText(test).width > maxWidth && cur){
+      lines.push(cur);
+      if(lines.length === maxLines) return lines;
+      cur = w;
+    } else cur = test;
+  }
+  if(cur) lines.push(cur);
+  return lines.slice(0, maxLines);
 }
 
 // Убрать обложку целиком — используется и стадией «Концепция» (ручная загрузка/
