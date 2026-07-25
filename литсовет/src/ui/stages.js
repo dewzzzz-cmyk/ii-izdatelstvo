@@ -75,6 +75,7 @@ function sceneCountHint(tw){
 }
 
 let _topTab = 'analysis';  // analysis | process
+let _rightTopHeight = null; // px высоты .sect-top правой панели — null = дефолт из CSS (42%), задаётся перетаскиванием разделителя (renderRightPanel)
 let _busy = false;          // прогон идёт — блокируем переключение сцен (защита от гонки/потери данных)
 let _autoChapter = false;   // автопилот главы: пишем оставшиеся сцены подряд
 let _autoStopReq = false;   // запрошена остановка автопилота (после текущей сцены)
@@ -140,7 +141,7 @@ function renderRightPanel(els){
     : renderMemory();
   els.right.className='panel panel-right split';
   els.right.innerHTML = `
-    <div class="sect sect-top">
+    <div class="sect sect-top"${_rightTopHeight?` style="flex:0 0 ${_rightTopHeight}px"`:''}>
       <div class="rtabs">
         ${(()=>{
           const sc=(s.structure||[]).find(n=>n.id===s.ui.activeScene);
@@ -153,6 +154,7 @@ function renderRightPanel(els){
       </div>
       <div class="sect-scroll" id="topBody">${_topTab==='process'?renderProcess():renderSceneAnalysis()}</div>
     </div>
+    <div class="v-divider" id="rightVDivider" title="Потяните, чтобы изменить размер"></div>
     <div class="sect sect-bot">
       <div class="rtabs">
         <button class="rtab ${rt==='roadmap'?'active':''}" data-rt="roadmap">Роадмап</button>
@@ -165,6 +167,43 @@ function renderRightPanel(els){
   els.right.querySelectorAll('.rtab[data-rt]').forEach(b=>b.onclick=()=>{ const s=getState(); s.ui.rightTab=b.dataset.rt; save(); });
   els.right.querySelectorAll('.rtab[data-tt]').forEach(b=>b.onclick=()=>{ _topTab=b.dataset.tt; renderRightPanel(els); });
   els.right.querySelectorAll('.proc-toanalysis').forEach(b=>b.onclick=()=>{ _topTab='analysis'; renderRightPanel(els); });
+  bindRightVDivider(els);
+}
+
+// Перетаскивание границы между .sect-top/.sect-bot правой панели — та же
+// техника, что уже у горизонтальных .divider (левая/правая ширина панелей,
+// см. initDividers в ui/app.js), но по вертикали и внутри одной панели.
+// Высота двигает inline style на живом .sect-top СРАЗУ (без полного
+// renderRightPanel на каждый mousemove — плавнее и не сбивает скролл вкладок),
+// а в module-level _rightTopHeight сохраняется только по mouseup, чтобы
+// следующий renderRightPanel() (смена сцены/вкладки/приход события пайплайна)
+// сохранил выбранный автором размер.
+function bindRightVDivider(els){
+  const div = document.getElementById('rightVDivider');
+  const top = els.right.querySelector('.sect-top');
+  if(!div || !top) return;
+  div.addEventListener('mousedown', e=>{
+    e.preventDefault();
+    div.classList.add('dragging');
+    const startY = e.clientY;
+    const startH = top.getBoundingClientRect().height;
+    const panelH = els.right.getBoundingClientRect().height;
+    function move(ev){
+      const dy = ev.clientY - startY;
+      // 120px — минимум с каждой стороны, чтобы вкладки+заголовок другой
+      // секции не скрылись целиком под перетаскиванием.
+      const h = Math.max(120, Math.min(startH+dy, panelH-120-div.offsetHeight));
+      top.style.flex = `0 0 ${h}px`;
+    }
+    function up(){
+      div.classList.remove('dragging');
+      _rightTopHeight = Math.round(top.getBoundingClientRect().height);
+      document.removeEventListener('mousemove',move);
+      document.removeEventListener('mouseup',up);
+    }
+    document.addEventListener('mousemove',move);
+    document.addEventListener('mouseup',up);
+  });
 }
 
 // ─────────────────────────────── КОНЦЕПЦИЯ ───────────────────────────────

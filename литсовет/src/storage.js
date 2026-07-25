@@ -60,11 +60,17 @@ async function updateProjectIndexEntry(entry){
   });
 }
 
+// Возвращает JSON-строку (state, вычищенный safeReplacer) — persistToServer()
+// в state.js передаёт её дальше в pushToServer(), вместо того чтобы та
+// сериализовала ВЕСЬ state ещё раз с нуля тем же safeReplacer сразу следом
+// (было: два полных прохода по дереву состояния на каждый save(), включая
+// стриминг прозы каждые ~200 символов — см. CLAUDE.md).
 export async function saveProject(state){
   const store = await tx(STORE, 'readwrite');
   // Глубокая копия без секретов/приватных полей, но с сохранением apiKey ТОЛЬКО в памяти —
   // здесь намеренно сериализуем через safeReplacer, поэтому ключ на диск не попадёт.
-  const clean = JSON.parse(JSON.stringify(state, safeReplacer));
+  const json = JSON.stringify(state, safeReplacer);
+  const clean = JSON.parse(json);
   clean.id = state.id;
   await new Promise((resolve, reject)=>{
     const r = store.put(clean);
@@ -72,6 +78,7 @@ export async function saveProject(state){
     r.onerror = ()=>reject(r.error);
   });
   await updateProjectIndexEntry({ id:clean.id, title:clean.project?.title||'(без названия)', updated:clean.updated });
+  return json;
 }
 
 export async function loadProject(id){
@@ -173,11 +180,14 @@ export async function getServerProject(id){
 // «обновите страницу», а не общий «не удалось сохранить».
 export let lastPushConflict = false;
 
-export async function pushToServer(state){
+// precomputedJson — если saveProject() уже сериализовала этот же state
+// (тот же safeReplacer) в этом цикле save(), переиспользуем строку вместо
+// повторного JSON.stringify по всему дереву состояния (см. её комментарий).
+export async function pushToServer(state, precomputedJson){
   if(!state?.id) return false;
   lastPushConflict = false;
   try{
-    const body = JSON.stringify(state, safeReplacer);
+    const body = precomputedJson ?? JSON.stringify(state, safeReplacer);
     const res = await fetch('/api/sync/'+encodeURIComponent(state.id),{
       method:'POST', headers:{'Content-Type':'application/json'}, body,
     });

@@ -75,8 +75,14 @@ textarea,input,select{font-family:inherit;font-size:13px}
 .panel.split{display:flex;flex-direction:column;overflow:hidden}
 .panel.split>.sect{display:flex;flex-direction:column;min-height:0}
 .panel.split>.sect-top{flex:0 0 42%}
-.panel.split>.sect-bot{flex:1;border-top:1px solid var(--border)}
+.panel.split>.sect-bot{flex:1}
 .sect-scroll{overflow-y:auto;flex:1;min-height:0}
+/* Перетаскиваемая граница .sect-top/.sect-bot — та же техника, что у
+   горизонтальных .divider ниже (невидима до наведения), берёт на себя роль
+   прежней статичной border-top у .sect-bot. */
+.v-divider{height:6px;flex-shrink:0;cursor:row-resize;background:transparent;position:relative;z-index:2}
+.v-divider::before{content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:var(--border)}
+.v-divider:hover::after,.v-divider.dragging::after{content:'';position:absolute;top:50%;left:0;right:0;height:2px;transform:translateY(-50%);background:var(--accent-border)}
 /* Чтение книги (Редактура) */
 .read-bar{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
 .read-title{font-size:15px;font-weight:600}
@@ -544,7 +550,7 @@ textarea{resize:vertical;min-height:60px}
 
   /* Основное тело: одна панель за раз */
   .body{display:block!important;position:relative;overflow:hidden;height:100%}
-  .divider{display:none!important}
+  .divider,.v-divider{display:none!important}
 
   /* Все панели скрыты по умолчанию; bottom оставляет место под нав-бар (56px + safe area) */
   .panel{position:absolute!important;inset:0 0 calc(56px + env(safe-area-inset-bottom,0px)) 0!important;min-width:0!important;display:none!important;overflow-y:auto}
