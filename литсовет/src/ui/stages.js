@@ -29,7 +29,7 @@ import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, sugges
 import { extractCraftSignature, detectRepeatingHumorPattern, dominantExpositionChannel } from '../craftsignals.js';
 import { GENRES, ERAS } from '../genres.js';
 import { suggestMissingWorldFacts, suggestWorldFacts } from '../world.js';
-import { saveUploadedItem, removeCover } from '../illustrations.js';
+import { saveUploadedItem, removeCover, coverHasBakedAuthor } from '../illustrations.js';
 
 export function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -2152,7 +2152,7 @@ function exportPdf(s){
   ${s.project.coverDataUrl
     ? `<div class="pdf-img" style="margin:0 0 1.5cm"><img src="${s.project.coverDataUrl}" style="max-height:26cm"></div>`
     : `<h1>${title}</h1>`}
-  ${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
+  ${s.project.author && !coverHasBakedAuthor(s)?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
   const w=window.open('','_blank'); if(!w) return;
   w.document.write(html); w.document.close();
 }

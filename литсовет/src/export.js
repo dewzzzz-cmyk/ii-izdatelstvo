@@ -3,6 +3,7 @@
 
 import { exportCheckpoint } from './storage.js';
 import { save } from './state.js';
+import { coverHasBakedAuthor } from './illustrations.js';
 
 // ── Лёгкая типографика (RU): кавычки-ёлочки, тире, неразрывные пробелы ──
 export function typo(s){
@@ -133,7 +134,7 @@ export function exportDocx(state){
   let body = state.project.coverDataUrl
     ? `<p style="text-align:center"><img src="${state.project.coverDataUrl}" style="max-width:100%"/></p>`
     : `<h1>${xesc(book.title)}</h1>`;
-  if(state.project.author) body += `<p style="text-align:center;font-style:italic">${xesc(state.project.author)}</p>`;
+  if(state.project.author && !coverHasBakedAuthor(state)) body += `<p style="text-align:center;font-style:italic">${xesc(state.project.author)}</p>`;
   const mapItem = worldMapItem(state);
   if(mapItem) body += `<h2>Карта мира</h2><p style="text-align:center"><img src="${mapItem.dataUrl}" style="max-width:100%"/></p>`;
   for(const ch of book.chapters){
