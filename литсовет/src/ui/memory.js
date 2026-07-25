@@ -1,7 +1,7 @@
 // Правая панель, вкладка «Память»: сводки (с откатом версий), состояния
 // персонажей, сигналы дрейфа, факты Bible, квота хранилища.
 
-import { getState, save, mergeCharacters, charNamesMatch, dismissObserved, dismissOpenThread, dismissFactConflict } from '../state.js';
+import { getState, save, mergeCharacters, charNamesMatch, dismissObserved, dismissOpenThread, dismissFactConflict, dismissDriftFlag } from '../state.js';
 import { rollback, summarizeScene, capBibleSize } from '../memory.js';
 import { storageEstimate } from '../storage.js';
 import { uncalibratedScenes, recordRating, calibrationState } from '../calibration.js';
@@ -73,6 +73,8 @@ export function renderMemory(){
       ${openThreadsBlock(s)}
 
       ${conflictsBlock(s)}
+
+      ${driftFlagsBlock(s)}
 
       ${sectionHeader('bible', `Канон / Bible (${(s.bible||[]).length})`, `<button class="mem-mini" id="bibleAdd" data-tip="Добавить факт мира вручную. Канон удерживает агентов от противоречий.">+ факт</button>`)}
       ${collapsed.bible ? '' : ((s.bible||[]).map((b,i)=>`
@@ -223,6 +225,27 @@ function conflictsBlock(s){
     </div>`).join('')}`;
 }
 
+// Сюжет разошёлся с планом книги (state.memory.driftFlags[]) — пишется
+// автоматически архивариусом в summarizeScene() (memory.js) в двух случаях:
+// новый персонаж вне канона (type:'newCharacter') или новый факт сцены
+// противоречит брифу ещё не написанной сцены дальше (type:'futureConflict').
+// Автор решает сам: занести в канон/поправить план/оставить как приём —
+// приложение никогда не переписывает структуру/канон само.
+const DRIFT_LABELS = { newCharacter:'Новый персонаж вне плана', futureConflict:'Противоречит плану впереди' };
+function driftFlagsBlock(s){
+  const items = (s.memory?.driftFlags||[]).map((f,i)=>({...f,i})).filter(f=>!f.dismissed).sort((a,b)=>b.at-a.at);
+  if(!items.length) return '';
+  return `<div class="mem-h" style="color:var(--warn,#c9a227)" title="Архивариус заметил, что написанная сцена разошлась с планом книги — новый персонаж вне канона или факт, противоречащий уже запланированной сцене впереди">⚠ Разошлось с планом</div>
+    ${items.map(f=>`<div class="mem-card" style="border-color:var(--warn-border,#c9a227)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+        <div style="font-size:11px;flex:1"><b>${esc(DRIFT_LABELS[f.type]||f.type)}</b></div>
+        <button class="bc-act drift-dismiss" data-di="${f.i}" title="Скрыть — уже разобрался или это осознанный приём (не блокирует, только убирает из списка)">✕</button>
+      </div>
+      <div style="font-size:12px;margin-top:2px">${esc(f.text)}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">${f.sceneTitle?`сцена: ${esc(f.sceneTitle)}`:''}${f.targetSceneTitle?` · впереди: ${esc(f.targetSceneTitle)}`:''}</div>
+    </div>`).join('')}`;
+}
+
 function bindMemory(){
   document.querySelectorAll('.mem-h-toggle').forEach(h=>h.onclick=(e)=>{
     if(e.target.closest('button')) return; // не сворачивать при клике на «+ факт» в заголовке
@@ -258,6 +281,10 @@ function bindMemory(){
   // Противоречия канона: скрыть
   document.querySelectorAll('.conflict-dismiss').forEach(b=>b.onclick=()=>{
     const s=getState(); if(dismissFactConflict(s, +b.dataset.ci)) save();
+  });
+  // Разошлось с планом: скрыть
+  document.querySelectorAll('.drift-dismiss').forEach(b=>b.onclick=()=>{
+    const s=getState(); if(dismissDriftFlag(s, +b.dataset.di)) save();
   });
   // Персонажи: редактировать состояние
   function editCharState(i){

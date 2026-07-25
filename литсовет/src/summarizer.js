@@ -77,6 +77,40 @@ export function parseFactConflicts(text){
   }));
 }
 
+// Сверка новых фактов, установленных только что написанной сценой, против
+// ПЛАНА (брифов) ещё не написанных сцен дальше по книге — обратное
+// направление к factConflictMessages выше (там сверка с уже существующим
+// каноном). Пример: сцена только что убила второстепенного героя, а бриф
+// сцены через две главы предполагает его живым участником разговора.
+export function futureConflictMessages(facts, upcomingBriefs){
+  const sys = [
+    'Ты — сверяешь новые факты, установленные только что написанной сценой книги, против ПЛАНА (брифов) ещё не написанных сцен дальше по книге.',
+    'Для каждого будущего брифа определи: противоречит ли ему хоть один из новых фактов (напр. факт убивает персонажа, а бриф предполагает его живым; факт меняет устройство мира, а бриф опирается на старое).',
+    'Не флагуй естественное развитие сюжета — только реальные нестыковки, которые надо поправить в плане ИЛИ в тексте.',
+  ].join('\n');
+  const user = [
+    'Новые факты из написанной сцены:',
+    facts.map((f,i)=>`${i+1}. ${f}`).join('\n'),
+    '',
+    'Брифы ещё не написанных сцен дальше по книге:',
+    upcomingBriefs.map((b,i)=>`${i+1}. «${b.title}»: ${b.brief}`).join('\n'),
+    '',
+    'Верни JSON: { "conflicts": [{"briefIndex": номер брифа (1-based), "explain": "в чём именно противоречие"}] }',
+    'Только реальные противоречия. Если их нет — верни пустой массив.',
+    'Только JSON.',
+  ].join('\n');
+  return [{role:'system',content:sys},{role:'user',content:user}];
+}
+
+export function parseFutureConflicts(text){
+  const j = extractJSON(text);
+  if(!j || !Array.isArray(j.conflicts)) return [];
+  return j.conflicts.filter(c=>c && Number.isFinite(c.briefIndex)).map(c=>({
+    briefIndex: c.briefIndex,
+    explain: String(c.explain||'').slice(0,300),
+  }));
+}
+
 export function chapterSummaryMessages(chapterTitle, sceneSummaries){
   const sys = 'Ты — архивариус. Сжимаешь главу в сводку для долгой памяти книги.';
   const user = [

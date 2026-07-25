@@ -5,10 +5,11 @@
 import { callLLM } from './llm.js';
 import { sceneSummaryMessages, parseSceneSummary,
          chapterSummaryMessages, bookSummaryMessages, parseSummary,
-         factConflictMessages, parseFactConflicts } from './summarizer.js';
+         factConflictMessages, parseFactConflicts,
+         futureConflictMessages, parseFutureConflicts } from './summarizer.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine, stem } from './bible.js';
 import { RUBRIC_AXES } from './agents.js';
-import { findOrCreateCharacter, recordFactConflict } from './state.js';
+import { findOrCreateCharacter, recordFactConflict, recordDriftFlag, charNamesMatch } from './state.js';
 
 // "Та же сущность" для поиска кандидата на противоречие — по ПЕРЕСЕЧЕНИЮ
 // ключей (keys), а не по косинусу полного текста. Живой тест показал: чем
@@ -135,10 +136,24 @@ export async function summarizeScene(state, scene){
   state.memory.scenes = state.memory.scenes || {};
   if(parsed.summary) putVersioned(state.memory.scenes, scene.id, parsed.summary);
 
-  // обновляем состояния персонажей (findOrCreateCharacter — защита от дублей форм имени)
+  // обновляем состояния персонажей (findOrCreateCharacter — защита от дублей форм имени).
+  // Заодно ловим ПЕРСОНАЖА, КОТОРОГО НЕ БЫЛО В ПЛАНЕ: если книга уже имеет
+  // структуру (хотя бы одна глава), а этого имени раньше не было ни в одной
+  // карточке — сцена ввела героя органически, мимо канона/плана. Не флагуем
+  // на самых первых сценах книги (там ещё нет структуры выше — вводить
+  // героев с нуля нормально), только когда план уже существует.
+  const hasStructure = (state.structure||[]).some(n=>n.type==='chapter');
   parsed.characters.forEach(c=>{
+    const existedBefore = (state.characters||[]).some(x=>charNamesMatch(x.name, c.name));
     const ch = findOrCreateCharacter(state, c.name);
     ch.stateNote = c.state || ch.stateNote;
+    if(!existedBefore && hasStructure){
+      recordDriftFlag(state, {
+        type:'newCharacter',
+        text:`Сцена ввела персонажа «${c.name}», которого раньше не было в каноне книги.`,
+        sceneId: scene.id, sceneTitle: scene.title,
+      });
+    }
   });
 
   // новые факты в Bible — дедуп по СХОДСТВУ (не только точному совпадению) + лимит.
@@ -177,6 +192,35 @@ export async function summarizeScene(state, scene){
         recordFactConflict(state, { newFact:pair.newText, oldFact:pair.oldText, explain:c.explain, sceneId:scene.id, sceneTitle:scene.title });
       });
     }catch{ /* пропускаем — это подсказка автору, а не критичный шаг */ }
+  }
+
+  // Обратная сверка: новые факты ЭТОЙ сцены против плана (брифов) ещё НЕ
+  // НАПИСАННЫХ сцен дальше по книге — сюжет мог только что установить нечто,
+  // что противоречит уже запланированному впереди (см. futureConflictMessages).
+  // Гейт на parsed.facts.length — не тратим вызов на сцены без новых фактов
+  // (большинство сцен книги). Смотрим только на ближайшие 6 ненаписанных
+  // сцен — тот же принцип ограничения контекста, что и у остальных проверок
+  // в приложении (не весь остаток книги целиком).
+  if(parsed.facts.length){
+    const allScenes = (state.structure||[]).filter(n=>n.type==='scene');
+    const curIdx2 = allScenes.findIndex(n=>n.id===scene.id);
+    const upcoming = curIdx2>=0
+      ? allScenes.slice(curIdx2+1).filter(n=>!n.text && n.brief).slice(0, 6)
+      : [];
+    if(upcoming.length){
+      try{
+        const msgs2 = futureConflictMessages(parsed.facts.map(f=>f.text), upcoming.map(n=>({ title:n.title, brief:n.brief })));
+        const res2 = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs2, maxTokens:720, retries:g.retries });
+        parseFutureConflicts(res2.text).forEach(c=>{
+          const target = upcoming[c.briefIndex-1]; if(!target) return;
+          recordDriftFlag(state, {
+            type:'futureConflict', text:c.explain,
+            sceneId:scene.id, sceneTitle:scene.title,
+            targetSceneId:target.id, targetSceneTitle:target.title,
+          });
+        });
+      }catch{ /* пропускаем — это подсказка автору, а не критичный шаг */ }
+    }
   }
 
   return { summary: parsed.summary, charUpdates: parsed.characters.length, factsAdded: added };

@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider, MODEL_PRICES } from './providers.js'
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.26.0';
+export const APP_VERSION = '1.27.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Единый источник —
 // providers.js (та же таблица кормит подсказку цены прямо в селекте модели,
@@ -342,6 +342,32 @@ export function recordFactConflict(state, { newFact, oldFact, explain, sceneId, 
 export function dismissFactConflict(state, idx){
   const c = (state.memory?.factConflicts||[])[idx]; if(!c) return false;
   c.dismissed = true; return true;
+}
+
+// Расхождение сцены с планом книги — state.memory.driftFlags[]. Пишется из
+// summarizeScene() (memory.js) в двух случаях: (1) type:'newCharacter' —
+// сцена ввела персонажа, которого не было в каноне книги (findOrCreateCharacter
+// создал НОВУЮ карточку, а не нашёл существующую); (2) type:'futureConflict' —
+// новый факт из сцены противоречит брифу ещё НЕ НАПИСАННОЙ сцены дальше по
+// книге (в отличие от factConflicts выше — там сверка с уже существующим
+// каноном, здесь наоборот, с планом будущего). Оба случая — «сюжет уехал от
+// плана, а план об этом не знает»; автор решает сам, никогда не переписывается
+// автоматически. Дедуп по (type, text, sceneId) — та же пара может всплыть
+// повторно при пересуммаризации одной и той же сцены.
+export function recordDriftFlag(state, { type, text, sceneId, sceneTitle, targetSceneId, targetSceneTitle }){
+  const t = (text||'').trim(); if(!t) return;
+  state.memory = state.memory || {};
+  state.memory.driftFlags = state.memory.driftFlags || [];
+  const flags = state.memory.driftFlags;
+  if(flags.some(f=>!f.dismissed && f.type===type && f.text===t && f.sceneId===sceneId)) return;
+  flags.push({ type, text:t, sceneId:sceneId||'', sceneTitle:sceneTitle||'', targetSceneId:targetSceneId||'', targetSceneTitle:targetSceneTitle||'', at: Date.now() });
+  if(flags.length > 30) flags.splice(0, flags.length-30);
+}
+
+// Скрыть — та же логика, что и у остальных мягких сигналов: помечаем, не удаляем.
+export function dismissDriftFlag(state, idx){
+  const f = (state.memory?.driftFlags||[])[idx]; if(!f) return false;
+  f.dismissed = true; return true;
 }
 
 let _agc = 0;
