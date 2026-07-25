@@ -7,7 +7,7 @@ import { renderDiagnostics } from './diagnostics.js';
 import { renderIllustrations } from './illustrations.js';
 import { renderWorld } from './world.js';
 import { renderPublish } from './publish.js';
-import { exportCheckpoint, listProjects, listServerProjects } from '../storage.js';
+import { exportCheckpoint, listProjects, listServerProjects, deleteProject, deleteFromServer } from '../storage.js';
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
 import { MODEL_OPTIONS } from '../imagegen.js';
@@ -212,16 +212,19 @@ async function openSettings(){
     const d = new Date(ts);
     return d.toLocaleDateString('ru', {day:'numeric', month:'short'}) + ' ' + d.toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'});
   };
-  const projListHtml = projects.length<2 ? '' : `
+  const projListHtml = !projects.length ? '' : `
     <div class="field">
-      <span class="hint">нажмите чтобы открыть</span>
+      <span class="hint">нажмите чтобы открыть · 🗑 чтобы удалить безвозвратно</span>
       <div id="projList" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;margin-top:4px">
         ${projects.map(p=>`
-          <button class="proj-item${p.id===curId?' proj-item-active':''}" data-pid="${escAttr(p.id)}">
-            <span class="proj-item-title">${escAttr(p.title||'(без названия)')}</span>
-            <span class="proj-item-date">${escAttr(fmtProjDate(p.updated))}</span>
-            ${p.onServer?'<span class="proj-item-badge">☁</span>':''}
-          </button>`).join('')}
+          <div class="proj-item${p.id===curId?' proj-item-active':''}">
+            <button class="proj-item-open" data-pid="${escAttr(p.id)}" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;background:none;border:none;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer">
+              <span class="proj-item-title">${escAttr(p.title||'(без названия)')}</span>
+              <span class="proj-item-date">${escAttr(fmtProjDate(p.updated))}</span>
+              ${p.onServer?'<span class="proj-item-badge">☁</span>':''}
+            </button>
+            <button class="btn proj-item-del" data-pid="${escAttr(p.id)}" data-title="${escAttr(p.title||'(без названия)')}" title="Удалить книгу безвозвратно" style="padding:2px 7px;flex-shrink:0">🗑</button>
+          </div>`).join('')}
       </div>
     </div>`;
 
@@ -407,13 +410,36 @@ async function openSettings(){
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = (getState().project.title||'litsovet')+'.json'; a.click();
   };
-  document.getElementById('projList')?.querySelectorAll('.proj-item').forEach(btn=>{
+  document.getElementById('projList')?.querySelectorAll('.proj-item-open').forEach(btn=>{
     btn.onclick = async ()=>{
       const pid = btn.dataset.pid;
       if(pid === curId){ close(); return; }
       btn.disabled = true; btn.textContent = '⏳ Загрузка…';
       const ok = await switchProject(pid);
       if(ok){ close(); } else { btn.textContent = '⚠ Не найден'; btn.disabled=false; }
+    };
+  });
+  // Удаление книги — безвозвратно, локально (IndexedDB) и с сервера. Если
+  // удаляют ОТКРЫТУЮ СЕЙЧАС книгу — переключаемся на следующую по дате
+  // изменения оставшуюся, а если книг больше не осталось — на чистый новый
+  // проект (иначе приложение осталось бы с открытым, но уже стёртым
+  // состоянием). Для чужой (не открытой) книги — просто перерисовываем
+  // список настроек со свежими данными.
+  document.getElementById('projList')?.querySelectorAll('.proj-item-del').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const pid = btn.dataset.pid;
+      const title = btn.dataset.title || '(без названия)';
+      if(!confirm(`Удалить книгу «${title}» безвозвратно? Это действие нельзя отменить.`)) return;
+      btn.disabled = true; btn.textContent = '⏳';
+      await Promise.all([ deleteProject(pid).catch(()=>{}), deleteFromServer(pid).catch(()=>{}) ]);
+      if(pid === curId){
+        const remaining = projects.filter(p=>p.id!==pid);
+        const switched = remaining.length ? await switchProject(remaining[0].id) : false;
+        if(!switched) newProject();
+        close();
+      } else {
+        await openSettings();
+      }
     };
   });
 }
