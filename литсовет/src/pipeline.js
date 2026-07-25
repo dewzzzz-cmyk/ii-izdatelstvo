@@ -261,16 +261,36 @@ export async function runScene(state, scene, opts={}, onProgress){
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
-        pRes = await callLLM({ ...llmFor(state,proseAg), temperature:0.4, messages: reviseMsgs, maxTokens: Math.max(proseAg.maxTokens ?? cap, cap) }, streamCb, streamRetry);
-        const parsed = parseDebateRevision(pRes.text);
-        if(parsed.debate) logStep({ agent:'prose-debate', iter, input:directive, output:parsed.debate, tokensIn:0, tokensOut:0, cost:0 });
-        if(parsed.rejected && parsed.rejected.length){
-          rememberRejected(scene, parsed.rejected);
-          onProgress && onProgress({log:{icon:'🖋', text:`Прозаик мотивированно отклонил ${parsed.rejected.length} замеч. (${parsed.rejected.map(r=>'«'+r.quote.slice(0,40)+'»').join(', ')}) — больше не будут подсвечиваться`}});
-        }
+        const reviseMaxTk = Math.max(proseAg.maxTokens ?? cap, cap);
+        pRes = await callLLM({ ...llmFor(state,proseAg), temperature:0.4, messages: reviseMsgs, maxTokens: reviseMaxTk }, streamCb, streamRetry);
+        let parsed = parseDebateRevision(pRes.text);
+        // Разбор/раздор side-effects (лог дебата + запомненные отклонения) общие
+        // для первой попытки и повтора ниже — вынесены, чтобы не дублировать.
+        const applyDebateSideEffects = (p)=>{
+          if(p.debate) logStep({ agent:'prose-debate', iter, input:directive, output:p.debate, tokensIn:0, tokensOut:0, cost:0 });
+          if(p.rejected && p.rejected.length){
+            rememberRejected(scene, p.rejected);
+            onProgress && onProgress({log:{icon:'🖋', text:`Прозаик мотивированно отклонил ${p.rejected.length} замеч. (${p.rejected.map(r=>'«'+r.quote.slice(0,40)+'»').join(', ')}) — больше не будут подсвечиваться`}});
+          }
+        };
+        applyDebateSideEffects(parsed);
         if(parsed.truncated){
-          onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: ответ обрезан токенами (нет секции [ТЕКСТ]) — используем предыдущий черновик', state:'warn'}});
-          pRes.text = prevDraft;
+          // Раньше обрыв токенами на ПРАВКЕ (в отличие от первого черновика чуть
+          // ниже по файлу) молча откатывался к prevDraft без единой попытки
+          // повторить с большим лимитом — сцена, застрявшая в правке, не могла
+          // сдвинуться с места вообще: каждая попытка правки обрывалась, текст не
+          // менялся, те же замечания Стражей закономерно возвращались снова и
+          // снова (живой репорт «почему 4-я сцена не может улучшиться»). Тот же
+          // принцип повтора с удвоенным лимитом, что уже стоит на первом черновике.
+          const retryMaxTk = Math.max(reviseMaxTk + 1, Math.min(24000, reviseMaxTk * 2));
+          onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: ответ обрезан токенами (лимит был ${reviseMaxTk}) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
+          pRes = await callLLM({ ...llmFor(state,proseAg), temperature:0.4, messages: reviseMsgs, maxTokens: retryMaxTk }, streamCb, streamRetry);
+          parsed = parseDebateRevision(pRes.text);
+          applyDebateSideEffects(parsed);
+          if(parsed.truncated){
+            onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: повтор тоже обрезан токенами — используем предыдущий черновик', state:'warn'}});
+            pRes.text = prevDraft;
+          } else if(parsed.prose) pRes.text = parsed.prose;
         } else if(parsed.prose) pRes.text = parsed.prose;
         // parsed.truncated ловит только «тега [ТЕКСТ] почти нет» (обрыв сразу после
         // тега) — но тег может быть на месте, а сама проза внутри него оборваться
