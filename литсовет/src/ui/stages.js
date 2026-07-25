@@ -2148,8 +2148,10 @@ function exportPdf(s){
     .prose p:first-child{text-indent:0}.pdf-img{text-align:center;margin:.5cm 0}.pdf-img img{max-width:100%;max-height:22cm}
     .pdf-img,.scene-head{page-break-inside:avoid;break-inside:avoid}
     @media print{h2{page-break-before:always}}
-  </style></head><body><h1>${title}</h1>
-  ${s.project.coverDataUrl?`<div class="pdf-img" style="margin:0 0 1.5cm">\n<img src="${s.project.coverDataUrl}" style="max-height:26cm"></div>`:''}
+  </style></head><body>
+  ${s.project.coverDataUrl
+    ? `<div class="pdf-img" style="margin:0 0 1.5cm"><img src="${s.project.coverDataUrl}" style="max-height:26cm"></div>`
+    : `<h1>${title}</h1>`}
   ${s.project.author?`<p style="text-align:center;font-style:italic;margin:-.5cm 0 1.5cm">${esc(s.project.author)}</p>`:''}${body}<script>window.onload=()=>window.print()<\/script></body></html>`;
   const w=window.open('','_blank'); if(!w) return;
   w.document.write(html); w.document.close();

@@ -130,8 +130,9 @@ export function exportMd(state){
 // ── .docx (HTML-in-DOC) ──
 export function exportDocx(state){
   const book = buildBook(state);
-  let body = `<h1>${xesc(book.title)}</h1>`;
-  if(state.project.coverDataUrl) body += `<p style="text-align:center"><img src="${state.project.coverDataUrl}" style="max-width:100%"/></p>`;
+  let body = state.project.coverDataUrl
+    ? `<p style="text-align:center"><img src="${state.project.coverDataUrl}" style="max-width:100%"/></p>`
+    : `<h1>${xesc(book.title)}</h1>`;
   if(state.project.author) body += `<p style="text-align:center;font-style:italic">${xesc(state.project.author)}</p>`;
   const mapItem = worldMapItem(state);
   if(mapItem) body += `<h2>Карта мира</h2><p style="text-align:center"><img src="${mapItem.dataUrl}" style="max-width:100%"/></p>`;
