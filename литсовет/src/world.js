@@ -124,7 +124,13 @@ export function worldSuggestMessages(state, category, opts={}){
     existing.length ? `\nУЖЕ В КАНОНЕ (категория «${category}») — не повторяй и не противоречь, расширяй:\n${existing.map(f=>'— '+f.text).join('\n')}` : '',
     otherCanon.length ? `\nКАНОН ДРУГИХ КАТЕГОРИЙ (учитывай, не противоречь, не пересказывай):\n${otherCanon.map(f=>`— [${f.category}] ${f.text}`).join('\n')}` : '',
     '',
-    `Предложи 3-6 ${existing.length ? 'НОВЫХ, дополняющих' : ''} фактов категории «${category}».`,
+    // 3-6 → 6-10 по прямой просьбе автора: на 6 категорий фэнтези прежний
+    // потолок давал максимум ~36 фактов на всю книгу, и это ощутимо тонко —
+    // Стражам не хватало канона, чтобы вообще было с чем сверять сцену, а
+    // «Оценка глубины мира» стабильно упиралась в «мало фактов на категорию».
+    // Новый диапазон даёт 36-60 фактов, что для книги уже рабочий объём;
+    // общий кап Библии (300) при этом не задет даже близко.
+    `Предложи ${existing.length ? '6-10 НОВЫХ, дополняющих' : '6-10'} фактов категории «${category}».`,
     `Верни JSON: { "facts": [ { "keys": "2-4 ключевых слова через запятую", "text": "сам факт, 1-2 предложения" } ] }`,
     'Только JSON.',
   ].filter(Boolean).join('\n');
@@ -135,11 +141,18 @@ export async function suggestWorldFacts(state, category, opts={}){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const msgs = worldSuggestMessages(state, category, opts);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.8, messages:msgs, maxTokens:960, retries:g.retries });
+  // 960 → 2400: лимит должен расти вместе с числом запрошенных фактов (6-10
+  // вместо 3-6, см. промпт выше), иначе JSON обрывался бы ровно на том, что мы
+  // только что попросили добавить — тот же класс проблемы, что весь день
+  // чинили у Прозаика и Стражей.
+  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.8, messages:msgs, maxTokens:2400, retries:g.retries });
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.facts) ? j.facts : null;
   if(!arr) throw new Error('Не удалось разобрать ответ агента «Мир».');
-  return arr.slice(0, 6).map((f,i)=>({
+  // Срез 6 → 12: раньше он молча выбрасывал всё сверх шести, то есть даже если
+  // модель присылала больше, автор их не видел — потолок промпта и потолок кода
+  // должны совпадать, иначе поднимать один без другого бессмысленно.
+  return arr.slice(0, 12).map((f,i)=>({
     id: 'wf_'+Date.now().toString(36)+'_'+i,
     category,
     keys: String(f.keys||'').slice(0,120),
@@ -654,7 +667,11 @@ export function missingFactsMessages(state, skeleton){
     '',
     `СКЕЛЕТ КНИГИ:\n${skeletonText}`,
     '',
-    'До 5 фактов, которых не хватает канону (если скелету ничего не нужно — верни пустой массив facts). Верни JSON: { "facts": [ { "category": "география|история|фракции|культура|магия/технология|система", "keys": "ключевые слова", "text": "факт" } ] }',
+    // 5 → 12: это самая адресная поставка канона — факты, на которые скелет уже
+    // ОПИРАЕТСЯ как на данность. Скелет из 15+ сцен обычно подразумевает больше
+    // пяти таких вещей (места, организации, правила мира), и всё сверх пятёрки
+    // раньше молча отбрасывалось — Стражам потом было нечем сверять сцену.
+    'До 12 фактов, которых не хватает канону (если скелету ничего не нужно — верни пустой массив facts). Верни JSON: { "facts": [ { "category": "география|история|фракции|культура|магия/технология|система", "keys": "ключевые слова", "text": "факт" } ] }',
     'Только JSON.',
   ].join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
@@ -665,11 +682,13 @@ export async function suggestMissingWorldFacts(state, skeleton){
   if(!g.apiKey) return [];
   try{
     const msgs = missingFactsMessages(state, skeleton);
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:960, retries:g.retries });
+    // 960 → 2400 вместе с ростом числа фактов (5 → 12, см. промпт): иначе
+    // JSON обрывался бы ровно на добавленных пунктах.
+    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:2400, retries:g.retries });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.facts) ? j.facts : [];
     const cats = categoriesFor(state.project.genre);
-    return arr.slice(0,5).map((f,i)=>({
+    return arr.slice(0,12).map((f,i)=>({
       id: 'wf_missing_'+Date.now().toString(36)+'_'+i,
       category: cats.includes(f.category) ? f.category : cats[0],
       keys: String(f.keys||'').slice(0,120),
