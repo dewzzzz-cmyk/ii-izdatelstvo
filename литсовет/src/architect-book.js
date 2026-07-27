@@ -396,6 +396,7 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
     'entryState: заполняй ТОЛЬКО когда на входе в сцену у героя появилось что-то новое (предмет, знание, место, союзник), не установленное в предыдущей сцене — что именно и откуда. Смотри «[на входе: ...]» у контекстных и целевых сцен ниже — не противоречь уже установленной цепочке знаний на стыке с непатченными главами.',
     KNOWLEDGE_CONTINUITY_NOTE,
     BRIEF_DETAIL_NOTE,
+    PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
     // Актуально только когда среди патчимых глав есть глава 1 — эта правка
     // не «изредка полезна», а обязательна: Оценщик структуры может явно
     // прислать «Ставки первой главы»/структурный провал именно в главе 1
@@ -403,6 +404,12 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
     // не знает, что у сцены 1.1 особые требования (нет предыдущего брифа).
     targets.has(1) ? FIRST_SCENE_NOTE : '',
   ].filter(Boolean).join('\n');
+
+  // Тот же канон мира, что видит bookArchitectMessages (полная генерация) —
+  // раньше точечная правка его вообще не получала: модель могла перепланировать
+  // главу так, что новый бриф противоречил уже закреплённому факту мира,
+  // который просто не был ей показан.
+  const worldBlockPatch = bibleForPrompt((state.bible||[]).filter(b=>b.source==='world' || b.pinned), p.synopsis||p.idea||'', 15);
 
   const chText = wanted.map(n=>{
     const chNode = chapterNodes[n-1];
@@ -414,6 +421,7 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
 
   const user = [
     `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
+    worldBlockPatch ? `МИР КНИГИ (уже зафиксированные факты — не противоречь им):\n${worldBlockPatch}` : '',
     'ФРАГМЕНТ СКЕЛЕТА:',
     chText,
     hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${hint}` : '',
@@ -482,9 +490,18 @@ export async function regenerateScene(state, scene, hint){
   const idx = scenes.findIndex(n=>n.id===scene.id);
   const prev = scenes[idx-1], next = scenes[idx+1];
   const p = state.project;
+  // Тот же диапазон, что видит полная генерация/точечная правка (bookArchitectMessages/
+  // bookArchitectPatchMessages) — раньше здесь модели вообще не называли числа,
+  // targetWords вылезал за адекватный диапазон и его тихо ловил только clampSceneTargetWords
+  // постфактум, без единого шанса у модели попасть в диапазон осознанно.
+  const norm = p.sceneWords>0 ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000) / Math.max(1, scenes.length))));
+  const wMin = Math.round(norm*0.80), wMax = Math.round(norm*1.20);
+  const worldBlock = bibleForPrompt((state.bible||[]).filter(b=>b.source==='world' || b.pinned), p.synopsis||p.idea||'', 15);
   const sys = 'Ты — книжный архитектор. Перепроектируй ОДНУ сцену по подсказке автора, сохраняя её место в нарративной арке книги. Не пишешь прозу.';
   const user = [
     `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
+    worldBlock ? `МИР КНИГИ (уже зафиксированные факты — не противоречь им):\n${worldBlock}` : '',
     ch?`Глава: «${ch.title}» (${ch.arc||''}).`:'',
     prev?`Предыдущая сцена: «${prev.title}» — ${prev.brief}${prev.entryState?` [на входе: ${prev.entryState}]`:''}`:'',
     next?`Следующая сцена: «${next.title}» — ${next.brief}${next.entryState?` [на входе: ${next.entryState}]`:''}`:'',
@@ -492,15 +509,32 @@ export async function regenerateScene(state, scene, hint){
     '',
     'ПОДСКАЗКА АВТОРА (в каком направлении переделать): ' + (hint||'сделай сильнее и конкретнее'),
     '',
+    `targetWords — диапазон ${wMin}–${wMax} слов (±20% от базового объёма сцены ${norm}), не выходи за пределы.`,
     'entryState — заполняй ТОЛЬКО если на входе в сцену у героя появилось что-то новое (предмет/знание/место), не установленное в предыдущей сцене; не противоречь тому, что уже на входе следующей сцены. Если ничего не изменилось — пустая строка.',
+    KNOWLEDGE_CONTINUITY_NOTE,
+    // Актуально только когда переделываемая сцена — реально первая сцена книги
+    // (нет prev): та же дыра, что чинили в bookArchitectPatchMessages — без
+    // FIRST_SCENE_NOTE точечная перегенерация сцены 1 не знает про её особые
+    // требования (нет предыдущего брифа, откуда унаследовать контекст).
+    !prev ? FIRST_SCENE_NOTE : '',
     BRIEF_DETAIL_NOTE,
+    PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
     'Верни JSON одной сцены: { "title":"…", "brief":"3-4 предложения (см. БРИФ СЦЕНЫ выше): что происходит → ключевой конфликт/открытие → конкретная сенсорная деталь кульминационного момента → чем кончается и что изменилось", "emotion":"эмоция читателя", "entryState":"см. выше", "targetWords":число, "sceneType":"scene|sequel" }. sceneType: "scene" — растущее напряжение (цель→конфликт→поражение), "sequel" — передышка (реакция→дилемма→решение). Только JSON.',
   ].filter(Boolean).join('\n');
+  // Тот же пробел, что чинили у runBookArchitect/runBookArchitectPatch — точечная
+  // перегенерация одной сцены не масштабировала лимит по architectTokenMultiplier
+  // (слайдер «Запас токенов» роли bookArchitect) и не писала в diagnostics.runs,
+  // хотя это самый частый путь ручной правки скелета.
+  const maxTokens = Math.round(900 * 1.2 * (g.architectTokenMultiplier || 1));
   let lastErr='';
+  startRun(null, 'Архитектор (перегенерация сцены)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:600 });
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
     const j = extractJSON(res.text);
+    logStep({ agent:'bookArchitectScene', iter:attempt+1, input:`(перегенерация сцены, лимит ${maxTokens})`, output:res.text,
+      tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:!!(j && typeof j.brief==='string'), error:(j && typeof j.brief==='string')?undefined:'невалидный JSON' } });
     if(j && typeof j.brief==='string'){
+      endRun('done');
       return {
         title:(j.title||scene.title).trim(),
         brief:j.brief.trim(),
@@ -512,6 +546,7 @@ export async function regenerateScene(state, scene, hint){
     }
     lastErr='невалидный JSON';
   }
+  endRun('error');
   throw new Error('Не удалось перегенерировать: '+lastErr);
 }
 
@@ -534,10 +569,15 @@ export async function regenerateDownstream(state, pivotScene, hint){
 
   const chTitle = id => (nodes.find(n=>n.type==='chapter'&&n.id===id)||{}).title || '';
   const p = state.project;
+  const norm = p.sceneWords>0 ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000) / Math.max(1, scenes.length))));
+  const wMin = Math.round(norm*0.80), wMax = Math.round(norm*1.20);
+  const worldBlock = bibleForPrompt((state.bible||[]).filter(b=>b.source==='world' || b.pinned), p.synopsis||p.idea||'', 15);
   const sys = 'Ты — книжный архитектор. Изменилась одна сцена и повернула сюжет. Перепроектируй ВСЕ последующие сцены так, чтобы они логически следовали из изменения и не противоречили ему. Сохрани число сцен и их принадлежность главам. Не пишешь прозу.';
   const list = downstream.map((s,i)=>`${i+1}. [${chTitle(s.chapterId)}] «${s.title}» — ${s.brief}${s.entryState?` [на входе: ${s.entryState}]`:''}`).join('\n');
   const user = [
     `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
+    worldBlock ? `МИР КНИГИ (уже зафиксированные факты — не противоречь им):\n${worldBlock}` : '',
     '',
     `ИЗМЕНЁННАЯ СЦЕНА (поворот): «${pivotScene.title}» — ${pivotScene.brief}` + (pivotScene.emotion?` (эмоция: ${pivotScene.emotion})`:''),
     hint?`Направление автора: ${hint}`:'',
@@ -545,8 +585,11 @@ export async function regenerateDownstream(state, pivotScene, hint){
     `ПОСЛЕДУЮЩИЕ СЦЕНЫ (${downstream.length}) — перепиши каждую под новый поворот, по порядку:`,
     list,
     '',
+    `targetWords каждой сцены — диапазон ${wMin}–${wMax} слов (±20% от базового объёма ${norm}), не выходи за пределы.`,
     'entryState у каждой сцены — заполняй ТОЛЬКО если на входе появилось что-то новое, не установленное в предыдущей сцене этой же цепочки; иначе пустая строка.',
+    KNOWLEDGE_CONTINUITY_NOTE,
     BRIEF_DETAIL_NOTE,
+    PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
     `Верни JSON: { "scenes": [ ${downstream.length} объектов по порядку: {"title":"…","brief":"3-4 предложения, см. БРИФ СЦЕНЫ выше","emotion":"…","entryState":"…","targetWords":число,"sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Ровно ${downstream.length} сцен. Только JSON.`,
   ].filter(Boolean).join('\n');
 
@@ -861,23 +904,46 @@ export async function regenerateChapter(state, chapter, hint){
   const scenes=[]; for(let i=ci+1;i<nodes.length;i++){ if(nodes[i].type==='chapter') break; if(nodes[i].type==='scene') scenes.push(nodes[i]); }
   if(!scenes.length) return [];
   const p = state.project;
+  const norm = p.sceneWords>0 ? Math.max(300, Math.min(4000, p.sceneWords))
+    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000) / Math.max(1, nodes.filter(n=>n.type==='scene').length))));
+  const wMin = Math.round(norm*0.80), wMax = Math.round(norm*1.20);
+  const worldBlock = bibleForPrompt((state.bible||[]).filter(b=>b.source==='world' || b.pinned), p.synopsis||p.idea||'', 15);
+  // Эта глава реально первая в книге, только если ни один узел ДО неё не сцена
+  // (то есть перед ней нет ни одной уже существующей главы со сценами) — тогда
+  // scenes[0] — это буквально первая сцена книги, и у неё те же особые
+  // требования, что уже учтены в bookArchitectPatchMessages/regenerateScene.
+  const isFirstChapter = !nodes.slice(0, ci).some(n=>n.type==='scene');
   const sys = 'Ты — книжный архитектор. Перепроектируй сцены ОДНОЙ главы по подсказке автора, сохраняя их число и дугу главы. Не пишешь прозу.';
   const user = [
     `Жанр: ${p.genre||'роман'}. Синопсис: ${p.synopsis||p.idea||''}`,
+    worldBlock ? `МИР КНИГИ (уже зафиксированные факты — не противоречь им):\n${worldBlock}` : '',
     `Глава: «${chapter.title}» (${chapter.arc||''}). Сцен: ${scenes.length}.`,
     'Текущие сцены:\n'+scenes.map((s,i)=>`${i+1}. «${s.title}» — ${s.brief}${s.entryState?` [на входе: ${s.entryState}]`:''}`).join('\n'),
     '',
     'ПОДСКАЗКА АВТОРА: ' + (hint||'сделай сильнее и конкретнее, сохрани сюжетные функции'),
     '',
+    `targetWords каждой сцены — диапазон ${wMin}–${wMax} слов (±20% от базового объёма ${norm}), не выходи за пределы.`,
     'entryState у каждой сцены — заполняй ТОЛЬКО если на входе появилось что-то новое, не установленное в предыдущей сцене этой же цепочки; иначе пустая строка.',
+    KNOWLEDGE_CONTINUITY_NOTE,
+    isFirstChapter ? FIRST_SCENE_NOTE : '',
     BRIEF_DETAIL_NOTE,
+    PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
     `Верни JSON: { "scenes": [ ровно ${scenes.length} объектов: {"title","brief":"3-4 предложения, см. БРИФ СЦЕНЫ выше","emotion","entryState","targetWords","sceneType":"scene|sequel"} ] }. sceneType: "scene" — растущее напряжение, "sequel" — передышка (реакция→дилемма→решение). Только JSON.`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
+  // Тот же класс бага, что чинили в regenerateScene/runBookArchitect: лимит был
+  // жёстко зашит (2400) независимо от числа сцен главы и не масштабировался по
+  // architectTokenMultiplier — глава с 8+ сценами при развёрнутых брифах
+  // (BRIEF_DETAIL_NOTE) рисковала обрезать JSON так же, как это уже находили в
+  // regenerateDownstream (см. её комментарий про 60 сцен/3600 токенов).
+  const maxTokens = Math.round(Math.max(2000, Math.min(16000, scenes.length*300 + 800)) * 1.2 * (g.architectTokenMultiplier || 1));
   let lastErr='';
+  startRun(null, 'Архитектор (перегенерация главы)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:2400 });
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
+    logStep({ agent:'bookArchitectChapter', iter:attempt+1, input:`(перегенерация главы, ${scenes.length} сцен, лимит ${maxTokens})`, output:res.text,
+      tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:!!(arr&&arr.length), error:(arr&&arr.length)?undefined:'невалидный JSON' } });
     if(arr && arr.length){
       const applied=[];
       for(let i=0;i<Math.min(arr.length,scenes.length);i++){
@@ -910,9 +976,11 @@ export async function regenerateChapter(state, chapter, hint){
       // старым брифом и (если уже написаны) старой прозой, противоречащей
       // новой подсказке автора, без единого сигнала об этом на экране.
       for(let i=arr.length; i<scenes.length; i++) if(scenes[i].status==='done') scenes[i].stale = true;
+      endRun('done');
       return applied;
     }
     lastErr='невалидный JSON';
   }
+  endRun('error');
   throw new Error('Перегенерация главы не удалась: '+lastErr);
 }

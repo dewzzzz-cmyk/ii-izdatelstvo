@@ -511,10 +511,18 @@ export function humorGuardMessages(draft, strictness, genre){
 }
 
 // Кастомный страж: пользовательский промпт проверки. Только флагует.
+// Раньше принимал state/scene в сигнатуре, но никогда не строил из них
+// factsBlock() (в отличие от logicGuardMessages/eventsGuardMessages, см. выше
+// по файлу) — а UI прямо обещает автору при включении тумблера «Фактический
+// страж»: «включайте для проверок фактов/канона» (ui/diagnostics.js). Без
+// канона/предыдущих сцен/entryState кастомный страж физически не мог
+// проверить факт против канона — только против собственных догадок по одной
+// сцене без контекста.
 export function customGuardMessages(state, scene, draft, prompt, strictness){
+  const facts = factsBlock(state, scene);
   const sys = 'Ты — кастомный страж сцены. Твоя задача от автора: ' + (prompt||'проверь сцену') +
     '\nТы НЕ переписываешь текст, только отмечаешь проблемы.\n' + strictnessLine(strictness);
-  const user = ['СЦЕНА:', draft, '',
+  const user = [facts, '', 'СЦЕНА:', draft, '',
     'Верни JSON: { "flags":[{"severity":"critical|warning|ok","title":"кратко","detail":"что не так","quote":"фрагмент"}] }. Только JSON.'].join('\n');
   return [{role:'system',content:sys},{role:'user',content:user}];
 }

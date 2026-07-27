@@ -3,7 +3,7 @@
 // предложениями правок. Не меняет текст сам (кроме предложения Линейного
 // редактора, которое автор применяет вручную).
 
-import { callLLM } from './llm.js';
+import { callLLM, extractJSON } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
@@ -77,6 +77,14 @@ export async function runAgentOnDemand(state, scene, agent){
   else if(role==='humor')     msgs = humorGuardMessages(draft, agent.strictness, state.project?.genre);
   else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
   const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??840 });
+  // Тот же захват passive-флага, что уже есть в guardJob() (pipeline.js) —
+  // без него ручной ("по требованию") запуск стража «Читатель» из этой
+  // вкладки не обновлял scene.passivityFlag, и книжная сводка пассивности
+  // (passivityIsSystemic()) видела только автопрогоны из основного пайплайна.
+  if(role==='reader'){
+    const j = extractJSON(res.text);
+    if(j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
+  }
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 
