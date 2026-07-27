@@ -53,6 +53,27 @@ const MIME = { '.html':'text/html; charset=utf-8','.js':'text/javascript; charse
 function send(res, code, body, type='text/plain; charset=utf-8'){ res.writeHead(code,{'Content-Type':type}); res.end(body); }
 function ensureDir(dir){ try{ fs.mkdirSync(dir,{recursive:true}); }catch{} }
 
+// Атомарная запись: сначала во временный файл рядом, потом rename поверх цели.
+// rename в пределах одной ФС атомарен — читатель видит либо старое содержимое
+// целиком, либо новое целиком, но никогда «половину».
+// Прямой writeFileSync поверх существующего файла такой гарантии не даёт: если
+// процесс умрёт на середине (у этого сервиса уже был реальный инцидент «Deploy
+// Crashed» на Railway, см. комментарии ниже по файлу), на диске останется
+// усечённый JSON. Дальше клиент при загрузке получает его, JSON.parse падает —
+// и книга, в которую автор вложил месяцы, не открывается вообще, причём
+// конфликт-дампы в CONFLICT_DIR от ЭТОГО не спасают: они страхуют только от
+// гонки ревизий, а не от обрыва записи.
+function writeFileAtomic(fp, data){
+  const tmp = fp + '.tmp-' + process.pid;
+  try{
+    fs.writeFileSync(tmp, data, 'utf8');
+    fs.renameSync(tmp, fp);
+  }catch(e){
+    try{ fs.unlinkSync(tmp); }catch{}
+    throw e;
+  }
+}
+
 // Копит тело запроса как Buffer-чанки и декодирует в UTF-8 ОДИН РАЗ в конце.
 // Раньше каждый обработчик делал `raw += c` (c — Buffer) — неявный c.toString()
 // на КАЖДОМ чанке по отдельности; если многобайтовый UTF-8 символ (любая
@@ -78,11 +99,32 @@ function readBody(req, res, maxBytes, cb){
   req.on('end', ()=>{ if(!stopped) cb(Buffer.concat(chunks).toString('utf8')); });
 }
 
+// Папки с ДАННЫМИ автора (рукописи, чекпоинты, дампы конфликтов) — их нельзя
+// отдавать как статику ни под каким видом. Когда DATA_DIR не задан отдельным
+// томом (дефолт локального запуска: DATA_DIR === ROOT), эти папки физически
+// лежат ВНУТРИ ROOT, и serveStatic — catch-all для любого GET — раздавал их
+// как обычные .json файлы в обход /api/sync: `GET /data/projects/_index.json`
+// возвращал список ВСЕХ проектов (id, названия), а `GET /data/projects/<id>.json`
+// — целую рукопись целиком, без единой проверки. Подтверждено живьём: HTTP 200
+// на файл в 4.5 МБ. Усугублялось тем, что listen(PORT) без хоста слушает все
+// интерфейсы, — на общем Wi-Fi (кафе, офис, коворкинг) неопубликованные
+// черновики автора мог скачать любой из той же сети, зная лишь порт.
+// На проде это сейчас не срабатывало только потому, что DATA_DIR смонтирован
+// вне ROOT, — то есть от утечки отделяла одна переменная окружения.
+const PROTECTED_DIRS = [SYNC_DIR, CONFLICT_DIR, CHECKPOINT_DIR];
+function isProtectedPath(fp){
+  return PROTECTED_DIRS.some(dir => fp === dir || fp.startsWith(dir + path.sep));
+}
+
 function serveStatic(req, res){
   let rel = decodeURIComponent(req.url.split('?')[0]);
   if (rel === '/' || rel === '') rel = '/index.html';
   const fp = path.normalize(path.join(ROOT, rel));
-  if (!fp.startsWith(ROOT)) return send(res, 403, 'Forbidden');
+  // ROOT + path.sep, а не голый ROOT: без разделителя строковая проверка
+  // пропускала соседнюю папку с именем-префиксом (…/литсовет-backup для
+  // ROOT=…/литсовет) как «внутри ROOT».
+  if (fp !== ROOT && !fp.startsWith(ROOT + path.sep)) return send(res, 403, 'Forbidden');
+  if (isProtectedPath(fp)) return send(res, 403, 'Forbidden');
   fs.readFile(fp, (e, d) => {
     if(e) return send(res,404,'Not found');
     res.writeHead(200,{'Content-Type':MIME[path.extname(fp)]||'application/octet-stream','Cache-Control':'no-store'});
@@ -337,6 +379,17 @@ function looksLikeRasterImage(b64){
 }
 const NOT_RASTER_ERR = 'UPSTREAM_FORMAT: провайдер вернул не растровое изображение (похоже на SVG/векторный формат) — такую картинку браузер не может отрисовать. Попробуйте другую модель этого провайдера в настройках (⚙ → Иллюстрации) или другого провайдера.';
 
+// Таймаут на запросы к провайдерам картинок. У ТЕКСТОВОЙ генерации таймаут есть
+// давно (AbortController + сброс по каждому чанку, см. llm.js), а у генерации
+// изображений его не было нигде — ни на сервере, ни на клиенте. Если апстрим
+// молча подвисал (не отвечает и не рвёт соединение), кнопка «Сгенерировать
+// иллюстрацию» крутила спиннер бесконечно: ни ошибки, ни возможности отменить,
+// только перезагрузка страницы. 120с — с запасом: генерация картинки у
+// gpt-image-1/Gemini в hd штатно занимает десятки секунд, обрывать раньше
+// значило бы ломать легитимные долгие запросы.
+const IMG_TIMEOUT_MS = 120000;
+const IMG_TIMEOUT_ERR = 'UPSTREAM_TIMEOUT: провайдер не ответил за 120 с — запрос отменён. Попробуйте ещё раз или выберите другого провайдера (⚙ → Иллюстрации).';
+
 // ── Генерация иллюстраций (Gemini/Nano Banana или OpenAI) ──
 // Ключ/провайдер приходят в теле запроса от клиента (как и в handleGenerate) —
 // сервер ничего не хранит, только проксирует к нужному upstream и возвращает
@@ -357,6 +410,7 @@ async function handleGenerateImage(req, res){
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
           body: JSON.stringify({ model, prompt, size: b.size||'1024x1024', quality: b.quality||'medium', n:1 }),
+          signal: AbortSignal.timeout(IMG_TIMEOUT_MS),
         });
         if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
         const d = await up.json();
@@ -370,6 +424,7 @@ async function handleGenerateImage(req, res){
           method:'POST',
           headers:{ 'Content-Type':'application/json' },
           body: JSON.stringify({ contents:[{ parts:[{ text: prompt }] }] }),
+          signal: AbortSignal.timeout(IMG_TIMEOUT_MS),
         });
         if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
         const d = await up.json();
@@ -394,6 +449,7 @@ async function handleGenerateImage(req, res){
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
           body: JSON.stringify({ model, prompt, n:1, response_format:'b64_json' }),
+          signal: AbortSignal.timeout(IMG_TIMEOUT_MS),
         });
         if(!up.ok){ const t=await up.text().catch(()=>''); return send(res, up.status||502, 'API_ERROR '+up.status+': '+t.slice(0,500)); }
         const d = await up.json();
@@ -413,6 +469,7 @@ async function handleGenerateImage(req, res){
           method:'POST',
           headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`, 'X-DashScope-Async':'enable' },
           body: JSON.stringify({ model, input:{ prompt }, parameters:{ size: (b.size||'1024x1024').replace('x','*'), n:1 } }),
+          signal: AbortSignal.timeout(IMG_TIMEOUT_MS),
         });
         if(!submit.ok){ const t=await submit.text().catch(()=>''); return send(res, submit.status||502, 'API_ERROR '+submit.status+': '+t.slice(0,500)); }
         const sd = await submit.json();
@@ -431,13 +488,19 @@ async function handleGenerateImage(req, res){
           if(lastStatus==='FAILED' || lastStatus==='UNKNOWN') return send(res, 502, 'UPSTREAM_FAIL: DashScope task '+lastStatus);
         }
         if(!resultUrl) return send(res, 504, 'TIMEOUT: DashScope не завершил генерацию за отведённое время (статус: '+(lastStatus||'нет ответа')+').');
-        const imgRes = await fetch(resultUrl);
+        const imgRes = await fetch(resultUrl, { signal: AbortSignal.timeout(IMG_TIMEOUT_MS) });
         if(!imgRes.ok) return send(res, 502, 'DOWNLOAD_FAIL: не удалось скачать готовую картинку.');
         const buf = Buffer.from(await imgRes.arrayBuffer());
         const mime = imgRes.headers.get('content-type') || 'image/png';
         return send(res, 200, JSON.stringify({dataUrl:`data:${mime};base64,`+buf.toString('base64')}), 'application/json; charset=utf-8');
       }
-    }catch(e){ return send(res, 502, 'UPSTREAM_FAIL: '+e.message); }
+    }catch(e){
+      // AbortSignal.timeout бросает TimeoutError — без этой ветки автор увидел бы
+      // невнятное «UPSTREAM_FAIL: The operation was aborted» вместо объяснения,
+      // что провайдер не ответил и что делать дальше.
+      if(e && (e.name==='TimeoutError' || e.name==='AbortError')) return send(res, 504, IMG_TIMEOUT_ERR);
+      return send(res, 502, 'UPSTREAM_FAIL: '+e.message);
+    }
   });
 }
 
@@ -494,7 +557,7 @@ function readSyncIndex(){
   try{ return JSON.parse(fs.readFileSync(SYNC_INDEX_FILE,'utf8')); }catch{ return null; }
 }
 function writeSyncIndex(idx){
-  try{ fs.writeFileSync(SYNC_INDEX_FILE, JSON.stringify(idx), 'utf8'); }catch{}
+  try{ writeFileAtomic(SYNC_INDEX_FILE, JSON.stringify(idx)); }catch{}
 }
 function indexEntry(d){
   return { id:d.id, title:d.project?.title||'', updated:d.updated||0, scenes:(d.structure||[]).filter(n=>n.type==='scene').length, rev:d.rev||0 };
@@ -569,12 +632,14 @@ function handleSyncSave(req, res, id){
       if(existingRev > 0 && clientRev !== existingRev){
         // Не теряем правки этой вкладки молча — откладываем их на диск рядом,
         // чтобы можно было вручную сверить/восстановить при необходимости.
-        try{ fs.writeFileSync(path.join(CONFLICT_DIR, safeFile(id)+'.'+Date.now()+'.json'), raw, 'utf8'); }catch{}
+        try{ writeFileAtomic(path.join(CONFLICT_DIR, safeFile(id)+'.'+Date.now()+'.json'), raw); }catch{}
         return send(res,409,JSON.stringify({error:'REV_CONFLICT', serverRev:existingRev, clientRev}),'application/json; charset=utf-8');
       }
       parsed.rev = existingRev + 1;
       const out = JSON.stringify(parsed);
-      fs.writeFileSync(fp, out, 'utf8');
+      // Атомарно (см. writeFileAtomic): это единственная точка, где на диск
+      // ложится вся рукопись целиком — обрыв ровно здесь стоил бы автору книги.
+      writeFileAtomic(fp, out);
       idx[parsed.id] = indexEntry(parsed);
       writeSyncIndex(idx);
       send(res,200,JSON.stringify({ok:true, rev:parsed.rev}),'application/json; charset=utf-8');
@@ -611,8 +676,10 @@ function handleCheckpointSave(req,res){
     const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
     const filename=`${title}_${ts}.json`;
     try{
-      fs.writeFileSync(path.join(CHECKPOINT_DIR,filename), typeof b.state==='string'?b.state:JSON.stringify(b.state),'utf8');
-      // prune to 30 most recent (по реальному mtime, не по имени файла)
+      writeFileAtomic(path.join(CHECKPOINT_DIR,filename), typeof b.state==='string'?b.state:JSON.stringify(b.state));
+      // prune to 30 most recent (по реальному mtime, не по имени файла).
+      // Фильтр по .json заодно отсекает возможные .tmp-* от writeFileAtomic,
+      // так что недописанный файл не может попасть ни в выдачу, ни под prune.
       const files=sortByMtimeDesc(CHECKPOINT_DIR, fs.readdirSync(CHECKPOINT_DIR).filter(f=>f.endsWith('.json')));
       files.slice(30).forEach(f=>{ try{ fs.unlinkSync(path.join(CHECKPOINT_DIR,f)); }catch{} });
       send(res,200,JSON.stringify({ok:true,file:filename}),'application/json; charset=utf-8');

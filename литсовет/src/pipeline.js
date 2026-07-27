@@ -176,7 +176,10 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Консенсус = Оценщик принял И Стражи молчат.
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7.5;
-    const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 5) : 1;
+    // ?? 3, а не 5: дефолт этого поля — 3 (defaultState в state.js). Расхождение
+    // фолбэка с настоящим дефолтом означало, что проект без явно заданного поля
+    // молча работал с другим числом итераций, чем показывали Настройки.
+    const maxIter = agentEnabled('evaluator') ? (g.evaluatorMaxIter ?? 3) : 1;
     // 'auto' (умолчание) — решает жанр, как раньше. Явная настройка автора
     // (style.humorLevel) может как включить стража юмора вне «иронических»
     // жанров ('light'/'strong'), так и выключить его в них ('off').

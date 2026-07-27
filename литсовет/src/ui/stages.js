@@ -393,12 +393,19 @@ export function renderConcept(els){
   }
   if(eraCustom) eraCustom.addEventListener('input', e=>{ p.era=e.target.value; });
   bind('seriesSummary', e=>{ p.seriesSummary=e.target.value; });
+  // Math.max — не «на всякий случай», а закрытие реальной дыры: `|| default`
+  // подставляет дефолт ТОЛЬКО для NaN и нуля, а parseInt('-5000') даёт честное
+  // -5000, и оно уходило в state как есть. Дальше отрицательный объём кормит
+  // расчёт бюджета сцен и Книжного архитектора (targetWords/сцену, число сцен)
+  // без единой проверки. Соседние поля серии (seriesBook/seriesTotal) клэмп уже
+  // имеют — здесь его просто забыли. 0 для sceneWords/chapterCount — легальное
+  // значение «авто», поэтому нижняя граница у них 0, а не 1.
   bind('tw', e=>{
-    p.targetWords=parseInt(e.target.value)||80000;
+    p.targetWords=Math.max(1, parseInt(e.target.value)||80000);
     const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(p.targetWords);
   });
-  bind('sceneWords', e=>{ p.sceneWords=parseInt(e.target.value)||0; });
-  bind('chapterCount', e=>{ p.chapterCount=parseInt(e.target.value)||0; });
+  bind('sceneWords', e=>{ p.sceneWords=Math.max(0, parseInt(e.target.value)||0); });
+  bind('chapterCount', e=>{ p.chapterCount=Math.max(0, parseInt(e.target.value)||0); });
   const pacingSel = document.getElementById('pacing');
   if(pacingSel) pacingSel.onchange = ()=>{ p.pacing = pacingSel.value; };
   // Жанр: выпадающий список + поле «свой»
@@ -1687,6 +1694,13 @@ export function renderWrite(els){
   // пару слов. Оценивает ТЕКУЩИЙ текст как есть, ничего не переписывая.
   const reEval = document.getElementById('reEvalScene');
   if(reEval) reEval.onclick = async ()=>{
+    // Кнопка видна при (scene.text && !scene.lastEval) — а это условие верно и
+    // ПОСРЕДИ прогона: текст уже стримится, lastEval пайплайн выставит только в
+    // конце. Без этой проверки Оценщик уходил считать оценку по недописанному
+    // обрывку, и два асинхронных писателя в scene.lastEval (пайплайн и эта
+    // кнопка) перетирали друг друга — честная оценка могла проиграть оценке по
+    // половине сцены. Все соседние действия такую проверку уже имеют.
+    if(_busy) return;
     reEval.disabled = true; reEval.innerHTML = '<span class="spinner"></span> Оцениваю…';
     try{
       const result = await runAgentOnDemand(s, scene, ag(s,'evaluator'));
@@ -1741,14 +1755,23 @@ export function renderWrite(els){
     sc.text=''; sc.words=0; sc.status='todo'; sc.handDone=false;
     sc.lastEval=null; sc.flags={};
   }
+  // _busy-гвард у обеих кнопок очистки: во время прогона перерисовывается только
+  // правая панель, а сами кнопки остаются на экране и кликабельны. Без проверки
+  // очистка посреди генерации молча аннулировалась — doRun по завершении либо
+  // записывал в scene.text новый результат, либо (при ошибке) восстанавливал
+  // текст, каким он был ДО прогона. В обоих случаях автор подтвердил очистку в
+  // confirm-диалоге, увидел пустую сцену, а через несколько секунд текст
+  // возвращался сам собой без объяснений.
   const clearSc=document.getElementById('clearScene');
   if(clearSc) clearSc.onclick = ()=>{
+    if(_busy) return;
     if(!confirm(`Очистить сцену «${scene.title}»? Текст будет стёрт (можно вернуть кнопкой ↶).`)) return;
     clearSceneText(scene);
     save();
   };
   const clearCh=document.getElementById('clearChapter');
   if(clearCh) clearCh.onclick = ()=>{
+    if(_busy) return;
     const chScenes = scenesOfChapter(s, ch.id);
     if(!confirm(`Очистить главу «${ch.title}» (${chScenes.length} сц.)? Тексты будут стёрты (каждую сцену можно вернуть по отдельности кнопкой ↶).`)) return;
     chScenes.forEach(clearSceneText);

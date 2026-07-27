@@ -255,17 +255,57 @@ export function exportJson(state){
 // ЛитРес их заполняют в мастере публикации на сайте отдельно, встраивание
 // в файл создаёт дублирование источника правды и конфликтует при
 // конвертации (см. docs/superpowers/specs/2026-07-06-publishing-checklist-design.md §4).
+// Жанр проекта (свободный русский текст из селекта Концепции) → код жанра FB2.
+// В FB2 <genre> — не произвольная строка, а значение из фиксированного словаря
+// схемы; читалки и каталоги (ЛитРес, FBReader, AlReader, Bookmate) раскладывают
+// книгу по полкам именно по нему.
+const FB2_GENRES = {
+  'детектив':'detective', 'дамский детектив':'detective', 'ироничный детектив':'det_irony',
+  'триллер':'thriller', 'ужасы':'horror', 'мистика':'sf_mystic',
+  'фэнтези':'sf_fantasy', 'ироничное фэнтези':'sf_humor', 'ромфант':'love_sf',
+  'фантастика':'sf', 'молодёжная фантастика':'sf', 'литрпг':'sf',
+  'альтернативная история':'sf_history', 'исторический роман':'prose_history',
+  'любовный роман':'love_contemporary', 'тёмная романтика':'love_contemporary',
+  'приключения':'adv_story', 'биографическая проза':'nonf_biography',
+  'сказка':'child_tale', 'юмористическая проза':'humor_prose',
+  'роман':'prose_contemporary', 'повесть':'prose_contemporary', 'рассказ':'prose_contemporary',
+};
+
+// «А. Тестова» → <first-name>А.</first-name><last-name>Тестова</last-name>.
+// Одно слово («Пелевин», псевдоним) — в <nickname>, иначе last-name остался бы
+// пустым, а он в схеме обязателен внутри <author>.
+function fb2Author(raw){
+  const parts = String(raw||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '<author><nickname>Автор не указан</nickname></author>';
+  if(parts.length === 1) return `<author><nickname>${xesc(parts[0])}</nickname></author>`;
+  const last = parts.pop();
+  const first = parts.shift();
+  const middle = parts.length ? `<middle-name>${xesc(parts.join(' '))}</middle-name>` : '';
+  return `<author><first-name>${xesc(first)}</first-name>${middle}<last-name>${xesc(last)}</last-name></author>`;
+}
+
 export function exportFb2(state){
   const book = buildBook(state);
+  const p = state.project || {};
   const sections = book.chapters.map(ch=>{
     const title = ch.title ? `<title><p>${xesc(ch.title)}</p></title>` : '';
     const body = ch.scenes.map(sc=>paraXhtml(sc.text)).join('\n');
     return `<section>${title}\n${body}\n</section>`;
   }).join('\n');
+  // <title-info> раньше содержал ТОЛЬКО <book-title> — файл открывался, но был
+  // невалиден по схеме FB2 2.0, где genre, author и lang обязательны, и главное:
+  // имя автора не попадало в файл вообще. Остальные три экспорта (.md, .doc,
+  // EPUB через dc:creator) автора пишут — FB2 был единственным, кто его терял,
+  // хотя для русскоязычных читалок это основной формат: книга вставала в
+  // библиотеку как «Неизвестный автор». Порядок элементов важен — схема FB2
+  // задаёт именно такую последовательность.
+  const genre = FB2_GENRES[String(p.genre||'').toLowerCase().trim()] || 'prose_contemporary';
+  const stamp = new Date().toISOString().slice(0,10);
   const fb2 = `<?xml version="1.0" encoding="UTF-8"?>
-<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
 <description>
-<title-info><book-title>${xesc(book.title)}</book-title></title-info>
+<title-info><genre>${genre}</genre>${fb2Author(p.author)}<book-title>${xesc(book.title)}</book-title>${p.synopsis?`<annotation><p>${xesc(p.synopsis)}</p></annotation>`:''}<lang>ru</lang></title-info>
+<document-info>${fb2Author(p.author)}<program-used>Литсовет</program-used><date value="${stamp}">${stamp}</date><id>${xesc(state.id||'litsovet')}</id><version>1.0</version></document-info>
 </description>
 <body>
 ${sections}

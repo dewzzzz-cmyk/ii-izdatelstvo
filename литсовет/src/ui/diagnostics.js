@@ -52,10 +52,15 @@ function paramSpecs(a){
   }
   if(a.role==='evaluator'){
     specs.push({ key:'evaluatorThreshold', label:'Порог принятия', hint:'выше — строже петля; ниже 7.5 не опустить — качество текста важнее скорости', min:7.5, max:9, step:0.5, target:'global', def:7.5, fmt:v=>v.toFixed(1) });
-    specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать, прежде чем сдаться — при высоком пороге нужно больше попыток', min:1, max:8, step:1, target:'global', def:5, fmt:v=>Math.round(v) });
+    // def:3 — совпадает с defaultState() в state.js. Раньше слайдер объявлял
+    // дефолтом 5, то есть показывал автору не то значение, с которым реально
+    // работает пайплайн, если поле в проекте не задано явно.
+    specs.push({ key:'evaluatorMaxIter', label:'Макс. итераций', hint:'сколько раз дорабатывать, прежде чем сдаться — при высоком пороге нужно больше попыток', min:1, max:8, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
   }
   if(a.role==='bookArchitect'){
-    specs.push({ key:'structureMaxIter', label:'Прогонов структуры', hint:'сколько раз архитектор сам перерабатывает скелет по замечаниям Оценщика структуры, прежде чем остановиться (или раньше, если оценка ≥8/10)', min:1, max:6, step:1, target:'global', def:3, fmt:v=>Math.round(v) });
+    // def:1 — совпадает с defaultState() (см. тот же разъезд дефолтов у
+    // evaluatorMaxIter выше).
+    specs.push({ key:'structureMaxIter', label:'Прогонов структуры', hint:'сколько раз архитектор сам перерабатывает скелет по замечаниям Оценщика структуры, прежде чем остановиться (или раньше, если оценка ≥8/10)', min:1, max:6, step:1, target:'global', def:1, fmt:v=>Math.round(v) });
     // Обычный слайдер maxTokens этой роли не показываем (см. комментарий выше
     // про авто-расчёт по объёму книги) — но живой инцидент (МИРОК222, 52
     // сцены, «не удалось распарсить JSON» на скелете и на каскадной
