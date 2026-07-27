@@ -60,7 +60,12 @@ function isRejectedNote(text, rejectedNotes){
   return rejectedNotes.some(rn => noteSimilarity(text, rn.quote + ' ' + (rn.reason||'')) >= REJECT_SIM_THRESHOLD);
 }
 // Запоминает вновь отклонённые пункты на сцене (дедуп против уже сохранённых).
-function rememberRejected(scene, rejected){
+// Экспортирована — переиспользуется из ondemand.js (patchScene), чтобы
+// отклонение замечания через точечную правку («Патч текста») запоминалось
+// так же, как отклонение внутри основного пайплайна: иначе один и тот же
+// Страж мог заново поднять уже осознанно отклонённый вопрос на следующей
+// автоматической проверке, будто спор с автором никогда не происходил.
+export function rememberRejected(scene, rejected){
   if(!rejected || !rejected.length) return;
   scene.rejectedNotes = scene.rejectedNotes || [];
   rejected.forEach(r=>{
@@ -139,13 +144,26 @@ export async function runScene(state, scene, opts={}, onProgress){
       const aMsgs = architectMessages(state, scene, bookContextBlock(state, scene));
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'architect', text:'Архитектор планирует сцену…'});
-        const aRes = await callLLM({ ...llmFor(state,ac), temperature:ac.temp??0.4, messages:aMsgs, maxTokens:ac.maxTokens??720 });
-        const plan = parseArchitect(aRes.text);
+        const architectMaxTk = ac.maxTokens??720;
+        let aRes = await callLLM({ ...llmFor(state,ac), temperature:ac.temp??0.4, messages:aMsgs, maxTokens: architectMaxTk });
+        let plan = parseArchitect(aRes.text);
+        // Обрыв по токенам посреди JSON парсится в null — architectToText(null)
+        // тихо схлопывается в '', и Прозаик пишет первый черновик вообще без
+        // плана сцены (якорей/шагов/цели/препятствия), а лог всё равно ниже
+        // безусловно писал «план сцены готов» — неотличимо от настоящего
+        // успеха. Тот же принцип повтора с увеличенным лимитом, что уже стоит
+        // у Прозаика/Оценщика/Стражей.
+        if(!plan && aRes.text && aRes.text.trim()){
+          const retryMaxTk = Math.max(architectMaxTk+1, Math.min(3000, architectMaxTk*2));
+          onProgress && onProgress({log:{icon:'⚠️', text:`Архитектор: ответ не распарсился (похоже на обрыв токенами, лимит был ${architectMaxTk}) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
+          aRes = await callLLM({ ...llmFor(state,ac), temperature:ac.temp??0.4, messages:aMsgs, maxTokens: retryMaxTk });
+          plan = parseArchitect(aRes.text);
+        }
         architectText = architectToText(plan, scene);
         if(plan && plan.presentChars.length) scene.presentChars = plan.presentChars;
         logStep({ agent:'architect', input:aMsgs[1].content, output:aRes.text,
           tokensIn:aRes.tokensIn, tokensOut:aRes.tokensOut, cost:aRes.cost });
-        onProgress && onProgress({log:{icon:'🏗', text:'Архитектор: план сцены готов'}});
+        onProgress && onProgress({log:{icon:'🏗', text: plan ? 'Архитектор: план сцены готов' : 'Архитектор: план не удалось получить — Прозаик пишет без плана', state: plan?undefined:'warn'}});
         const gt = await gate(state,'architect','Архитектор сцены', architectText||aRes.text, opts);
         if(gt.approve) break;
         aMsgs.push({ role:'user', content:'Переделай план сцены. '+(gt.note||'') });
@@ -586,7 +604,7 @@ export async function runScene(state, scene, opts={}, onProgress){
               onProgress && onProgress({log:{icon:'🚦', text:'Страж стиля: пропущен — добавьте правила автора в настройках «Голос»', state:'warn'}});
           }
           if(agentEnabled('reader'))
-            guardJobs.push(guardJob(state,'reader', readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness), flags, onProgress, scene));
+            guardJobs.push(guardJob(state,'reader', readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness, state.project?.genre), flags, onProgress, scene));
           if(agentEnabled('imagery'))
             guardJobs.push(guardJob(state,'imagery', imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, state.project?.genre), flags, onProgress));
           if(agentEnabled('pov'))
@@ -594,7 +612,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           if(agentEnabled('dialogue'))
             guardJobs.push(guardJob(state,'dialogue', dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags, onProgress));
           if(agentEnabled('resolution'))
-            guardJobs.push(guardJob(state,'resolution', resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness), flags, onProgress));
+            guardJobs.push(guardJob(state,'resolution', resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness, state.project?.genre), flags, onProgress));
           if(agentEnabled('atmosphere'))
             guardJobs.push(guardJob(state,'atmosphere', atmosphereGuardMessages(pRes.text, ag(state,'atmosphere').strictness, state.project?.genre), flags, onProgress));
           // Только для иронических жанров (см. genreWantsHumor) — на остальных
@@ -1001,7 +1019,23 @@ export async function runScene(state, scene, opts={}, onProgress){
 async function guardJob(state, role, messages, flagsOut, onProgress, scene){
   const a = ag(state, role);
   try{
-    const res = await callLLM({ ...llmFor(state,a), temperature:a.temp??0.2, messages, maxTokens:a.maxTokens??840 });
+    const maxTk = a.maxTokens??840;
+    let res = await callLLM({ ...llmFor(state,a), temperature:a.temp??0.2, messages, maxTokens: maxTk });
+    let j = extractJSON(res.text);
+    // Страж, чей ответ оборвался посреди JSON по лимиту токенов, парсится в
+    // extractJSON КАК null — то же самое значение, что вернул бы страж, честно
+    // проверивший сцену и не нашедший ни одной проблемы (flags:[]). Раньше это
+    // было неотличимо (тот же класс проблемы, что уже отмечен в комментарии про
+    // упавший запрос ниже — там про сетевую ошибку, тут про обрыв по лимиту).
+    // Тот же принцип повтора с увеличенным лимитом, что уже стоит у Прозаика и
+    // Оценщика — потолок ниже (4000), т.к. ответ Стража штатно короткий (title/
+    // detail/quote на пару флагов), не полноценная проза.
+    if(!j && res.text && res.text.trim()){
+      const retryMaxTk = Math.max(maxTk+1, Math.min(4000, maxTk*2));
+      onProgress && onProgress({log:{icon:'⚠️', text:`Страж «${guardLabel(state,role)}»: ответ не распарсился (похоже на обрыв токенами, лимит был ${maxTk}) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
+      res = await callLLM({ ...llmFor(state,a), temperature:a.temp??0.2, messages, maxTokens: retryMaxTk });
+      j = extractJSON(res.text);
+    }
     const flags = runGuardParse(res.text);
     flagsOut[role] = flags;
     // Страж-читатель уже отвечает на вопрос о пассивности героя (readerGuardMessages,
@@ -1009,10 +1043,7 @@ async function guardJob(state, role, messages, flagsOut, onProgress, scene){
     // без дополнительного LLM-вызова, и копим на самой сцене для накопительной
     // проверки по книге (см. bookreview.js/passivityIsSystemic). Жанронезависимо —
     // работает для любого протагониста в любом типе прозы.
-    if(role==='reader' && scene){
-      const j = extractJSON(res.text);
-      if(j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
-    }
+    if(role==='reader' && scene && j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
     logStep({ agent:role, input:'(черновик)', output:res.text, flags, tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost });
   }catch(e){
     flagsOut[role] = [];

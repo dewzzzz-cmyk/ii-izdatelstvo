@@ -12,6 +12,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          humorGuardMessages, parseDebateRevision, looksTokenTruncated } from './guards.js';
 import { bookContextBlock } from './context.js';
 import { effectiveRules, ag, llmFor } from './state.js';
+import { rememberRejected } from './pipeline.js';
 
 // runAgentOnDemand(state, scene, agent) → { kind, ... }
 //   kind:'evaluator' → { verdict }      (оценка по рубрике + клише + замечания)
@@ -67,11 +68,11 @@ export async function runAgentOnDemand(state, scene, agent){
     if(!rules.length) throw new Error('Нет правил автора — добавьте их на вкладке «Голос» или кнопкой «⊕ В правило».');
     msgs = styleGuardMessages(draft, rules, agent.strictness);
   }
-  else if(role==='reader')    msgs = readerGuardMessages(scene, draft, agent.strictness);
+  else if(role==='reader')    msgs = readerGuardMessages(scene, draft, agent.strictness, state.project?.genre);
   else if(role==='imagery')   msgs = imageryGuardMessages(draft, agent.strictness);
   else if(role==='pov')       msgs = povGuardMessages(draft, agent.strictness);
   else if(role==='dialogue')  msgs = dialogueGuardMessages(draft, agent.strictness);
-  else if(role==='resolution')msgs = resolutionGuardMessages(draft, agent.strictness);
+  else if(role==='resolution')msgs = resolutionGuardMessages(draft, agent.strictness, state.project?.genre);
   else if(role==='atmosphere')msgs = atmosphereGuardMessages(draft, agent.strictness, state.project?.genre);
   else if(role==='humor')     msgs = humorGuardMessages(draft, agent.strictness, state.project?.genre);
   else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
@@ -105,12 +106,24 @@ export async function patchScene(state, scene, instruction){
   // плотность ≈2.78 ток/слово на уже написанном тексте книги — старый потолок в
   // 4000 не оставлял запаса под текст [РАЗБОР] перед переписанной прозой.
   const cap = Math.round(Math.min(9000, Math.max(1800, Math.round(draft.length/2) + 1200)) * 1.2);
-  const res = await callLLM({ ...base, temperature:0.4,
-    messages: surgicalReviseMessages(draft, instruction, state.style?.rules), maxTokens:cap });
+  const msgs = surgicalReviseMessages(draft, instruction, state.style?.rules);
+  let res = await callLLM({ ...base, temperature:0.4, messages: msgs, maxTokens:cap });
   // Ответ приходит в формате [РАЗБОР]/[ТЕКСТ] (см. surgicalReviseMessages) — без
   // parseDebateRevision в сцену дословно попадал служебный разбор замечаний.
-  const parsed = parseDebateRevision(res.text||'');
-  if(parsed.truncated) throw new Error('Ответ оборван — попробуйте ещё раз.');
+  let parsed = parseDebateRevision(res.text||'');
+  if(parsed.truncated){
+    // Тот же принцип повтора с удвоенным лимитом, что уже стоит у Прозаика на
+    // правке в pipeline.js — раньше здесь был только тихий отказ (кидали ошибку
+    // и автору приходилось вручную нажимать «Патч текста» ещё раз, теряя вызов).
+    const retryMaxTk = Math.max(cap+1, Math.min(24000, cap*2));
+    res = await callLLM({ ...base, temperature:0.4, messages: msgs, maxTokens: retryMaxTk });
+    parsed = parseDebateRevision(res.text||'');
+    if(parsed.truncated) throw new Error(`Ответ оборван дважды подряд (лимит был ${retryMaxTk} ток.) — попробуйте ещё раз.`);
+  }
+  // Отклонённые Прозаиком замечания запоминаются так же, как в основном
+  // пайплайне — иначе Стражи на следующей автоматической проверке заново
+  // поднимут вопрос, который автор уже увидел разобранным и отклонённым здесь.
+  if(parsed.rejected && parsed.rejected.length) rememberRejected(scene, parsed.rejected);
   const out = (parsed.prose||'').trim();
   if(out.length < draft.length*0.6) throw new Error('Ответ оборван — попробуйте ещё раз.');
   // parsed.truncated ловит только «тега [ТЕКСТ] почти нет» — не «текст есть, но

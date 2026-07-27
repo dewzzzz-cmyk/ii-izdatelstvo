@@ -466,7 +466,16 @@ export async function runBookArchitectPatch(state, opts={}){
 // Видит соседние сцены и главу — чтобы вписаться в дугу. Возвращает поля сцены.
 export async function regenerateScene(state, scene, hint){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  // Раньше здесь напрямую читался state.global (apiKey/baseURL/model,
+  // temperature жёстко 0.7) в обход персонального конфига роли «Книжный
+  // архитектор» (провайдер/модель/ключ/температура — см. runBookArchitect чуть
+  // выше по файлу, где llmFor(state, architectAgent) уже применяется). Точечная
+  // перегенерация одной сцены — самый частый путь ручной правки — молча
+  // использовала глобальный провайдер, даже если автор настроил Архитектору
+  // отдельный. Тот же класс бага, что уже чинили для Прозаика (inline.js).
+  const architectAgent = ag(state, 'bookArchitect');
+  const llm = llmFor(state, architectAgent);
+  if(!llm.apiKey) throw new Error('Не задан API-ключ.');
   const nodes = state.structure||[];
   const ch = nodes.find(n=>n.type==='chapter' && n.id===scene.chapterId);
   const scenes = nodes.filter(n=>n.type==='scene');
@@ -489,7 +498,7 @@ export async function regenerateScene(state, scene, hint){
   ].filter(Boolean).join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:600 });
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:600 });
     const j = extractJSON(res.text);
     if(j && typeof j.brief==='string'){
       return {
@@ -511,7 +520,12 @@ export async function regenerateScene(state, scene, hint){
 // сцен и привязку к главам; переписывает их брифы/эмоции консистентно.
 export async function regenerateDownstream(state, pivotScene, hint){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  // См. комментарий в regenerateScene выше — та же дыра (глобальный конфиг в
+  // обход персонального провайдера/модели/ключа/температуры роли «Книжный
+  // архитектор»), тот же фикс.
+  const architectAgent = ag(state, 'bookArchitect');
+  const llm = llmFor(state, architectAgent);
+  if(!llm.apiKey) throw new Error('Не задан API-ключ.');
   const nodes = state.structure||[];
   const scenes = nodes.filter(n=>n.type==='scene');
   const pi = scenes.findIndex(n=>n.id===pivotScene.id);
@@ -550,7 +564,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
   let lastErr='';
   startRun(null, 'Архитектор (каскадная перегенерация)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
     logStep({ agent:'bookArchitectDownstream', iter:attempt+1, input:`(каскад ${downstream.length} сцен, лимит ${maxTokens})`, output:res.text,
@@ -784,8 +798,17 @@ export function structureEvalMessages(state, skeleton, prevEval){
 }
 
 export async function runStructureEval(state, skeleton, prevEval){
-  const g = state.global;
-  if(!g.apiKey) return null; // конфигурация не задана — это не сбой, тихо пропускаем
+  // Раньше эта функция была единственной JSON-парсящей функцией файла без
+  // ретрая на невалидный ответ (все соседние — runBookArchitect/Patch,
+  // regenerateScene/Downstream/Chapter — оборачивают вызов в цикл попыток),
+  // и единственной, что читала голый state.global в обход персонального
+  // конфига роли «Книжный архитектор» (см. комментарий в regenerateScene).
+  // Собственный комментарий ниже прямо описывает живой инцидент, где ответ
+  // растёт с каждой итерацией «Улучшить» и рискует обрезаться — то есть
+  // ретрай нужен здесь особенно, а его не было вовсе.
+  const architectAgent = ag(state, 'bookArchitect');
+  const llm = llmFor(state, architectAgent);
+  if(!llm.apiKey) return null; // конфигурация не задана — это не сбой, тихо пропускаем
   const msgs = structureEvalMessages(state, skeleton, prevEval);
   // С каждой итерацией «Улучшить» промпт просит явно перечислить устранено/не
   // устранено по каждой прошлой проблеме — ответ ощутимо растёт по итерациям
@@ -795,9 +818,14 @@ export async function runStructureEval(state, skeleton, prevEval){
   // проверить, поможет ли больше видимых находок за раз) — вдвое больше
   // пунктов при том же формате ответа примерно вдвое увеличивает его длину.
   // 3000→3600: +20% по запросу автора (общий проход по всем лимитам токенов).
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2, messages:msgs, maxTokens:3600, retries:g.retries });
-  const j = extractJSON(res.text);
-  if(!j || typeof j.score !== 'number') throw new Error('Оценщик вернул нераспознаваемый ответ — попробуйте ещё раз.');
+  let j = null, lastErr = '';
+  for(let attempt=0; attempt<=(state.global.retries??2); attempt++){
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.2, messages:msgs, maxTokens:3600 });
+    j = extractJSON(res.text);
+    if(j && typeof j.score === 'number') break;
+    lastErr = 'нераспознаваемый ответ'; j = null;
+  }
+  if(!j) throw new Error('Оценщик вернул '+(lastErr||'нераспознаваемый ответ')+' — попробуйте ещё раз.');
   return {
     score: Math.max(0, Math.min(10, j.score)),
     axes: {
@@ -824,7 +852,10 @@ export async function runStructureEval(state, skeleton, prevEval){
 // ── Перегенерация всех сцен ОДНОЙ главы с подсказкой ──
 export async function regenerateChapter(state, chapter, hint){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ.');
+  // См. комментарий в regenerateScene выше — та же дыра, тот же фикс.
+  const architectAgent = ag(state, 'bookArchitect');
+  const llm = llmFor(state, architectAgent);
+  if(!llm.apiKey) throw new Error('Не задан API-ключ.');
   const nodes = state.structure||[];
   const ci = nodes.findIndex(n=>n.id===chapter.id);
   const scenes=[]; for(let i=ci+1;i<nodes.length;i++){ if(nodes[i].type==='chapter') break; if(nodes[i].type==='scene') scenes.push(nodes[i]); }
@@ -844,7 +875,7 @@ export async function regenerateChapter(state, chapter, hint){
   ].join('\n');
   let lastErr='';
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:2400 });
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:2400 });
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
     if(arr && arr.length){
