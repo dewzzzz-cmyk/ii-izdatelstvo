@@ -756,6 +756,8 @@ export function revertScene(state, scene){
 // Перед заменой сохраняет прошлую структуру в историю (откат полного скелета).
 export function applySkeleton(state, skeleton, uid){
   pushSkeletonVersion(state);
+  // Имена персонажей ПРЕЖНЕЙ версии книги — нужны для предупреждения ниже.
+  const oldCharNames = (state.characters||[]).map(c=>c.name).filter(Boolean);
   const nodes = [];
   for(const ch of skeleton.chapters){
     const chId = uid('ch');
@@ -766,6 +768,44 @@ export function applySkeleton(state, skeleton, uid){
     }
   }
   state.structure = nodes;
+
+  // ── Уборка после полной замены скелета ──
+  // Живой инцидент (тестовый прогон): скелет перегенерировали дважды, и каждый
+  // раз applySkeleton менял ТОЛЬКО state.structure. Канон, персонажи и сводки
+  // сцен оставались от прежней версии книги: канон говорил «Очки ДР Глеба…»,
+  // в персонажах числился Глеб, а новый бриф называл героя Даней. Прозаик
+  // получил и то и другое, пошёл за каноном, Оценщик пожаловался на повтор
+  // имени — и проза убрала имя вообще. Итог: герой без имени, сцена открывается
+  // безличным «Нажал пальцем на дужку очков». Перегенерация скелета — штатное
+  // действие (есть целый флоу «Улучшить»), так что это било по любой книге.
+  //
+  // Сводки сцен ключуются по id, а applySkeleton выдаёт всем сценам НОВЫЕ id —
+  // значит прежние записи привязаны к сценам, которых больше не существует.
+  // Это чистый мусор: он никогда не будет прочитан по назначению, но исправно
+  // раздувает промпты через «ранее в книге». Удаляем — терять нечего.
+  const liveIds = new Set(nodes.filter(n=>n.type==='scene').map(n=>n.id));
+  const mem = state.memory || (state.memory = {});
+  if(mem.scenes){
+    Object.keys(mem.scenes).forEach(id=>{ if(!liveIds.has(id)) delete mem.scenes[id]; });
+  }
+  // Сводки глав — тем же правилом (id глав тоже новые).
+  const liveChIds = new Set(nodes.filter(n=>n.type==='chapter').map(n=>n.id));
+  if(mem.chapters){
+    Object.keys(mem.chapters).forEach(id=>{ if(!liveChIds.has(id)) delete mem.chapters[id]; });
+  }
+  // Бегущий синопсис книги описывает выброшенную прозу — иначе он попадёт в
+  // «РАНЕЕ В КНИГЕ (СИНОПСИС)» и будет противоречить новому скелету.
+  if(mem.books && mem.books.__running__) mem.books.__running__ = { current: '' };
+
+  // А вот канон и персонажей НЕ удаляем сами: автор мог вносить их руками, и
+  // молча снести его работу хуже, чем оставить лишнее. Вместо этого — флаг для
+  // предупреждения в UI со списком имён, которых новый скелет может не знать.
+  // Решение по нему принимает автор (см. renderStructure).
+  const newBriefs = nodes.filter(n=>n.type==='scene').map(n=>`${n.title} ${n.brief||''} ${n.entryState||''}`).join(' ');
+  const ghosts = oldCharNames.filter(name => name.length>=3 && !newBriefs.includes(name));
+  state.canonStaleAfterSkeleton = ghosts.length
+    ? { names: ghosts.slice(0,12), at: Date.now() }
+    : null;
 }
 
 // Слияние ТОЧЕЧНОЙ правки (structurePatchMode) обратно в state.structure —

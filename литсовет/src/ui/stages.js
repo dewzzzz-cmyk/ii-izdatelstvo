@@ -1287,6 +1287,15 @@ export function renderStructure(els){
           <button class="btn" id="dismissWorldCheck" style="font-size:11px;padding:2px 9px">Скрыть</button>
         </div>
       </div>` : ''}
+      ${(s.canonStaleAfterSkeleton && s.canonStaleAfterSkeleton.names?.length) ? `<div style="margin-top:14px;border:1px solid var(--err);border-radius:8px;padding:12px 14px;background:var(--surface-2)">
+        <div style="font-size:12px;color:var(--err)">⚠ Канон описывает персонажей, которых новый скелет не упоминает: ${s.canonStaleAfterSkeleton.names.map(esc).join(', ')}.</div>
+        <div style="font-size:12px;margin-top:6px">Скелет заменён целиком, а факты и персонажи остались от прежней версии книги. Прозаик получит и то и другое — и может пойти за старым каноном против нового брифа (живой случай: в брифе герой «Даня», в каноне «Глеб», в итоге проза осталась вообще без имени героя). Сводки удалённых сцен уже вычищены автоматически, а это — ваши данные, решайте сами.</div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="purgeGhostChars" style="font-size:11px;padding:2px 9px">Удалить этих персонажей и факты о них</button>
+          <button class="btn" id="goCanonReview" style="font-size:11px;padding:2px 9px">Открыть «Память» →</button>
+          <button class="btn" id="dismissCanonStale" style="font-size:11px;padding:2px 9px">Оставить как есть</button>
+        </div>
+      </div>` : ''}
       <div id="missingFactsBlock"></div>
 
       ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
@@ -1330,6 +1339,35 @@ export function renderStructure(els){
 
   const dismissStale = document.getElementById('dismissStale');
   if(dismissStale) dismissStale.onclick = ()=>{ s.structureStale=false; save(); };
+
+  // Баннер «канон от прежней версии книги» (см. applySkeleton). Удаление здесь
+  // явное и по кнопке: молча снести канон нельзя — автор мог вносить его руками.
+  const purgeGhostChars = document.getElementById('purgeGhostChars');
+  if(purgeGhostChars) purgeGhostChars.onclick = ()=>{
+    const names = (s.canonStaleAfterSkeleton?.names)||[];
+    if(!names.length) return;
+    if(!confirm(`Удалить персонажей (${names.join(', ')}) и факты канона, где они упоминаются? Отменить это можно только откатом проекта.`)) return;
+    // Персонажи по имени.
+    s.characters = (s.characters||[]).filter(c=>!names.includes(c.name));
+    // Факты канона, где встречается любое из имён. Закреплённые (pinned) не
+    // трогаем: закрепление — явный сигнал автора «это важно всегда».
+    const before = (s.bible||[]).length;
+    s.bible = (s.bible||[]).filter(b=>{
+      if(b.pinned) return true;
+      const hay = `${b.text||''} ${b.keys||''}`;
+      return !names.some(n=>hay.includes(n));
+    });
+    const removed = before - s.bible.length;
+    s.canonStaleAfterSkeleton = null;
+    save();
+    alert(`Удалено персонажей: ${names.length}, фактов канона: ${removed}. Закреплённые факты сохранены.`);
+  };
+  const goCanonReview = document.getElementById('goCanonReview');
+  // Панель «Память» — правая вкладка стадии «Написание» (s.ui.rightTab), а не
+  // отдельная стадия: переключаем и то и другое, иначе кнопка ведёт в пустоту.
+  if(goCanonReview) goCanonReview.onclick = ()=>{ s.ui.stage='write'; s.ui.rightTab='mem'; save(); };
+  const dismissCanonStale = document.getElementById('dismissCanonStale');
+  if(dismissCanonStale) dismissCanonStale.onclick = ()=>{ s.canonStaleAfterSkeleton = null; save(); };
 
   const goWorldCheck = document.getElementById('goWorldCheck');
   if(goWorldCheck) goWorldCheck.onclick = ()=>{ s.ui.stage='world'; save(); };
