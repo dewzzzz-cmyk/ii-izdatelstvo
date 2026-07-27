@@ -366,17 +366,29 @@ async function handleWiki(req, res){
 // «сгенерировано», но сама картинка нигде не отображалась и не открывалась —
 // без единого сообщения об ошибке, гадать пришлось бы вслепую. Проверяем
 // магическое число первых байт ПЕРЕД тем, как объявлять генерацию успешной.
-function looksLikeRasterImage(b64){
+// Определяет РЕАЛЬНЫЙ формат картинки по магическим байтам и возвращает его
+// MIME — или null, если это вообще не растр.
+// Раньше эта функция только отвечала «да/нет», а MIME в data URL проставлялся
+// жёстко как image/png. Живой прогон вскрыл цену такого упрощения: Recraft V4.1
+// вернул WebP, сервер подписал его `data:image/png`, и дальше ложный ярлык шёл
+// по всей цепочке — в .md/.doc как data:image/png с байтами RIFF/WEBP, а в EPUB
+// как файл `images/ch1-img1.png` с `media-type="image/png"` при webp-содержимом.
+// Экспорт при этом честен: он берёт mime прямо из data URL (decodeDataUrlImage),
+// то есть врал именно сервер. Для EPUB это не косметика — строгие валидаторы
+// отклоняют книгу, где media-type не совпадает с содержимым, а старые читалки
+// просто не рисуют такую картинку.
+function detectRasterMime(b64){
   try{
     const head = Buffer.from(String(b64||'').slice(0, 32), 'base64');
-    if(head.length < 4) return false;
-    if(head[0]===0x89 && head[1]===0x50 && head[2]===0x4E && head[3]===0x47) return true; // PNG
-    if(head[0]===0xFF && head[1]===0xD8 && head[2]===0xFF) return true; // JPEG
-    if(head[0]===0x47 && head[1]===0x49 && head[2]===0x46) return true; // GIF
-    if(head.length>=12 && head.slice(0,4).toString('ascii')==='RIFF' && head.slice(8,12).toString('ascii')==='WEBP') return true;
-    return false;
-  }catch{ return false; }
+    if(head.length < 4) return null;
+    if(head[0]===0x89 && head[1]===0x50 && head[2]===0x4E && head[3]===0x47) return 'image/png';
+    if(head[0]===0xFF && head[1]===0xD8 && head[2]===0xFF) return 'image/jpeg';
+    if(head[0]===0x47 && head[1]===0x49 && head[2]===0x46) return 'image/gif';
+    if(head.length>=12 && head.slice(0,4).toString('ascii')==='RIFF' && head.slice(8,12).toString('ascii')==='WEBP') return 'image/webp';
+    return null;
+  }catch{ return null; }
 }
+function looksLikeRasterImage(b64){ return !!detectRasterMime(b64); }
 const NOT_RASTER_ERR = 'UPSTREAM_FORMAT: провайдер вернул не растровое изображение (похоже на SVG/векторный формат) — такую картинку браузер не может отрисовать. Попробуйте другую модель этого провайдера в настройках (⚙ → Иллюстрации) или другого провайдера.';
 
 // Таймаут на запросы к провайдерам картинок. У ТЕКСТОВОЙ генерации таймаут есть
@@ -416,8 +428,10 @@ async function handleGenerateImage(req, res){
         const d = await up.json();
         const b64 = d?.data?.[0]?.b64_json;
         if(!b64) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
-        if(!looksLikeRasterImage(b64)) return send(res, 502, NOT_RASTER_ERR);
-        return send(res, 200, JSON.stringify({dataUrl:'data:image/png;base64,'+b64}), 'application/json; charset=utf-8');
+        // MIME берём из фактических байтов, а не «всегда png» — см. detectRasterMime.
+        const mimeOut = detectRasterMime(b64);
+        if(!mimeOut) return send(res, 502, NOT_RASTER_ERR);
+        return send(res, 200, JSON.stringify({dataUrl:`data:${mimeOut};base64,`+b64}), 'application/json; charset=utf-8');
       } else if(provider==='gemini'){
         const model = b.model || 'gemini-2.5-flash-image';
         const up = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
@@ -455,8 +469,10 @@ async function handleGenerateImage(req, res){
         const d = await up.json();
         const b64 = d?.data?.[0]?.b64_json;
         if(!b64) return send(res, 502, 'UPSTREAM_EMPTY: провайдер не вернул изображение.');
-        if(!looksLikeRasterImage(b64)) return send(res, 502, NOT_RASTER_ERR);
-        return send(res, 200, JSON.stringify({dataUrl:'data:image/png;base64,'+b64}), 'application/json; charset=utf-8');
+        // MIME берём из фактических байтов, а не «всегда png» — см. detectRasterMime.
+        const mimeOut = detectRasterMime(b64);
+        if(!mimeOut) return send(res, 502, NOT_RASTER_ERR);
+        return send(res, 200, JSON.stringify({dataUrl:`data:${mimeOut};base64,`+b64}), 'application/json; charset=utf-8');
       } else {
         // Qwen/DashScope (Wanxiang) — асинхронный API: сабмит задачи → поллинг статуса →
         // ссылка на картинку (не base64) → сервер сам скачивает и конвертирует в data URL,
