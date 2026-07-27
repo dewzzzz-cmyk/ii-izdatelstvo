@@ -302,7 +302,23 @@ export async function runBookArchitect(state, opts={}){
   // константу 140 для свежей генерации не подняли вместе с ней. Живой инцидент:
   // 60 сцен × 140 = 9900 ток. бюджета, реальный ответ обрезался на ~31870
   // символах (≈3.2 симв/ток на этой модели) не дойдя до конца JSON.
-  const perSceneTokens = opts.previousSkeleton ? 300 : 220;
+  // 220/300 → 420/480. Замерено на живом прогоне (реальный ключ, 4-5 глав):
+  // бюджет вышел 5760 ток., и ДВЕ попытки подряд обрубились ровно на потолке
+  // (17 130 и 17 115 символов ≈ 2.97 симв/ток на этой модели), обе легли в
+  // «не удалось распарсить JSON». Третья прошла только потому, что модель
+  // случайно написала лаконичнее — 599 символов на бриф против 842 в
+  // предыдущем прогоне. Фактический расход успешной попытки: 18 сцен, 14 316
+  // символов JSON ≈ 318 ток./сцену при заложенных 220, то есть запаса не было
+  // вообще, и попадание в лимит решала случайность формулировок.
+  // Причина роста: BRIEF_DETAIL_NOTE требует бриф в 3-4 предложения с
+  // сенсорной деталью, плюс entryState, плюс ARC_DISTRIBUTION_NOTE — схема
+  // сцены выросла, а константа осталась от более коротких брифов.
+  // 420 берём с запасом над замеренными 318 (verbose-попытки просили ~380),
+  // improve-режим 480 — там брифы заведомо длиннее черновых.
+  // Цена ошибки была не только в деньгах: каждая неудачная попытка — это ~60
+  // секунд ожидания, отсюда и «структура формируется слишком долго» (188 с на
+  // три попытки против ~60 с на одну).
+  const perSceneTokens = opts.previousSkeleton ? 480 : 420;
   // +20% по запросу автора (общий проход по всем лимитам токенов приложения),
   // потолок поднят 30000→40000, и сверху ещё множитель из настроек автора
   // (state.global.architectTokenMultiplier, слайдер «Запас токенов» у роли
@@ -312,6 +328,14 @@ export async function runBookArchitect(state, opts={}){
   // ручного бампа константы в коде при каждой новой длинной книге.
   const archMult = state.global.architectTokenMultiplier || 1;
   const archMaxTokens = Math.round(Math.max(4000, Math.min(40000, effectiveScenes * perSceneTokens + 1500)) * 1.2 * archMult);
+  // Лимит РАСТЁТ между попытками, если ответ обрубило. Раньше повтор уходил с
+  // тем же самым archMaxTokens и лишь просил модель «верни полный JSON» — но
+  // упирается-то не модель, а потолок: живой прогон дал две попытки подряд,
+  // обрубленные на одинаковой длине, и обе бесполезно потратили ~60 секунд и
+  // деньги. Просить «будь полнее» при неизменном лимите нельзя в принципе.
+  // Тот же приём «повтор с увеличенным лимитом», что уже стоит у Прозаика,
+  // Оценщика, Стражей и пер-сценового Архитектора — здесь его не было.
+  let currentMaxTokens = archMaxTokens;
   let lastErr = '';
   // Живой инцидент: автор видел «спиннер навсегда» на скелете из 47+ сцен —
   // единственный вызов callLLM во всём приложении без onToken (см. остальные
@@ -332,9 +356,9 @@ export async function runBookArchitect(state, opts={}){
   startRun(null, 'Книжный архитектор');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     streamedChars = 0;
-    const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:archMaxTokens }, onChunk);
+    const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:currentMaxTokens }, onChunk);
     const v = validateSkeleton(res.text);
-    logStep({ agent:'bookArchitect', iter:attempt+1, input:`(генерация скелета, лимит ${archMaxTokens})`, output:res.text,
+    logStep({ agent:'bookArchitect', iter:attempt+1, input:`(генерация скелета, лимит ${currentMaxTokens})`, output:res.text,
       tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });
     if(v.ok){
       endRun('done');
@@ -361,6 +385,10 @@ export async function runBookArchitect(state, opts={}){
     const preview = (res.text||'').slice(0, 120).replace(/\n/g,' ');
     // на ретрае — сообщаем модели что конкретно не так
     if((res.text||'').trim().endsWith('"') || (res.text||'').trim().endsWith(',') || !(res.text||'').trim().endsWith('}')){
+      // Обрыв — значит следующей попытке нужно БОЛЬШЕ места, а не просто просьба
+      // «будь полнее»: при неизменном лимите она упрётся в тот же потолок (живой
+      // прогон: две попытки, обрубленные на 17 130 и 17 115 символах).
+      currentMaxTokens = Math.min(40000, Math.round(currentMaxTokens * 1.6));
       msgs.push({ role:'user', content:`JSON обрезан (ответ не закончен). Повтори запрос: верни ТОЛЬКО полный JSON-объект с chapters, без пояснений. Пример начала: {"chapters":[{"title":"...` });
     } else {
       msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[...]} без лишнего текста.` });
