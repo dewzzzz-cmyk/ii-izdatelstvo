@@ -482,3 +482,46 @@ test('все модули вне пайплайна сцены проверяю�
     assert.match(src, /assertNotTruncated.*from '\.\/llm\.js'/s, `${m}.js: хелпер не импортирован`);
   }
 });
+
+// ───────────── разборы книги живут в проекте, а не в памяти вкладки ─────────────
+// Критик и Бета-ридер — платные разборы всей книги. Их результат хранился в
+// модульных переменных ui/stages.js: F5 — и отчёт исчез, плати заново. Отсюда
+// же «непонятно, что с ним делать»: с ним нечего было делать, он не жил.
+test('saveReview/getReview: отчёт сохраняется в проект с датой', async () => {
+  const { defaultState, saveReview, getReview } = await import('../src/state.js');
+  const s = defaultState();
+  assert.equal(getReview(s,'critic'), null, 'до разбора отчёта нет');
+  const r = saveReview(s, 'critic', { overall:'резко, но по делу', problems:[{sceneTitle:'Сцена 1'}] });
+  assert.equal(getReview(s,'critic').report.overall, 'резко, но по делу');
+  assert.ok(r.at > 0, 'дата разбора нужна, чтобы автор видел его свежесть');
+  assert.deepEqual(r.done, [], 'новый разбор начинается без отметок');
+});
+
+test('toggleReviewDone: отметки «сделано» переключаются и не текут между разборами', async () => {
+  const { defaultState, saveReview, toggleReviewDone, isReviewDone } = await import('../src/state.js');
+  const s = defaultState();
+  saveReview(s, 'beta', { hookScore:5 });
+  assert.equal(isReviewDone(s,'beta','score:Финал'), false);
+  assert.equal(toggleReviewDone(s,'beta','score:Финал'), true);
+  assert.equal(isReviewDone(s,'beta','score:Финал'), true);
+  assert.equal(toggleReviewDone(s,'beta','score:Финал'), false, 'повторный клик снимает отметку');
+  toggleReviewDone(s,'beta','score:Крючок');
+  // Новый разбор — новые пункты; старые отметки к ним не относятся, индексы
+  // разъедутся, и автор увидел бы вычеркнутым то, чего не делал.
+  saveReview(s, 'beta', { hookScore:8 });
+  assert.equal(isReviewDone(s,'beta','score:Крючок'), false, 'отметки прошлого разбора не переносятся');
+  assert.equal(isReviewDone(s,'critic','score:Крючок'), false, 'разборы не делят отметки между собой');
+});
+
+test('миграция: у старого проекта появляется reviews, данные не теряются', async () => {
+  const { defaultState, migrate, saveReview } = await import('../src/state.js');
+  const старый = defaultState();
+  delete старый.reviews;                       // проект, сохранённый до 1.59.0
+  const после = migrate(JSON.parse(JSON.stringify(старый)));
+  assert.ok(после.reviews, 'поле должно появиться, а не остаться undefined');
+  assert.equal(после.reviews.critic, null);
+  const сОтчётом = defaultState();
+  saveReview(сОтчётом, 'critic', { overall:'ок' });
+  const после2 = migrate(JSON.parse(JSON.stringify(сОтчётом)));
+  assert.equal(после2.reviews.critic.report.overall, 'ок', 'существующий отчёт не должен затираться миграцией');
+});

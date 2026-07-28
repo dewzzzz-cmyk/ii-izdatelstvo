@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider, MODEL_PRICES } from './providers.js'
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.58.0';
+export const APP_VERSION = '1.59.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Единый источник —
 // providers.js (та же таблица кормит подсказку цены прямо в селекте модели,
@@ -77,6 +77,17 @@ export function defaultState(){
     characters: [],            // {name, desc, stateNote, book}
     memory: { scenes:{}, chapters:{}, books:{} },
     series: [],
+    // Разборы книги целиком (Критик, Бета-ридер). Раньше жили в модульных
+    // переменных ui/stages.js — отчёт исчезал при перезагрузке страницы, и за
+    // него приходилось платить заново. Кнопка «↺ открыть снова» работала ровно
+    // до первого F5. Отсюда же «непонятно, что с ним делать»: с ним нечего было
+    // делать, потому что он не жил. done[] — ключи пунктов, отмеченных автором
+    // как сделанные: отчёт превращается из разового текста в рабочий список.
+    reviews: {
+      critic:  null,  // { report, at, done:[] }
+      beta:    null,  // { report, at, done:[] }
+      chekhov: null,  // { report, at, done:[] } — ружья Чехова
+    },
     agents: defaultAgents(),
     diagnostics: { runs: [] },  // трейсы прогонов по run_id
     illustrations: {
@@ -365,6 +376,30 @@ export function dismissFactConflict(state, idx){
 // плана, а план об этом не знает»; автор решает сам, никогда не переписывается
 // автоматически. Дедуп по (type, text, sceneId) — та же пара может всплыть
 // повторно при пересуммаризации одной и той же сцены.
+// ---- Разборы книги: сохранение и отметки «сделано» ----
+// kind: 'critic' | 'beta' | 'chekhov'. Отчёт живёт в проекте, а не в памяти
+// вкладки — иначе F5 стирал результат платного разбора.
+export function saveReview(state, kind, report){
+  state.reviews = state.reviews || {};
+  const прежние = state.reviews[kind]?.done || [];
+  // Новый разбор — новые пункты; старые отметки «сделано» к ним не относятся
+  // и переносить их вслепую нельзя (индексы разъедутся, и автор увидит
+  // вычеркнутым то, чего не делал). Сбрасываем осознанно.
+  state.reviews[kind] = { report, at: Date.now(), done: [], prevDoneCount: прежние.length };
+  return state.reviews[kind];
+}
+export function getReview(state, kind){ return state.reviews?.[kind] || null; }
+// Ключ пункта — стабильная строка от вызывающего (секция+индекс), а не сам
+// текст: текст длинный, а хранить его копию в done[] значит дублировать отчёт.
+export function toggleReviewDone(state, kind, key){
+  const r = state.reviews?.[kind]; if(!r) return false;
+  r.done = r.done || [];
+  const i = r.done.indexOf(key);
+  if(i >= 0){ r.done.splice(i,1); return false; }
+  r.done.push(key); return true;
+}
+export function isReviewDone(state, kind, key){ return !!state.reviews?.[kind]?.done?.includes(key); }
+
 export function recordDriftFlag(state, { type, text, sceneId, sceneTitle, targetSceneId, targetSceneTitle }){
   const t = (text||'').trim(); if(!t) return;
   state.memory = state.memory || {};
@@ -837,6 +872,9 @@ export function migrate(s){
   s.ui = Object.assign({}, d.ui, s.ui);
   s.characters = s.characters || [];
   s.series = s.series || [];
+  // Разборы книги: у проектов, сохранённых до 1.59.0, поля нет вовсе.
+  s.reviews = Object.assign({ critic:null, beta:null, chekhov:null }, s.reviews || {});
+  ['critic','beta','chekhov'].forEach(k=>{ if(s.reviews[k] && !Array.isArray(s.reviews[k].done)) s.reviews[k].done = []; });
   // Старые сохранённые оценки сцен (scene.lastEval.scores) в проектах-долгожителях
   // используют ключ «fresh» вместо текущего «freshness» — RUBRIC_AXES читает
   // freshness, находит undefined и рисует шкалу «Свежесть образа» пустой,
