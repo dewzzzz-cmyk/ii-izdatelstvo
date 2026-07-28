@@ -168,6 +168,11 @@ function multiSelectToolbarHTML(prefix, count, rewriteLabel){
       <span id="${prefix}SelCount" class="muted" style="font-size:12px"></span>
       <button class="btn" id="${prefix}MultiFix" style="display:none" data-tip="Точечная правка сразу по всем выбранным замечаниям">→ Прозаику</button>
       <button class="btn" id="${prefix}MultiRewrite" style="display:none" data-tip="Переписать сцену с учётом всех выбранных замечаний">↺ ${rewriteLabel}</button>
+      ${/* Третье действие было доступно ТОЛЬКО поштучно, без причины: два
+           действия пакетные, а «В правило» — нет, хотя закрепить несколько
+           замечаний разом хочется чаще всего (все они про один и тот же
+           порок текста). Показывается там же, где остальные, — при выборе. */''}
+      <button class="btn" id="${prefix}MultiRule" style="display:none" data-tip="Закрепить выбранные замечания как постоянные правила автора — Прозаик впредь не будет это порождать">⊕ В правило</button>
     </div>`;
 }
 
@@ -192,14 +197,22 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
     const n=cbs.filter(c=>c.checked).length;
     const countEl=document.getElementById(prefix+'SelCount');
     const rwBtn=document.getElementById(prefix+'MultiRewrite');
+    const ruleBtn=document.getElementById(prefix+'MultiRule');
+    const bar=document.getElementById(prefix+'Toolbar');
     if(n>0){
       countEl.textContent=`${n} выбрано`;
       fixBtn.style.display=''; fixBtn.textContent=`→ Прозаику (${n})`;
       rwBtn.style.display=''; rwBtn.dataset.baseLabel = rwBtn.dataset.baseLabel || rwBtn.textContent;
       rwBtn.textContent=`${rwBtn.dataset.baseLabel} (${n})`;
+      if(ruleBtn){ ruleBtn.style.display=''; ruleBtn.textContent=`⊕ В правило (${n})`; }
     } else {
       countEl.textContent=''; fixBtn.style.display='none'; rwBtn.style.display='none';
+      if(ruleBtn) ruleBtn.style.display='none';
     }
+    // Панель липкая (см. .flags-toolbar в styles.css) и подсвечивается, когда
+    // в ней появились действия — иначе при прокрутке длинного списка она
+    // выглядит как обычный заголовок и её перестают замечать.
+    if(bar) bar.classList.toggle('has-sel', n>0);
     const selAll=document.getElementById(prefix+'SelAll');
     if(selAll){ selAll.checked=n===cbs.length && n>0; selAll.indeterminate=n>0&&n<cbs.length; }
   }
@@ -245,6 +258,29 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
     rwBtn.style.cssText='background:var(--accent);color:#fff;font-weight:600;border-color:var(--accent)';
     setTimeout(()=>{ if(rwBtn.dataset.confirmed==='1'){ delete rwBtn.dataset.confirmed; rwBtn.textContent=orig; rwBtn.style.cssText=''; } }, 3000);
   };
+
+  // Пакетное «В правило». Модалка правила показывается по одному замечанию за
+  // раз (у каждого своя формулировка, и слепое склеивание дало бы одно
+  // нечитаемое правило-простыню), но очередь идёт сама: сохранили — сразу
+  // открылось следующее. Отмена в модалке прерывает очередь целиком, а не
+  // перескакивает к следующему: молчаливое продолжение после «отмены» — это
+  // ровно то поведение, от которого автор и отказывается, нажимая отмену.
+  const ruleBtn=document.getElementById(prefix+'MultiRule');
+  if(ruleBtn) ruleBtn.onclick=()=>{
+    const тексты=[...document.querySelectorAll('.'+cbClass+':checked')].map(c=>c.dataset.fix).filter(Boolean);
+    if(!тексты.length) return;
+    let i=0;
+    const дальше=()=>{
+      if(i>=тексты.length){
+        ruleBtn.textContent=`✓ добавлено правил: ${тексты.length}`;
+        ruleBtn.disabled=true;
+        return;
+      }
+      const текущий=тексты[i++];
+      openRuleModal(текущий, { onSave: дальше });
+    };
+    дальше();
+  };
 }
 
 function renderFlags(scene){
@@ -266,10 +302,11 @@ function renderFlags(scene){
         <div class="flag-title">${esc(f.title)}</div>
         ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
         ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}
-        ${f.severity!=='ok'?`<div class="flag-acts">
-          <button class="flag-fix" data-fix="${esc(f.title+': '+(f.detail||''))}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
-          <button class="flag-rewrite" data-fix="${esc(f.title+': '+(f.detail||''))}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
-        </div>`:''}
+        ${/* Кнопки у КАЖДОГО флага убраны: рядом уже стоит галочка, а над
+             списком — липкая панель с теми же действиями. Три способа сделать
+             одно и то же давали 18 кнопок на экране при шести замечаниях;
+             теперь выбор — галочкой (клик по всей строке), действие — одно
+             место на всех. */''}
       </div>`).join('')}
     </div>`;
 }
@@ -364,11 +401,7 @@ function renderEvalDetails(v){
   const nt = notes.length ? `<div class="ares-h">Как улучшить оценку</div>${multiSelectToolbarHTML('note', notes.length, 'Переписать с учётом выбранных')}${notes.map(n=>`<div class="ares-note ares-selectable">
     <label class="ares-cb-wrap"><input type="checkbox" class="note-cb" data-fix="${esc(n)}"></label>
     <span>${esc(n)}</span>
-    <div class="ares-acts">
-      <button class="flag-fix" data-fix="${esc(n)}" data-tip="Точечная правка: Прозаик меняет только нужные фразы, остальное сохраняет">→ Прозаику</button>
-      <button class="flag-rewrite" data-fix="${esc(n)}" data-tip="Полная перезапись сцены с учётом этого замечания">↺ Переписать</button>
-      <button class="ares-rule" data-rule="${esc(n)}" data-tip="Сделать постоянным правилом автора">⊕ В правило</button>
-    </div></div>`).join('')}` : '';
+</div>`).join('')}` : '';
   const cl = (v.cliches||[]).length ? `<div class="ares-h">Клише в тексте${v.clicheCategory?` — ${esc(v.clicheCategory)}`:''}</div>${v.cliches.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}` : '';
   const rp = (v.repetition||[]).length ? `<div class="ares-h">Повтор имени вместо местоимения</div>${v.repetition.map(c=>`<div class="ares-cl">«${esc(c)}»</div>`).join('')}` : '';
   const q = (v.questions||[]).length ? `<div class="ares-h">На усмотрение автора</div>${v.questions.map(qq=>`<div class="ares-note"><span>${esc(qq)}</span></div>`).join('')}` : '';
