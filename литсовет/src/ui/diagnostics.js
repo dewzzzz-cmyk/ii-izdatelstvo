@@ -738,6 +738,12 @@ function renderStep(st){
 }
 
 function renderScores(v){
+  // Отсутствие ОТДЕЛЬНОЙ оси код ниже уже переживал, а отсутствие всего
+  // объекта scores — нет: `v.scores[a.key]` бросал TypeError и ронял отрисовку
+  // всей правой панели (renderSceneAnalysis → renderRightPanel → renderWrite).
+  // Вердикт без scores — не выдумка: так выглядит запись из старого проекта,
+  // состояние, поправленное руками, и вердикт, разобранный лишь частично.
+  const scores = v.scores || {};
   return `<div class="score-bars">
     ${RUBRIC_AXES.map(a=>{
       // scene.lastEval сохраняется в проекте надолго — если ось добавили/переименовали

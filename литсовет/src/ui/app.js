@@ -307,9 +307,14 @@ async function openSettings(){
         <div style="margin-top:6px">${keyRow('setIcKey', s.illustrations?.apiKey||'', 'Ключ провайдера картинок')}</div>
 
         <div class="settings-section">Мои книги</div>
+        ${/* «+ Новая книга» стоит НАД списком, а не под ним. Раньше кнопка
+             жила в самом низу настроек — на 1332-м пикселе, ниже провайдеров,
+             ключей, настроек картинок и всего перечня книг: чтобы завести
+             вторую книгу, автор должен был долистать туда, не зная, что там
+             что-то есть. Заводить книгу — первое, что делают на этом экране. */''}
+        <button class="btn btn-primary" id="setNew" style="margin-bottom:10px">+ Новая книга</button>
         ${projListHtml || '<div class="hint">Пока только этот проект.</div>'}
-        <div class="row" style="justify-content:space-between;margin-top:16px">
-          <button class="btn" id="setNew">+ Новый проект</button>
+        <div class="row" style="justify-content:flex-end;margin-top:16px">
           <div class="row">
             <button class="btn" id="setExport">Экспорт .json</button>
             <button class="btn btn-primary" id="setSave">Готово</button>

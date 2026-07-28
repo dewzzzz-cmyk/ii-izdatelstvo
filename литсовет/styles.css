@@ -313,7 +313,11 @@ textarea{resize:vertical;min-height:60px}
 .score-row{display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px}
 .score-row .sl{min-width:120px;color:var(--text-2)}
 .score-bar{flex:1;height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden;border:1px solid var(--border)}
-.score-fill{height:100%}
+/* display:block обязателен: .score-fill — <span>, а инлайновый элемент
+   игнорирует width/height. Ширина 50%, высота 100% и цвет задавались верно,
+   но коробка выходила нулевой высоты — шкалы Оценщика не были окрашены
+   никогда, ни в одной теме. Видно только глазами: в DOM все стили на месте. */
+.score-fill{display:block;height:100%}
 .score-val{min-width:24px;text-align:right;font-weight:500}
 .verdict{display:inline-block;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:500;margin-top:4px}
 .verdict.pass{background:var(--ok-bg);color:var(--ok)}
