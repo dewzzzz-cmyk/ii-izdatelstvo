@@ -291,7 +291,11 @@ export async function runScene(state, scene, opts={}, onProgress){
           if(p.debate) logStep({ agent:'prose-debate', iter, input:directive, output:p.debate, tokensIn:0, tokensOut:0, cost:0 });
           if(p.rejected && p.rejected.length){
             rememberRejected(scene, p.rejected);
-            onProgress && onProgress({log:{icon:'🖋', text:`Прозаик мотивированно отклонил ${p.rejected.length} замеч. (${p.rejected.map(r=>'«'+r.quote.slice(0,40)+'»').join(', ')}) — больше не будут подсвечиваться`}});
+            // «больше не будут подсвечиваться» было неправдой: отказ — это ЗАЯВКА
+            // Прозаика, а решение принимает фильтр ниже, и он оставляет
+            // критические и уже эскалированные находки. Сколько реально скрыто —
+            // говорит отдельная строка «Скрыто N замеч.».
+            onProgress && onProgress({log:{icon:'🖋', text:`Прозаик мотивированно отклонил ${p.rejected.length} замеч. (${p.rejected.map(r=>'«'+r.quote.slice(0,40)+'»').join(', ')}) — критические и эскалированные из них останутся видимыми`}});
           }
         };
         applyDebateSideEffects(parsed);
@@ -666,6 +670,16 @@ export async function runScene(state, scene, opts={}, onProgress){
             const before = (flags[role]||[]).length;
             flags[role] = (flags[role]||[]).filter(f=>{
               if(f.severity==='ok') return true;
+              // Критическое замечание не глушится отказом — от ЛЮБОГО стража, не
+              // только фактического. Живой прогон: единственной критической
+              // находкой была «Читатель: Герой полностью пассивен — за всю сцену
+              // не принимает ни одного самостоятельного решения», и Прозаик
+              // погасил её своим же отказом на первой итерации, вместе с 11
+              // другими, одним ходом. Исключение ниже её не спасало: «Читатель»
+              // не фактический страж. Получалось, что самый сильный сигнал
+              // системы отменяет тот, кого он критикует. Отказ по-прежнему
+              // возможен для warning — там цена ошибки несопоставима.
+              if(f.severity==='critical') return true;
               const alreadyEscalated = isFactualGuard(state, role)
                 && factualWarningTracker.some(t => t.count>=FACTUAL_ESCALATE_ITERS && noteSimilarity(f.title, t.title) >= REJECT_SIM_THRESHOLD);
               return alreadyEscalated || !isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes);

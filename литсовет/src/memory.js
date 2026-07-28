@@ -143,11 +143,20 @@ export async function summarizeScene(state, scene){
   // на самых первых сценах книги (там ещё нет структуры выше — вводить
   // героев с нуля нормально), только когда план уже существует.
   const hasStructure = (state.structure||[]).some(n=>n.type==='chapter');
+  // Одного скелета мало: он есть ВСЕГДА к моменту первой сцены, поэтому условие
+  // `hasStructure` никогда не выполняло замысел из комментария выше — у первой
+  // сцены state.characters пуст, и главный герой любой книги гарантированно
+  // получал ярлык «введён мимо канона». Живой случай: «Сцена ввела персонажа
+  // "Даня", которого раньше не было в каноне» — про заглавного героя. Такие
+  // ложные срабатывания учат автора не читать предупреждения вообще.
+  // Настоящий признак «состав книги уже сложился» — что персонажи В ПРИНЦИПЕ
+  // уже заведены: отклоняться можно только от того, что есть.
+  const hadCast = (state.characters||[]).length > 0;
   parsed.characters.forEach(c=>{
     const existedBefore = (state.characters||[]).some(x=>charNamesMatch(x.name, c.name));
     const ch = findOrCreateCharacter(state, c.name);
     ch.stateNote = c.state || ch.stateNote;
-    if(!existedBefore && hasStructure){
+    if(!existedBefore && hasStructure && hadCast){
       recordDriftFlag(state, {
         type:'newCharacter',
         text:`Сцена ввела персонажа «${c.name}», которого раньше не было в каноне книги.`,
