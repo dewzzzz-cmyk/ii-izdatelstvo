@@ -2860,6 +2860,25 @@ function approvalGate({role, label, output, draft, editable, verdict, guardFlags
   });
 }
 
+// Кнопка «Стоп» размечена в центральной колонке (renderWrite, блок .run-row),
+// но doRun во время прогона перерисовывает ТОЛЬКО правую панель — перерисовать
+// центр нельзя, там в #editor идёт стриминг прозы. Из-за этого условие
+// `${_busy ? …}` в разметке никогда не срабатывало в том же прогоне, и вся
+// отмена (1.53.0) была недоступна из интерфейса: requestCancel() работал, а
+// нажать было нечего. Живой прогон это подтвердил: кнопки не было в DOM, пока
+// пайплайн честно крутил три итерации. Вставляем и убираем точечно.
+function mountStopButton(){
+  const row = document.querySelector('.run-row');
+  if(!row || document.getElementById('stopRun')) return;
+  const b = document.createElement('button');
+  b.className = 'btn'; b.id = 'stopRun';
+  b.dataset.tip = 'Остановить после текущего вызова. Он уже оплачен и доработает, следующего не будет. Лучший из написанных черновиков сохранится — ничего не потеряется.';
+  b.textContent = '🛑 Стоп';
+  b.onclick = ()=>{ requestCancel(); b.textContent = '⏳ Останавливаюсь…'; b.disabled = true; };
+  row.insertBefore(b, document.getElementById('regenSettings'));
+}
+function unmountStopButton(){ document.getElementById('stopRun')?.remove(); }
+
 async function doRun(els, s, scene, directive, runFlags={}){
   const g=s.global;
   if(_busy) return;
@@ -2875,6 +2894,7 @@ async function doRun(els, s, scene, directive, runFlags={}){
   _busy = true; _autoError = '';   // новая попытка — старое сообщение об остановке автопилота больше не актуально
   _runLog = []; _runCurrent = 'Запуск…'; _topTab = 'process';   // показываем «Процесс» во время прогона
   renderRightPanel(els);
+  mountStopButton();
   document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='0.5');
   scene.brief=document.getElementById('brief').value.trim();
   const wasDone = scene.status==='done' && !!scene.text;
@@ -2944,6 +2964,7 @@ async function doRun(els, s, scene, directive, runFlags={}){
   }
   finally{
     btn.disabled=false; _busy=false; _runCurrent='';
+    unmountStopButton();
     document.querySelectorAll('.scene-row').forEach(r=>r.style.opacity='');
     // После прогона возвращаемся на Анализ сцены — пользователь видит новые флаги
     _topTab = 'analysis';

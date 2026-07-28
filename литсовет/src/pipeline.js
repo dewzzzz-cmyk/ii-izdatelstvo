@@ -1150,7 +1150,13 @@ export async function runScene(state, scene, opts={}, onProgress){
           // абсолютная длина ответа кажется достаточной.
           if(leRes.text && leRes.text.length > best.length*0.5 && !looksTokenTruncated(leRes.text)){
             logStep({ agent:'lineedit', input:'(черновик)'+(leNote?' + заметка автора: '+leNote:''), output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
-            onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
+            // Раньше здесь безусловно печаталось «текст подчищен» — ДО всех
+            // проверок ниже и до приёмки. Живой прогон: редактор вернул текст
+            // байт в байт совпадающий с черновиком, а автор прочёл «подчищен»
+            // и был уверен, что правка была. Хуже того, если проверка ниже
+            // отклоняла правку, лог показывал «подчищен» и следом «правка
+            // отклонена» — два противоречащих сообщения об одном шаге. Теперь
+            // об итоге сообщаем в точке приёмки, где он уже известен.
             // Запрет на укорачивание уже короткой сцены — ЗАПРЕТ, а не просьба.
             // В 1.44.0 я дал Линейному редактору targetWords и строку «итог по
             // объёму — не меньше», и на живом прогоне он её просто
@@ -1203,6 +1209,15 @@ export async function runScene(state, scene, opts={}, onProgress){
               if(leLostAnchors.length){
                 onProgress && onProgress({log:{icon:'📌', text:`Линейный редактор потерял закреплённый якорь («${leLostAnchors[0].slice(0,60)}»${leLostAnchors.length>1?` +${leLostAnchors.length-1}`:''}) — правка отклонена, текст остаётся как до Линейного редактора`, state:'warn'}});
                 break;
+              }
+              // Итог шага — по факту, а не по намерению. Живой прогон: редактор
+              // вернул текст, совпадающий с черновиком байт в байт, и «подчищен»
+              // было прямым враньём.
+              if(candidate.trim() === beforeLineEdit.trim()){
+                onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: изменений не потребовалось — текст остался прежним'}});
+              } else {
+                const сл1 = (beforeLineEdit.match(/\S+/g)||[]).length, сл2 = (candidate.match(/\S+/g)||[]).length;
+                onProgress && onProgress({log:{icon:'✂️', text:`Линейный редактор: текст подчищен (${сл1}→${сл2} сл.)`}});
               }
               best = candidate; break;
             }
