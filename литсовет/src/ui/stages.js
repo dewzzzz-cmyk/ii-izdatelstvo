@@ -67,9 +67,19 @@ document.addEventListener('litsovet:flag-fix', e => {
   if(_activeFlagFix) _activeFlagFix(e.detail.directive, e.detail.rewrite||false);
 });
 
-function sceneCountHint(tw){
+// Подсказка под «Целевой объём» ОБЯЗАНА считать так же, как architect-book.js,
+// иначе она врёт. Живой случай: автор поставил «Объём сцены = 750», жанр
+// подставил 70 000 слов, подсказка показала «≈ 60 сцен × 1167 слов» (своя
+// формула, поле «Объём сцены» она игнорировала), а Архитектор получил задание
+// на 70000/750 = 93 сцены — и первая же попытка не прошла валидацию, потому
+// что такой скелет не влезает в ответ. Автор при этом видел «60 сцен».
+// Формула ниже дословно повторяет architect-book.js: сначала авторский
+// sceneWords (вилка 300-4000), иначе автоформула w/60 (вилка 700-2000).
+function sceneCountHint(tw, sceneWords){
   const w = parseInt(tw)||80000;
-  const wps = Math.max(700, Math.min(2000, Math.round(w/60)));
+  const sw = parseInt(sceneWords)||0;
+  const wps = sw>0 ? Math.max(300, Math.min(4000, sw))
+                   : Math.max(700, Math.min(2000, Math.round(w/60)));
   const scenes = Math.max(6, Math.round(w/wps));
   return `≈ ${scenes} сцен × ${wps} слов`;
 }
@@ -287,7 +297,7 @@ export function renderConcept(els){
         </div>
         <div class="field"><label>Целевой объём (слов)</label>
           <input type="text" id="tw" value="${esc(p.targetWords||80000)}">
-          <div class="hint" id="twHint">${sceneCountHint(p.targetWords||80000)}</div>
+          <div class="hint" id="twHint">${sceneCountHint(p.targetWords||80000, p.sceneWords)}</div>
         </div>
         <div class="field"><label>Объём сцены (слов) <span class="hint">пусто/0 = авто (≈${Math.round((p.targetWords||80000)/60)}/60 слов, зажато 700–2000)</span></label>
           <input type="text" id="sceneWords" value="${p.sceneWords||''}" placeholder="авто"></div>
@@ -402,7 +412,7 @@ export function renderConcept(els){
   // значение «авто», поэтому нижняя граница у них 0, а не 1.
   bind('tw', e=>{
     p.targetWords=Math.max(1, parseInt(e.target.value)||80000);
-    const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(p.targetWords);
+    const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(p.targetWords, p.sceneWords);
   });
   bind('sceneWords', e=>{ p.sceneWords=Math.max(0, parseInt(e.target.value)||0); });
   bind('chapterCount', e=>{ p.chapterCount=Math.max(0, parseInt(e.target.value)||0); });
@@ -421,7 +431,7 @@ export function renderConcept(els){
       } else {
         genreCustom.style.display='none';
         p.genre = v;
-        if(gd && gd.words){ p.targetWords=gd.words; const tw=document.getElementById('tw'); if(tw) tw.value=gd.words; const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(gd.words); }
+        if(gd && gd.words){ p.targetWords=gd.words; const tw=document.getElementById('tw'); if(tw) tw.value=gd.words; const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(gd.words, p.sceneWords); }
         save();
       }
     };
