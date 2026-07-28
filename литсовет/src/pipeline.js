@@ -1036,6 +1036,24 @@ export async function runScene(state, scene, opts={}, onProgress){
           if(leRes.text && leRes.text.length > best.length*0.5 && !looksTokenTruncated(leRes.text)){
             logStep({ agent:'lineedit', input:'(черновик)'+(leNote?' + заметка автора: '+leNote:''), output:leRes.text, tokensIn:leRes.tokensIn, tokensOut:leRes.tokensOut, cost:leRes.cost });
             onProgress && onProgress({log:{icon:'✂️', text:'Линейный редактор: текст подчищен'}});
+            // Запрет на укорачивание уже короткой сцены — ЗАПРЕТ, а не просьба.
+            // В 1.44.0 я дал Линейному редактору targetWords и строку «итог по
+            // объёму — не меньше», и на живом прогоне он её просто
+            // проигнорировал: цикл прозы поднял сцену 560→613→672 (90% цели),
+            // а последний шаг срезал до 580 (77%). Текстовая инструкция здесь
+            // не работает, потому что «убрать лишнее» — прямая задача этого
+            // агента. Приёмка ниже проверяла только `length > best.length*0.5`,
+            // то есть 14% потери проходили свободно. Логика та же, что у
+            // потерянных якорей строкой ниже: правку не уговариваем, а
+            // отклоняем, оставляя текст до неё. 2% допуска — на замену
+            // многословных оборотов, ради которой Линейный редактор и нужен.
+            const beforeWords = (best.match(/\S+/g)||[]).length;
+            const afterWords = (leRes.text.match(/\S+/g)||[]).length;
+            const belowTarget = !!(scene.targetWords && beforeWords < scene.targetWords*0.95);
+            if(belowTarget && afterWords < beforeWords*0.98){
+              onProgress && onProgress({log:{icon:'📏', text:`Линейный редактор срезал ${beforeWords-afterWords} сл. (${beforeWords}→${afterWords}) на сцене, которая и так короче цели (${scene.targetWords}) — правка отклонена, текст остаётся как до неё`, state:'warn'}});
+              break;
+            }
             const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
             if(gt.approve){
               const candidate = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text;
