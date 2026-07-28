@@ -1031,7 +1031,7 @@ export async function runStructureEval(state, skeleton, prevEval){
   // 3000→3600: +20% по запросу автора (общий проход по всем лимитам токенов).
   let j = null, lastErr = '';
   for(let attempt=0; attempt<=(state.global.retries??2); attempt++){
-    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.2, messages:msgs, maxTokens:3600 });
+    const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.2, messages:msgs, maxTokens:7200 });
     assertNotTruncated(res, 'Книжный архитектор');
     j = extractJSON(res.text);
     if(j && typeof j.score === 'number') break;

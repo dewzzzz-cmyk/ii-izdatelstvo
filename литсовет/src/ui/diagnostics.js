@@ -560,7 +560,11 @@ function renderPipelineFlow(agents){
 
   return `<div class="pf-flow">${arch?nd(arch)+arr:''}${loopGroup}${guardsGroup}${leNode}</div>`;
 }
-const AGENT_FILTER_CATS = ['Все','Основные','Стражи','Мои'];
+// «Вне цикла» — роли, которые работают не со сценой, а с книгой, миром и
+// иллюстрациями (Критик, Мироустроитель, Историк, Арт-директор). До 1.61.0
+// их в этом списке не было вовсе: лимиты и модель были захардкожены, и автор
+// даже не видел, что эти агенты существуют.
+const AGENT_FILTER_CATS = ['Все','Основные','Стражи','Вне цикла','Мои'];
 const CORE_ROLES = new Set(['architect','prose','evaluator','lineedit']);
 const GUARD_ROLES = new Set(['voiceguard','logic','events','styleguard','reader','imagery','pov','dialogue','resolution','atmosphere','humor']);
 let _agentFilter = 'Все';
@@ -569,6 +573,7 @@ function agentMatchesFilter(a, filter){
   if(filter==='Все') return true;
   if(filter==='Основные') return CORE_ROLES.has(a.role);
   if(filter==='Стражи')   return GUARD_ROLES.has(a.role);
+  if(filter==='Вне цикла') return !!a.offPipeline;
   if(filter==='Мои')      return !!a.custom;
   return true;
 }
@@ -605,8 +610,8 @@ export function renderAgentPipeline(){
         <span class="ag-grip" title="перетащить">⋮⋮</span>
         <span style="font-size:15px">${a.icon}</span>
         <span class="at-name">${esc(a.name)} ${badges}<span class="at-temp">${_openAgents.has(a.id)?'▾':'⚙'}</span></span>
-        ${(a.role!=='prose' && a.role!=='bookArchitect')?`<button class="ag-run" data-runid="${a.id}" data-tip="Запустить «${esc(a.name)}» вручную на текущей сцене и получить разбор: замечания и предложения правок. Текст не меняется (кроме применения правки Линейного редактора).">▶</button>`:''}
-        <div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}" data-id="${a.id}"></div>
+        ${(a.role!=='prose' && a.role!=='bookArchitect' && !a.offPipeline)?`<button class="ag-run" data-runid="${a.id}" data-tip="Запустить «${esc(a.name)}» вручную на текущей сцене и получить разбор: замечания и предложения правок. Текст не меняется (кроме применения правки Линейного редактора).">▶</button>`:''}
+        ${a.offPipeline?`<span class="muted" style="font-size:10px;white-space:nowrap" title="Запускается кнопкой на своей вкладке, а не циклом сцены — включать/выключать нечего">вне цикла</span>`:`<div class="toggle ${a.enabled!==false?'on':''}" data-role="${a.role}" data-id="${a.id}"></div>`}
       </div>
       ${_openAgents.has(a.id)?renderAgentParams(a, s.global):''}`;
   }).join('');
@@ -683,12 +688,12 @@ function bindAgents(){
   // списке (11+ стражей), когда автору нужно временно отключить их все разом.
   document.getElementById('agentEnableAll')?.addEventListener('click', ()=>{
     const s=getState();
-    (s.agents||[]).filter(a=>agentMatchesFilter(a,_agentFilter)).forEach(a=>{ a.enabled=true; });
+    (s.agents||[]).filter(a=>agentMatchesFilter(a,_agentFilter)).filter(a=>!a.offPipeline).forEach(a=>{ a.enabled=true; });
     save();
   });
   document.getElementById('agentDisableAll')?.addEventListener('click', ()=>{
     const s=getState();
-    (s.agents||[]).filter(a=>agentMatchesFilter(a,_agentFilter)).forEach(a=>{ a.enabled=false; });
+    (s.agents||[]).filter(a=>agentMatchesFilter(a,_agentFilter)).filter(a=>!a.offPipeline).forEach(a=>{ a.enabled=false; });
     save();
   });
   // тумблер вкл/выкл — теперь привязан один раз в bindToggles() (см. выше)

@@ -3,6 +3,7 @@
 // для добавления в канон перед написанием.
 
 import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
+import { ag, llmFor } from './state.js';
 
 // Живой тест (3 прогона на реальном проекте) показал 73% промах запросов
 // мимо Википедии, вплоть до полного провала прогона (0/9 статей): на
@@ -48,7 +49,7 @@ export async function generateSearchQueries(state, opts = {}) {
       'Верни JSON: { "queries": ["запрос1", …] }. Только JSON.',
     ].filter(Boolean).join('\n') },
   ];
-  const res = await callLLM({ baseURL: g.baseURL, apiKey: g.apiKey, model: g.model, temperature: strict ? 0.2 : 0.4, messages: msgs, maxTokens: 480, retries: g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'historian')), temperature: ag(state,'historian').temp ?? strict ? 0.2 : 0.4, messages: msgs, maxTokens: ag(state,'historian').maxTokens ?? 960 });
   assertNotTruncated(res, 'Историк');
   const j = extractJSON(res.text);
   const queries = (j && Array.isArray(j.queries)) ? j.queries.slice(0, strict ? 5 : 9) : [];
@@ -99,7 +100,7 @@ export async function synthesizeFacts(summaries, state) {
       'Верни JSON: { "facts": [ { "keys": "…", "text": "…", "plotHook": "…" } ] }. Только JSON.',
     ].filter(Boolean).join('\n') },
   ];
-  const res = await callLLM({ baseURL: g.baseURL, apiKey: g.apiKey, model: g.model, temperature: 0.4, messages: msgs, maxTokens: 3000, retries: g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'historian')), temperature: ag(state,'historian').temp ?? 0.4, messages: msgs, maxTokens: ag(state,'historian').maxTokens ?? 6000 });
   assertNotTruncated(res, 'Историк');
   const j = extractJSON(res.text);
   return (j && Array.isArray(j.facts)) ? j.facts.filter(f => f.keys && f.text) : [];

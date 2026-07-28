@@ -11,6 +11,7 @@ import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { bookOverview, doneScenesOrdered } from './bookreview.js';
 import { generateImage } from './imagegen.js';
 import { ART_STYLES } from './artStyles.js';
+import { ag, llmFor } from './state.js';
 
 // ── 1) Кандидаты на иллюстрации (текстовый LLM) ──
 // Обложке не нужны готовые сцены (промпт для неё строится только из
@@ -50,7 +51,7 @@ export async function suggestIllustrations(state){
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const scenes = doneScenesOrdered(state);
   const msgs = illustrationSuggestMessages(state);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:1800, retries:g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'artdirector')), temperature: ag(state,'artdirector').temp ?? 0.6, messages: msgs, maxTokens: ag(state,'artdirector').maxTokens ?? 3600 });
   assertNotTruncated(res, 'Арт-директор');
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.candidates) ? j.candidates : null;
@@ -210,7 +211,7 @@ export async function suggestOneIllustration(state, target){
   const g = state.global;
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const msgs = singleTargetMessages(state, target);
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:600, retries:g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'artdirector')), temperature: ag(state,'artdirector').temp ?? 0.6, messages: msgs, maxTokens: ag(state,'artdirector').maxTokens ?? 1200 });
   assertNotTruncated(res, 'Арт-директор');
   const j = extractJSON(res.text);
   if(!j || !j.prompt) throw new Error('Не удалось разобрать ответ арт-директора.');

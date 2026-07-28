@@ -101,7 +101,7 @@ export async function askSceneQuestion(state, scene, question){
   if(!draft) throw new Error('Сначала напишите текст сцены — вопрос задавать не к чему.');
   if(!question || !question.trim()) throw new Error('Пустой вопрос.');
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
-  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:840 });
+  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:1680 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 

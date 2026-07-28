@@ -8,6 +8,7 @@ import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { generateImage, analyzeImage } from './imagegen.js';
 import { tokensOf, tfvec, cosine, bibleForPrompt } from './bible.js';
 import { estimateTokens } from './tokens.js';
+import { ag, llmFor } from './state.js';
 
 // Жанры с придуманным сеттингом — добавляют категорию магии/технологии/системы
 // (см. categoriesFor ниже). Стадия «Мир» видна всегда (как «Иллюстрации»),
@@ -153,7 +154,7 @@ export async function suggestWorldFacts(state, category, opts={}){
   // вместо 3-6, см. промпт выше), иначе JSON обрывался бы ровно на том, что мы
   // только что попросили добавить — тот же класс проблемы, что весь день
   // чинили у Прозаика и Стражей.
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.8, messages:msgs, maxTokens:2400, retries:g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'worldbuilder')), temperature: ag(state,'worldbuilder').temp ?? 0.8, messages: msgs, maxTokens: ag(state,'worldbuilder').maxTokens ?? 4800 });
   assertNotTruncated(res, 'Мир');
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.facts) ? j.facts : null;
@@ -282,7 +283,7 @@ export async function runWorldOverview(state, category=null, opts={}){
   // клик по кнопке с полной ценой прогона.
   let j = null, lastErr = '';
   for(let attempt=0; attempt<=1 && !j; attempt++){
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:msgs, maxTokens:2640, retries:g.retries });
+    const res = await callLLM({ ...llmFor(state, ag(state,'worldbuilder')), temperature: ag(state,'worldbuilder').temp ?? 0.3, messages: msgs, maxTokens: ag(state,'worldbuilder').maxTokens ?? 5280 });
     assertNotTruncated(res, 'Мир');
     const parsed = extractJSON(res.text);
     if(parsed && typeof parsed.depth === 'number') j = parsed;
@@ -339,7 +340,7 @@ export async function proposeConflictFix(state, item){
     '',
     `Верни JSON: { "facts": [ { "action": "keep|edit|delete", "text": "новый текст (только для edit)" }, ... ] } — ровно ${item.facts.length} элемент(а/ов), в том же порядке, что и факты выше. Только JSON.`,
   ].join('\n');
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:1080, retries:g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'worldbuilder')), temperature: ag(state,'worldbuilder').temp ?? 0.3, messages: [{role:'system',content:sys},{role:'user',content:user}], maxTokens: ag(state,'worldbuilder').maxTokens ?? 2160 });
   assertNotTruncated(res, 'Мир');
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.facts) ? j.facts : null;
@@ -374,7 +375,7 @@ export async function proposeMergeFix(state, item){
     '',
     'Верни JSON: { "keys": "2-4 ключевых слова через запятую", "text": "объединённый факт, 1-3 предложения" }. Только JSON.',
   ].join('\n');
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:600, retries:g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'worldbuilder')), temperature: ag(state,'worldbuilder').temp ?? 0.3, messages: [{role:'system',content:sys},{role:'user',content:user}], maxTokens: ag(state,'worldbuilder').maxTokens ?? 1200 });
   assertNotTruncated(res, 'Мир');
   const j = extractJSON(res.text);
   const text = j && String(j.text||'').trim();
@@ -438,7 +439,7 @@ export async function rerollWorldFact(state, fact){
     '',
     'Верни только новый текст факта, одно-два предложения, без пояснений и без кавычек.',
   ].join('\n');
-  const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.9, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens:360, retries:g.retries });
+  const res = await callLLM({ ...llmFor(state, ag(state,'worldbuilder')), temperature: ag(state,'worldbuilder').temp ?? 0.9, messages: [{role:'system',content:sys},{role:'user',content:user}], maxTokens: ag(state,'worldbuilder').maxTokens ?? 720 });
   assertNotTruncated(res, 'Мир');
   const text = res.text.trim().replace(/^["«]+|["»]+$/g,'');
   if(!text) throw new Error('Пустой ответ.');
@@ -697,7 +698,7 @@ export async function suggestMissingWorldFacts(state, skeleton){
     const msgs = missingFactsMessages(state, skeleton);
     // 960 → 2400 вместе с ростом числа фактов (5 → 12, см. промпт): иначе
     // JSON обрывался бы ровно на добавленных пунктах.
-    const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.4, messages:msgs, maxTokens:2400, retries:g.retries });
+    const res = await callLLM({ ...llmFor(state, ag(state,'worldbuilder')), temperature: ag(state,'worldbuilder').temp ?? 0.4, messages: msgs, maxTokens: ag(state,'worldbuilder').maxTokens ?? 4800 });
     assertNotTruncated(res, 'Мир');
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.facts) ? j.facts : [];

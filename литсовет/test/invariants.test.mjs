@@ -525,3 +525,46 @@ test('миграция: у старого проекта появляется re
   const после2 = migrate(JSON.parse(JSON.stringify(сОтчётом)));
   assert.equal(после2.reviews.critic.report.overall, 'ок', 'существующий отчёт не должен затираться миграцией');
 });
+
+// ───────────── роли вне цикла сцены ─────────────
+// Критик, Мироустроитель, Историк, Арт-директор — 16 вызовов LLM с намертво
+// зашитыми лимитами и моделью. Автор не мог ни поднять потолок, ни выбрать
+// модель, ни даже увидеть, что эти агенты существуют.
+test('дефолты: роли вне цикла заведены и помечены offPipeline', async () => {
+  const { defaultState } = await import('../src/state.js');
+  const d = defaultState();
+  for(const роль of ['critic','worldbuilder','historian','artdirector']){
+    const a = d.agents.find(x=>x.role===роль);
+    assert.ok(a, `агент ${роль} должен быть в списке — иначе его лимит и модель снова недоступны`);
+    assert.equal(a.offPipeline, true, `${роль}: без offPipeline UI покажет тумблер «включён», который ни на что не влияет`);
+    assert.ok(a.maxTokens > 0, `${роль}: лимит должен быть задан, иначе слайдер нечего показывать`);
+    assert.ok(a.desc, `${роль}: без описания автор не поймёт, откуда этот агент запускается`);
+  }
+});
+
+test('роли вне цикла не попадают в пайплайн сцены', async () => {
+  const { defaultState } = await import('../src/state.js');
+  const d = defaultState();
+  const внеЦикла = d.agents.filter(a=>a.offPipeline).map(a=>a.role);
+  // Пайплайн перебирает роли явными списками; ни одна из новых там быть не должна,
+  // иначе прогон сцены начнёт дёргать Критика книги на каждой итерации.
+  const fs = await import('node:fs');
+  const pipeline = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  внеЦикла.forEach(r=>{
+    assert.ok(!new RegExp(`agentEnabled\('${r}'\)`).test(pipeline),
+      `${r} не должен вызываться из цикла сцены`);
+  });
+});
+
+test('модули вне цикла читают лимит и модель из настроек агента', async () => {
+  const fs = await import('node:fs');
+  const пары = { 'bookreview':'critic', 'world':'worldbuilder', 'historian':'historian', 'illustrations':'artdirector' };
+  for(const [файл, роль] of Object.entries(пары)){
+    const src = fs.readFileSync(new URL('../src/' + файл + '.js', import.meta.url), 'utf8');
+    assert.ok(src.includes("llmFor(state, ag(state,'" + роль + "'))"),
+      файл + '.js: модель должна браться из агента, а не из g.model');
+    assert.ok(src.includes("ag(state,'" + роль + "').maxTokens"),
+      файл + '.js: лимит должен браться из агента, иначе слайдер ни на что не влияет');
+    assert.ok(!/model:\s*g\.model/.test(src), файл + '.js: остался захардкоженный g.model');
+  }
+});

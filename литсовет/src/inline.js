@@ -40,7 +40,7 @@ export async function transformSelection(state, action, selected, before, after)
   const res = await callLLM({
     ...llm,
     temperature: prose.temp ?? 0.8, messages:[{role:'system',content:sys},{role:'user',content:user}],
-    maxTokens: 840,
+    maxTokens:1680,
   });
   // Инлайн-правка возвращает ЧИСТЫЙ текст, не JSON — обрыв здесь не даёт
   // пустоты, а вставляет в книгу оборванную на полуслове фразу.
