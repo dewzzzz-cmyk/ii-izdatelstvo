@@ -646,3 +646,40 @@ test('прайс: модель без цены попадает в spend.unprice
   assert.ok(/spend\.unpriced/.test(app) && app.includes("'≈'"),
     'шапка обязана помечать сумму как нижнюю оценку, когда прайс известен не для всех моделей');
 });
+
+// Класс дефекта, который этот проект ловит регулярно: защита стоит в одном
+// пути и отсутствует в соседних. Текст модели становится текстом книги в двух
+// местах — пайплайн сцены и точечная правка; проверка обязана быть в обоих.
+test('инородная письменность: проверка стоит и в пайплайне, и в точечной правке', async () => {
+  const fs = await import('node:fs');
+  const pipeline = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  const ondemand = fs.readFileSync(new URL('../src/ondemand.js', import.meta.url), 'utf8');
+  assert.ok(pipeline.includes('findForeignScript'), 'pipeline.js: нет проверки алфавита');
+  assert.ok(ondemand.includes('findForeignScript'), 'ondemand.js: patchScene пишет текст в сцену без проверки алфавита');
+});
+
+test('инородная письменность: находка критическая и подписана в логе стражей', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  assert.ok(/flags\.script\s*=\s*чужойАлфавит\.map/.test(src), 'флаг должен называться script — по нему UI и директива его находят');
+  assert.ok(/severity:\s*'critical'[\s\S]{0,120}Инородная письменность/.test(src),
+    'находка обязана быть critical: warning Прозаик вправе проигнорировать, а иероглиф в тексте — не предмет вкуса');
+  assert.ok(src.includes("script:'Инородная письменность'"),
+    'без записи в GUARD_LABELS находка уйдёт Прозаику как «[script]» вместо человеческого названия');
+});
+
+test('инородная письменность: готовая сцена перепроверяется отдельно', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  const хвост = src.slice(src.indexOf('state.usedCliches = ['));
+  assert.ok(хвост.includes('findForeignScript(best)'),
+    'итоговый текст обязан проверяться заново: Прозаик может не исправить находку за отведённые итерации, и тогда сцена уходит в книгу молча — ровно это и было в живом прогоне');
+});
+
+test('инородная письменность: точечная правка не запирает уже испорченную сцену', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/ondemand.js', import.meta.url), 'utf8');
+  const тело = src.slice(src.indexOf('export async function patchScene'));
+  assert.ok(тело.includes('findForeignScript(draft)'),
+    'сравнивать надо с исходником: иначе сцену с иероглифом нельзя починить как раз той правкой, которая для этого нужна');
+});

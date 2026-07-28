@@ -34,6 +34,37 @@ export function assertNotTruncated(res, что){
   }
 }
 
+// Инородная письменность в русской прозе. Живой инцидент: DeepSeek выдал
+// «За十年的 работы» во ВТОРОМ предложении сцены, и это прошло через три
+// черновика, 126 замечаний Стражей, Оценщика и Линейного редактора — ни одна
+// проверка не смотрела на алфавит. Для моделей китайского происхождения утечка
+// иероглифов в чужой язык — не разовая случайность, а класс дефекта.
+//
+// Латиница НЕ считается инородной намеренно: имена, названия судов, эпиграфы
+// на европейских языках в русской книге легитимны. Ловим только письменности,
+// появление которых в русском тексте почти наверняка означает сбой модели.
+// Осознанная цитата на иврите или китайском даст ложное срабатывание — это
+// приемлемо: находка показывается автору, а не правит текст молча.
+const FOREIGN_SCRIPT = /[　-〿぀-ヿ㐀-䶿一-鿿가-힯ᄀ-ᇿ＀-￯֐-׿؀-ۿऀ-ॿ฀-๿]/;
+export function findForeignScript(text){
+  const s = String(text||'');
+  if(!FOREIGN_SCRIPT.test(s)) return [];
+  const g = new RegExp(FOREIGN_SCRIPT.source, 'g');
+  const out = []; const виденные = new Set();
+  let m;
+  while((m = g.exec(s))){
+    // Показываем не одинокий символ, а слово целиком с соседями: «十» само по
+    // себе автору ничего не говорит, а «За十年的 работы» сразу видно, где искать.
+    const от = Math.max(0, s.lastIndexOf(' ', m.index) + 1);
+    let до = s.indexOf(' ', g.lastIndex); if(до < 0) до = s.length;
+    const фрагмент = s.slice(от, до).trim();
+    const ключ = фрагмент || m[0];
+    if(!виденные.has(ключ)){ виденные.add(ключ); out.push({ char:m[0], quote:ключ }); }
+    if(out.length >= 8) break;   // хватит, чтобы показать масштаб
+  }
+  return out;
+}
+
 export async function callLLM({ baseURL, apiKey, model, temperature, messages, maxTokens, retries=2 }, onToken, onRetry){
   const tokensIn = messages.reduce((s,m)=>s+estimateTokens(m.content), 0);
   let lastErr = null;

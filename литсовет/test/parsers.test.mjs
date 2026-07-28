@@ -323,3 +323,36 @@ test('evaluatorMessages: без образцов голоса прямо ска�
   assert.match(с[1].content, /Образец голоса автора/);
   assert.ok(!/ОБРАЗЦОВ ГОЛОСА АВТОРА НЕТ/.test(с[1].content), 'с образцами предупреждения быть не должно');
 });
+
+// ── Инородная письменность ─────────────────────────────────────────────────
+// Живой прогон: DeepSeek выдал «За十年的 работы» во втором предложении сцены, и
+// это пережило три черновика, 126 замечаний Стражей, Оценщика и Линейного
+// редактора — ни одна проверка не смотрела на алфавит.
+test('findForeignScript: ловит реальный инцидент и показывает слово целиком', async () => {
+  const { findForeignScript } = await import('../src/llm.js');
+  const r = findForeignScript('Тяжесть грузов легла на плечи. За十年的 работы он мог на ощупь.');
+  assert.equal(r.length, 1, 'иероглифы обязаны быть найдены');
+  assert.equal(r[0].quote, 'За十年的', 'показываем слово целиком — одинокий символ автору ничего не говорит');
+});
+
+test('findForeignScript: латиница и пунктуация — не находка', async () => {
+  const { findForeignScript } = await import('../src/llm.js');
+  // Имена, названия судов и эпиграфы на европейских языках в русской книге
+  // легитимны: ложное срабатывание тут дороже пропуска.
+  ['Судно «Sturm und Drang» ушло в 1927 году.',
+   'Он сказал: — Nihil novi... и замолчал — 25 % пути.',
+   'Обычный русский текст без всякой экзотики.'].forEach(t=>{
+    assert.deepEqual(findForeignScript(t), [], 'ложное срабатывание на: ' + t);
+  });
+});
+
+test('findForeignScript: японский, корейский, иврит, арабский', async () => {
+  const { findForeignScript } = await import('../src/llm.js');
+  ['он сказал アニメ тихо', 'слово 한국어 внутри', 'фраза שלום здесь', 'текст مرحبا тут']
+    .forEach(t=>assert.ok(findForeignScript(t).length, 'не поймано: ' + t));
+});
+
+test('findForeignScript: пустой и нестроковый вход не роняют проверку', async () => {
+  const { findForeignScript } = await import('../src/llm.js');
+  [null, undefined, '', 0].forEach(v=>assert.deepEqual(findForeignScript(v), []));
+});

@@ -3,7 +3,7 @@
 // предложениями правок. Не меняет текст сам (кроме предложения Линейного
 // редактора, которое автор применяет вручную).
 
-import { callLLM, extractJSON } from './llm.js';
+import { callLLM, extractJSON, findForeignScript } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
@@ -143,5 +143,17 @@ export async function patchScene(state, scene, instruction){
   // обрывается на полуслове чуть дальше» (тот же пробел, что чинили в
   // pipeline.js). looksTokenTruncated закрывает именно этот случай.
   if(looksTokenTruncated(out)) throw new Error('Ответ обрывается не на знаке препинания (похоже на обрыв токенами) — попробуйте ещё раз.');
+  // Инородная письменность (см. findForeignScript в llm.js) — тот же класс
+  // защиты, что в пайплайне сцены, и по тому же принципу «не в одном месте, а
+  // во всех, где текст модели становится текстом книги». Считаем ТОЛЬКО новые
+  // символы: если иероглиф уже был в сцене, отказ здесь запер бы автора — он
+  // не смог бы починить сцену как раз той правкой, которая для этого и нужна.
+  const былоРаньше = new Set(findForeignScript(draft).map(d=>d.char));
+  const новые = findForeignScript(out).filter(d=>!былоРаньше.has(d.char));
+  if(новые.length){
+    // Отказ, а не молчаливая запись: правка не применяется, сцена остаётся
+    // прежней, автор ничего не теряет и может повторить.
+    throw new Error(`Модель вставила символы чужой письменности (${новые.map(d=>'«'+d.quote+'»').join(', ')}) — правка не применена, попробуйте ещё раз.`);
+  }
   return out;
 }

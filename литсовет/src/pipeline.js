@@ -2,7 +2,7 @@
 // ПП2-цепочка: [Архитектор] → Прозаик ⇄ Оценщик (петля).
 // Каждый агент включаем/отключаем; всё пишется в диагностический трейс.
 
-import { callLLM, extractJSON } from './llm.js';
+import { callLLM, extractJSON, findForeignScript } from './llm.js';
 import { buildSceneContext, bookContextBlock, LAYER_LABELS } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES, axisOfNote } from './agents.js';
@@ -48,7 +48,7 @@ function isFactualGuard(state, role){
   return !!(a.custom && a.factual);
 }
 
-const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен'};
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность'};
 function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
@@ -704,6 +704,20 @@ export async function runScene(state, scene, opts={}, onProgress){
           quote:d.quote }));
       }
 
+      // Инородная письменность (см. findForeignScript в llm.js). Тот же класс,
+      // что и повторы выше: детерминированная проверка на артефакт модели, а не
+      // творческое суждение. Отдельной строкой в лог — находка обязана быть
+      // видна автору сразу, даже если Прозаик её потом не исправит: именно
+      // молчание и было проблемой, а не сам факт иероглифов.
+      const чужойАлфавит = findForeignScript(pRes.text);
+      if(чужойАлфавит.length){
+        flags.script = чужойАлфавит.map(d=>({ severity:'critical', title:'Инородная письменность в тексте',
+          detail:'В русский текст попали символы чужой письменности — это сбой модели, а не приём. Замени фрагмент русским словом, сохранив смысл.',
+          quote:d.quote }));
+        onProgress && onProgress({log:{icon:'🔤',
+          text:`Инородная письменность в черновике: ${чужойАлфавит.map(d=>'«'+d.quote+'»').join(', ')} — отправлено Прозаику как обязательная правка`}});
+      }
+
       // Тот же принцип, но на СТЫКЕ со сценой раньше: живой инцидент — конец
       // «Первый вздох» дословно повторился как начало «Приёмная гильдии» (см.
       // findBoundaryRepeat в guards.js). dupFound выше это не ловит — сравнивает
@@ -1334,6 +1348,22 @@ export async function runScene(state, scene, opts={}, onProgress){
     // state.js) — следующая сцена увидит, чем закончились недавние, чтобы
     // Оценщик мог поймать повтор ПРИЁМА закрытия, не только дословной фразы.
     if(best) state.recentSceneEndings = [...(state.recentSceneEndings||[]), best.trim().slice(-200)].slice(-10);
+
+    // Последний рубеж. Прозаик может НЕ исправить инородную письменность —
+    // именно так и было в живом прогоне: «За十年的 работы» пережило три
+    // черновика. Тогда сцена уходит в книгу с иероглифами, и единственное, что
+    // здесь ещё можно сделать, — не дать этому случиться молча. Флаг ставим
+    // заново по итоговому тексту: bestFlags относятся к черновику, который
+    // выиграл, а он мог смениться после Линейного редактора.
+    const чужойВИтоге = findForeignScript(best);
+    if(чужойВИтоге.length){
+      bestFlags = { ...(bestFlags||{}), script: чужойВИтоге.map(d=>({ severity:'critical',
+        title:'Инородная письменность осталась в готовой сцене',
+        detail:'Прозаик не убрал символы чужой письменности за отведённые итерации — исправьте вручную или перезапустите сцену.',
+        quote:d.quote })) };
+      onProgress && onProgress({log:{icon:'🔤',
+        text:`В ГОТОВОЙ сцене осталась инородная письменность: ${чужойВИтоге.map(d=>'«'+d.quote+'»').join(', ')} — почините вручную, автоматика уже не поможет`}});
+    }
 
     const run = endRun('done');
     return { text: best || '', eval: bestEval, flags: bestFlags, runId, run };
