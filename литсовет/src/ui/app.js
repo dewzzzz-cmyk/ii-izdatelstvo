@@ -271,8 +271,8 @@ async function openSettings(){
         </div>
         <div class="field" style="margin-top:14px"><label>Бюджет контекста (токенов) <span class="hint">сколько токенов под память сцены; 32к = оптимум для большинства моделей, поднимайте выше для очень длинных серийных книг (70+ глав) на моделях с большим окном контекста</span></label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input type="range" id="setBudgetRange" min="8000" max="150000" step="4000" value="${escAttr(g.budgetTokens??32000)}" style="flex:1" oninput="document.getElementById('setBudgetNum').value=this.value">
-            <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??32000)}" min="8000" max="150000" step="4000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
+            <input type="range" id="setBudgetRange" min="8000" max="512000" step="8000" value="${escAttr(g.budgetTokens??128000)}" style="flex:1" oninput="document.getElementById('setBudgetNum').value=this.value">
+            <input type="number" id="setBudgetNum" value="${escAttr(g.budgetTokens??128000)}" min="8000" max="512000" step="8000" style="width:80px" oninput="document.getElementById('setBudgetRange').value=this.value">
           </div></div>
 
         <div class="field" style="margin-top:14px"><label>Ключи других провайдеров <span class="hint">чтобы отдельная роль (панель агентов справа → ⚙ у роли) могла переключиться на другого провайдера/модель без повторного ввода ключа</span></label>

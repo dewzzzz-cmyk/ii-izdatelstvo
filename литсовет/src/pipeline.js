@@ -3,7 +3,7 @@
 // Каждый агент включаем/отключаем; всё пишется в диагностический трейс.
 
 import { callLLM, extractJSON } from './llm.js';
-import { buildSceneContext, bookContextBlock } from './context.js';
+import { buildSceneContext, bookContextBlock, LAYER_LABELS } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES, axisOfNote } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
@@ -392,6 +392,11 @@ export async function runScene(state, scene, opts={}, onProgress){
       // иначе чанки неудачной попытки, уже показанные через streamCb, оставались
       // склеены с началом успешного повтора на несколько секунд стриминга.
       const streamRetry = ()=>{ streamed = ''; };
+      // Отчёт бюджета контекста живёт на уровне итерации: сам ctx объявлен
+      // внутри ветки «первый черновик», а предупреждение печатается ниже, уже
+      // за обеими ветками. На правке (isRevision) контекст не пересобирается —
+      // там остаётся пустым, и предупреждение справедливо молчит.
+      let ctxTrimmed = [];
       let pRes, logInput, logLayers;
       if(isRevision){
         onProgress && onProgress({stage:'prose', text: stagnantLastIter
@@ -481,6 +486,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       } else {
         onProgress && onProgress({stage:'prose', text:'Прозаик пишет…'});
         const ctx = buildSceneContext(state, scene, { prevSceneText, architectOutput:architectText, directive, prevDraft:'' });
+        ctxTrimmed = ctx.trimmed || [];
         const sceneWords = scene.targetWords || 700;
         // 3.5 ток/слово (не 2.5) — с запасом над реальной плотностью ≈2.78,
         // измеренной на уже написанных сценах книги (см. cap чуть выше по файлу).
@@ -519,11 +525,27 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(pRes.text) lastGenerated = pRes.text;
       logStep({ agent:'prose', iter, input:logInput, output:pRes.text,
         layers:logLayers, tokensIn:pRes.tokensIn, tokensOut:pRes.tokensOut, cost:pRes.cost });
-      const _budget = (state.global && state.global.budgetTokens) || 32000;
+      const _budget = (state.global && state.global.budgetTokens) || 128000;
       const _pct = Math.round((pRes.tokensIn||0) / _budget * 100);
       onProgress && onProgress({log:{icon:'✍️', text:isRevision?`Прозаик: черновик ${iter} (разобрал замечания)`:`Прозаик: черновик ${iter} написан · контекст ${pRes.tokensIn||0} / ${_budget} ток. (${_pct}%)`}});
-      if(!isRevision && (pRes.tokensIn||0) > _budget * 0.8){
-        onProgress && onProgress({log:{icon:'⚠️', text:`Контекст заполнен на ${_pct}% — часть памяти (сводки сцен, глав) могла быть урезана. Увеличьте бюджет в Настройках или свёртывайте старые сцены.`, state:'warn'}});
+      // Раньше здесь стояла догадка по размеру входа: «часть памяти МОГЛА быть
+      // урезана». Она и врала в обе стороны — молчала, когда бюджет реально
+      // выбил канон при заполнении ниже 80%, и пугала, когда всё влезло. Теперь
+      // buildSceneContext возвращает факт: что именно урезано и на сколько.
+      // Отдельно выделяем канон и персонажей: их потеря означает, что Прозаик
+      // пишет сцену, не зная фактов собственной книги, — это не деградация
+      // качества, а прямой источник противоречий.
+      const _trim = ctxTrimmed;
+      if(_trim.length){
+        const текст = _trim.map(t=>{
+          const имя = LAYER_LABELS[t.слой] || t.слой;
+          return t.вид==='частично' ? `${имя} (${t.сколько} самых старых)` : t.вид==='ужат' ? `${имя} (сжат)` : `${имя} — ЦЕЛИКОМ`;
+        }).join(', ');
+        const критично = _trim.some(t=>(t.слой==='bible'||t.слой==='characters') && t.вид==='целиком');
+        onProgress && onProgress({log:{icon: критично?'🛑':'⚠️',
+          text: `Контекст не влез в бюджет (${pRes.tokensIn||0} из ${_budget} ток.) — урезано: ${текст}.`
+            + (критично ? ' Прозаик писал сцену БЕЗ канона книги — вероятны противоречия с уже написанным. Поднимите бюджет в Настройках.' : ' Поднимите бюджет в Настройках, если это повторяется.'),
+          state:'warn'}});
       }
 
       // Если Оценщик тоже ручной, его гейт покажет тот же черновик + оценку сразу после —

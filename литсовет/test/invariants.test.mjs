@@ -363,3 +363,58 @@ test('Линейный редактор: перестановка предлож
   const b = 'На полях был чужой почерк. Вера открыла книгу.';
   assert.ok(доляНовыхСлов(a, b) <= 0.33, 'сравнение по множеству слов, порядок не важен');
 });
+
+// ───────────── бюджет контекста: урезание должно быть видимым ─────────────
+// Раньше applyBudget резал слои молча, а предупреждение в pipeline.js гадало по
+// размеру входа («часть памяти МОГЛА быть урезана») — оно врало в обе стороны.
+// Потеря канона на длинной книге неотличима от нормы: Прозаик пишет сцену, не
+// зная фактов собственной книги, и противоречия всплывают позже у Стражей.
+test('buildSceneContext: при достаточном бюджете ничего не урезано', async () => {
+  const { buildSceneContext } = await import('../src/context.js');
+  const st = {
+    project:{ genre:'мистика', title:'Т' }, style:{ forbidden:[], rules:[] },
+    voice:{ examples:['образец'] }, bible:[{keys:'ключ', text:'факт канона'}],
+    characters:[{name:'Вера', stateNote:'встревожена'}],
+    structure:[{ type:'scene', id:'s1', title:'Сцена', brief:'бриф' }],
+    memory:{ scenes:{}, chapters:{} },
+    global:{ budgetTokens: 128000 },
+  };
+  const ctx = buildSceneContext(st, st.structure[0], {});
+  assert.ok(Array.isArray(ctx.trimmed), 'отчёт об урезании должен возвращаться всегда');
+  assert.equal(ctx.trimmed.length, 0, 'при большом бюджете резать нечего');
+});
+
+test('buildSceneContext: при крошечном бюджете канон урезается и это видно', async () => {
+  const { buildSceneContext, LAYER_LABELS } = await import('../src/context.js');
+  const длинный = 'факт канона книги, довольно подробный и длинный '.repeat(60);
+  const st = {
+    project:{ genre:'мистика', title:'Т' }, style:{ forbidden:[], rules:[] },
+    voice:{ examples:['образец'] },
+    bible:[{keys:'ключ', text:длинный}],
+    characters:[{name:'Вера', stateNote:длинный}],
+    structure:[{ type:'scene', id:'s1', title:'Сцена', brief:'ключ' }],
+    memory:{ scenes:{}, chapters:{} },
+    global:{ budgetTokens: 300 },   // заведомо мало
+  };
+  const ctx = buildSceneContext(st, st.structure[0], {});
+  assert.ok(ctx.trimmed.length > 0, 'урезание должно быть зафиксировано, а не пройти молча');
+  const слои = ctx.trimmed.map(t=>t.слой);
+  assert.ok(слои.includes('bible') || слои.includes('characters'),
+    'при таком бюджете должны уйти канон и/или персонажи, и отчёт обязан их назвать');
+  ctx.trimmed.forEach(t=>{
+    assert.ok(LAYER_LABELS[t.слой], `у слоя «${t.слой}» нет человекочитаемого имени — в логе будет техножаргон`);
+    assert.ok(['целиком','частично','ужат'].includes(t.вид), 'вид урезания должен быть из известного набора');
+  });
+});
+
+test('дефолты: бюджет контекста 128000, лимиты агентов удвоены', async () => {
+  const { defaultState } = await import('../src/state.js');
+  const d = defaultState();
+  assert.equal(d.global.budgetTokens, 128000, 'бюджет сборки контекста ×4 от прежних 32000');
+  const по = Object.fromEntries(d.agents.map(a=>[a.role, a.maxTokens]));
+  assert.equal(по.prose, 12960, 'Прозаик ×2 — reasoning-модели тратят часть лимита на рассуждение');
+  assert.equal(по.evaluator, 11520);
+  assert.equal(по.logic, 7560);
+  assert.equal(по.lineedit, 12960);
+  assert.equal(по.architect, 3240);
+});

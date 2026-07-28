@@ -59,7 +59,7 @@ function isNearBookEnd(state, scene){
 // Возвращает {messages, layers} — layers для диагностики (что попало в промпт).
 export function buildSceneContext(state, scene, opts={}){
   const { voice, style, bible, characters, global } = state;
-  const BUDGET = (global && global.budgetTokens) || 32000;
+  const BUDGET = (global && global.budgetTokens) || 128000;
   const layers = [];
 
   // 1. Голос + запреты (фикс, не режется)
@@ -155,7 +155,7 @@ export function buildSceneContext(state, scene, opts={}){
   }
 
   // Применяем бюджет: режем по приоритету (не трогаем fixed; live ужимаем последним)
-  applyBudget(layers, BUDGET);
+  const trimmed = applyBudget(layers, BUDGET);
 
   const system = layers.map(l=>l.text).join(SEP);
   const scenesInOrder = (state.structure||[]).filter(n=>n.type==='scene');
@@ -180,6 +180,10 @@ export function buildSceneContext(state, scene, opts={}){
       { role:'user',   content: user },
     ],
     layers: layers.map(l=>({ name:l.name, tokens: estimateTokens(l.text) })),
+    // Что бюджет реально урезал. Пустой массив — всё влезло. Раньше этого
+    // наружу не выходило вовсе, и предупреждение в pipeline.js гадало по
+    // размеру входа («могла быть урезана»), а не знало факта.
+    trimmed,
   };
 }
 
@@ -300,9 +304,23 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style, chapte
 
 // Усечение по приоритету: серия → главы → сцены (в ПП2 этих слоёв ещё нет),
 // затем живой контекст через smartTrunc. fixed-слои не режутся.
+// Человекочитаемые имена слоёв — урезание контекста до сих пор происходило
+// молча, а предупреждение в pipeline.js гадало («могла быть урезана») по
+// размеру входа, не по факту. Автор не мог отличить «всё влезло» от «выпал
+// весь канон книги», а именно канон уходит на длинной книге предпоследним.
+export const LAYER_LABELS = {
+  observed:'замеченные паттерны', openThreads:'открытые сюжетные линии',
+  scenes:'сводки сцен', chapters:'сводки глав', series:'память серии',
+  characters:'состояния персонажей', bible:'КАНОН (Библия)',
+  prevScene:'текст предыдущей сцены',
+};
+
+// Возвращает отчёт о том, что реально урезано: [{слой, вид, сколько}].
+// Пустой массив = ничего не резали.
 function applyBudget(layers, BUDGET){
+  const trimmed = [];
   const total = ()=>layers.reduce((s,l)=>s+estimateTokens(l.text), 0);
-  if(total() <= BUDGET) return;
+  if(total() <= BUDGET) return trimmed;
 
   // (а) Самые необязательные слои-советы (не обязательство, а мягкая подсказка)
   // уходят ПЕРВЫМИ и целиком, ДО того как трогаем что-либо ещё — раньше шаг «б»
@@ -312,16 +330,18 @@ function applyBudget(layers, BUDGET){
   // живым тестом на реальных числах бюджета).
   for(const nm of ['observed','openThreads']){
     const idx = layers.findIndex(l=>l.name===nm && !l.fixed);
-    if(idx>=0) layers.splice(idx,1);
-    if(total() <= BUDGET) return;
+    if(idx>=0){ layers.splice(idx,1); trimmed.push({ слой:nm, вид:'целиком' }); }
+    if(total() <= BUDGET) return trimmed;
   }
 
   // (б) Слой сцен: выбрасываем СТАРЕЙШИЕ записи по одной (entries[0] = старейшая)
   const scenesLayer = layers.find(l=>l.name==='scenes' && l.entries);
+  let сцен = 0;
   while(scenesLayer && scenesLayer.entries.length>1 && total() > BUDGET){
-    scenesLayer.entries.shift();
+    scenesLayer.entries.shift(); сцен++;
   }
-  if(total() <= BUDGET) return;
+  if(сцен) trimmed.push({ слой:'scenes', вид:'частично', сколько:сцен });
+  if(total() <= BUDGET) return trimmed;
 
   // (б2) Слой глав — та же логика: на длинной книге (или при уменьшенном
   // budgetTokens) сводок глав накапливается без ограничения, в отличие от
@@ -329,10 +349,12 @@ function applyBudget(layers, BUDGET){
   // без этого шага (в) сбросил бы весь слой глав разом, и Прозаик одномоментно
   // терял бы понимание всех ранних глав книги вместо постепенной деградации.
   const chaptersLayer = layers.find(l=>l.name==='chapters' && l.entries);
+  let глав = 0;
   while(chaptersLayer && chaptersLayer.entries.length>1 && total() > BUDGET){
-    chaptersLayer.entries.shift();
+    chaptersLayer.entries.shift(); глав++;
   }
-  if(total() <= BUDGET) return;
+  if(глав) trimmed.push({ слой:'chapters', вид:'частично', сколько:глав });
+  if(total() <= BUDGET) return trimmed;
 
   // (в) Дальше выбиваем целые слои «памяти» по приоритету (не fixed).
   const dropOrder = ['scenes','chapters','series','characters','bible'];
@@ -341,8 +363,9 @@ function applyBudget(layers, BUDGET){
       const idx = layers.findIndex(l=>l.name===nm && !l.fixed);
       if(idx<0) break;
       layers.splice(idx,1);
+      trimmed.push({ слой:nm, вид:'целиком' });
     }
-    if(total() <= BUDGET) return;
+    if(total() <= BUDGET) return trimmed;
   }
   // (г) последний рубеж: ужать живой контекст (но не голос/синопсис — они fixed)
   const live = layers.find(l=>l.live);
@@ -350,5 +373,7 @@ function applyBudget(layers, BUDGET){
     const over = total() - BUDGET;
     const liveTokens = estimateTokens(live.text);
     live.text = trimToTokens(live.text, Math.max(200, liveTokens - over));
+    trimmed.push({ слой:live.name || 'prevScene', вид:'ужат' });
   }
+  return trimmed;
 }
