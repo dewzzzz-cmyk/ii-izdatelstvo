@@ -1296,6 +1296,11 @@ export function renderStructure(els){
           <button class="btn" id="dismissCanonStale" style="font-size:11px;padding:2px 9px">Оставить как есть</button>
         </div>
       </div>` : ''}
+      ${(s.illustrationsRelinked && (s.illustrationsRelinked.relinked || s.illustrationsRelinked.orphaned)) ? `<div style="margin-top:14px;border:1px solid var(--warn,#c9a227);border-radius:8px;padding:12px 14px;background:var(--surface-2)">
+        <div style="font-size:12px">🖼 Иллюстрации сцен после замены скелета: ${s.illustrationsRelinked.relinked ? `перепривязано по названию — ${s.illustrationsRelinked.relinked}` : ''}${(s.illustrationsRelinked.relinked && s.illustrationsRelinked.orphaned) ? ', ' : ''}${s.illustrationsRelinked.orphaned ? `осталось без сцены — ${s.illustrationsRelinked.orphaned}` : ''}.</div>
+        ${s.illustrationsRelinked.orphaned ? '<div style="font-size:12px;margin-top:6px">Осиротевшие картинки не удалены — они оплачены и лежат в галерее на вкладке «Иллюстрации». Их можно привязать к другой сцене или удалить вручную.</div>' : ''}
+        <div style="margin-top:8px"><button class="btn" id="dismissIllustRelink" style="font-size:11px;padding:2px 9px">Понятно</button></div>
+      </div>` : ''}
       <div id="missingFactsBlock"></div>
 
       ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
@@ -1368,6 +1373,8 @@ export function renderStructure(els){
   if(goCanonReview) goCanonReview.onclick = ()=>{ s.ui.stage='write'; s.ui.rightTab='mem'; save(); };
   const dismissCanonStale = document.getElementById('dismissCanonStale');
   if(dismissCanonStale) dismissCanonStale.onclick = ()=>{ s.canonStaleAfterSkeleton = null; save(); };
+  const dismissIllustRelink = document.getElementById('dismissIllustRelink');
+  if(dismissIllustRelink) dismissIllustRelink.onclick = ()=>{ s.illustrationsRelinked = null; save(); };
 
   const goWorldCheck = document.getElementById('goWorldCheck');
   if(goWorldCheck) goWorldCheck.onclick = ()=>{ s.ui.stage='world'; save(); };

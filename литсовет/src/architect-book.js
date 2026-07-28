@@ -797,6 +797,29 @@ export function applySkeleton(state, skeleton, uid){
   // «РАНЕЕ В КНИГЕ (СИНОПСИС)» и будет противоречить новому скелету.
   if(mem.books && mem.books.__running__) mem.books.__running__ = { current: '' };
 
+  // Иллюстрации сцен привязаны к sceneId — а он у всех сцен теперь новый, то
+  // есть каждая картинка осиротела: она оплачена, видна в галерее, но ни в один
+  // экспорт и ни под одну сцену больше не попадёт, и никто автору об этом не
+  // скажет. Найдено живым прогоном уже ПОСЛЕ того, как здесь появилась уборка
+  // памяти: чистка сводок эту половину проблемы не закрывала.
+  // Перепривязываем по НАЗВАНИЮ сцены — при перегенерации скелета названия
+  // обычно сохраняются (в том живом случае «Сбой перевода» совпало дословно), а
+  // название куда устойчивее, чем сгенерированный id. Что не совпало — считаем
+  // осиротевшим и показываем автору, но НЕ удаляем: это оплаченные картинки,
+  // их можно перепривязать руками или использовать в другой сцене.
+  const ic = state.illustrations || (state.illustrations = {});
+  const byTitle = new Map();
+  nodes.filter(n=>n.type==='scene').forEach(n=>{ if(!byTitle.has(n.title)) byTitle.set(n.title, n.id); });
+  let relinked = 0, orphaned = 0;
+  (ic.items||[]).forEach(it=>{
+    if(it.type!=='scene') return;
+    if(liveIds.has(it.sceneId)) return;              // уже указывает на живую сцену
+    const found = it.sceneTitle && byTitle.get(it.sceneTitle);
+    if(found){ it.sceneId = found; relinked++; }
+    else { it.orphaned = true; orphaned++; }
+  });
+  state.illustrationsRelinked = (relinked || orphaned) ? { relinked, orphaned, at: Date.now() } : null;
+
   // А вот канон и персонажей НЕ удаляем сами: автор мог вносить их руками, и
   // молча снести его работу хуже, чем оставить лишнее. Вместо этого — флаг для
   // предупреждения в UI со списком имён, которых новый скелет может не знать.
