@@ -2872,7 +2872,12 @@ async function doRun(els, s, scene, directive, runFlags={}){
     save();
     btn.innerHTML='<span class="spinner"></span> Суммаризация…';
     try{
-      await summarizeScene(s, scene); scene.drift = driftCheck(s, scene);
+      // Возврат НЕ игнорируем: summarizeScene отдаёт null и при нераспознанном
+      // ответе архивариуса — без исключения. Молчание здесь означало бы сцену
+      // «Готово» без сводки в памяти, то есть следующие сцены не узнают её
+      // событий, а автор об этом нигде не прочитает.
+      const sum = await summarizeScene(s, scene); scene.drift = driftCheck(s, scene);
+      if(!sum) pushProc({log:{icon:'⚠️', text:'Сводка сцены в память НЕ сделана (архивариус не ответил или ответил нераспознаваемо) — следующие сцены не будут знать её событий. Стоит перезапустить сцену или дописать сводку руками в «Память».', state:'warn'}});
       // Структурная сигнатура для кросс-сценовых проверок (повтор приёма/канала
       // подачи экспозиции по всей книге, см. craftsignals.js) — не блокирует
       // сохранение сцены при сбое, как и driftCheck/maybeRollup рядом.
@@ -2882,7 +2887,10 @@ async function doRun(els, s, scene, directive, runFlags={}){
       }catch(e){ console.warn('craft signature failed', e); }
       await maybeRollup(s); save();
     }
-    catch(e){ console.warn('summarize failed', e); }
+    catch(e){
+      console.warn('summarize failed', e);
+      pushProc({log:{icon:'⚠️', text:'Сводка сцены в память не сделана: '+e.message+' — следующие сцены не будут знать её событий.', state:'warn'}});
+    }
   }catch(e){
     // Стриминг (prog.streaming выше) уже мог записать в scene.text свежий,
     // но неотревьюенный черновик (напр. упал вызов Оценщика ПОСЛЕ прозы) —
