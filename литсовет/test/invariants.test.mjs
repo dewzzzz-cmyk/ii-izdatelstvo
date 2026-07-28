@@ -418,3 +418,41 @@ test('дефолты: бюджет контекста 128000, лимиты аг�
   assert.equal(по.lineedit, 12960);
   assert.equal(по.architect, 3240);
 });
+
+// ───────────── дефолтная модель по ролям ─────────────
+// Замер на живой сцене (тот же контекст, тот же Оценщик, менялась ТОЛЬКО
+// модель Прозаика): chat 5/5 при 515 словах, v4-pro 6/6 при 858, reasoner 6/7.
+// До этого «Свежесть» стояла ровно на 5 во всех 18 замерах по четырём сценам.
+test('дефолты: переопределена модель только у Прозаика', async () => {
+  const { defaultState } = await import('../src/state.js');
+  const d = defaultState();
+  const prose = d.agents.find(a=>a.role==='prose');
+  assert.equal(prose.model, 'deepseek-v4-pro');
+  assert.equal(prose.provider, 'deepseek', 'без provider модель ушла бы на чужой baseURL при смене глобального');
+  const прочие = d.agents.filter(a=>a.role!=='prose' && !a.custom);
+  прочие.forEach(a=>{
+    assert.ok(!a.model, `у роли ${a.role} не должно быть дефолтного переопределения модели — она на глобальной`);
+  });
+});
+
+test('миграция: ручное переопределение модели переживает обновление версии', async () => {
+  const { defaultState, migrate: мигр } = await import('../src/state.js');
+  assert.equal(typeof мигр, 'function', 'migrate() должна экспортироваться — иначе тест молча проходит, ничего не проверив');
+  const старый = defaultState();
+  старый.agents = старый.agents.map(a=>a.role==='evaluator' ? {...a, provider:'anthropic', model:'claude-sonnet-5'} : a);
+  const после = мигр(JSON.parse(JSON.stringify(старый)));
+  const ev = (после.agents||[]).find(a=>a.role==='evaluator');
+  assert.equal(ev.model, 'claude-sonnet-5', 'выбор модели автора не должен слетать при обновлении');
+  assert.equal(ev.provider, 'anthropic');
+});
+
+test('миграция: явное «как глобально» (пустая строка) не перезатирается дефолтом роли', async () => {
+  const { defaultState, migrate: мигр } = await import('../src/state.js');
+  assert.equal(typeof мигр, 'function');
+  const старый = defaultState();
+  // автор снял переопределение у Прозаика — UI пишет '' , не undefined
+  старый.agents = старый.agents.map(a=>a.role==='prose' ? {...a, provider:'', model:''} : a);
+  const после = мигр(JSON.parse(JSON.stringify(старый)));
+  const pr = (после.agents||[]).find(a=>a.role==='prose');
+  assert.equal(pr.model, '', 'снятое переопределение не должно возвращаться дефолтом роли');
+});

@@ -665,7 +665,8 @@ function bindAgents(){
   // выбор из списка, не свободный текст; ключ отдельно не спрашиваем, берётся
   // из global.apiKeys[provider] (см. «Ключи других провайдеров» в Настройках).
   document.querySelectorAll('.ap-ov-provider').forEach(sel=>sel.onchange=()=>{
-    const s=getState(); const a=s.agents.find(x=>x.id===sel.dataset.aid); if(a){ a.provider=sel.value||undefined; save(); }
+    // '' (не undefined) = явное «как глобально»: значимо, переживает миграцию — см. KEEP в state.js
+    const s=getState(); const a=s.agents.find(x=>x.id===sel.dataset.aid); if(a){ a.provider=sel.value||''; save(); }
   });
   // модель этой роли — независима от провайдера (можно оставить провайдера
   // «как в настройках», но взять другую его модель). «✎ другая модель…»
@@ -677,10 +678,10 @@ function bindAgents(){
       if(custom){ custom.style.display=''; custom.focus(); }
       return;
     }
-    a.model=sel.value||undefined; save();
+    a.model=sel.value||''; save();
   });
   document.querySelectorAll('.ap-ov-model-custom').forEach(inp=>inp.addEventListener('change',()=>{
-    const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.model=inp.value.trim()||undefined; save(); }
+    const s=getState(); const a=s.agents.find(x=>x.id===inp.dataset.aid); if(a){ a.model=inp.value.trim()||''; save(); }
   }));
   // «фактический страж» — бежит каждую итерацию, а не только на принятом тексте
   document.querySelectorAll('.ap-factual').forEach(cb=>cb.onchange=()=>{ const s=getState(); const a=s.agents.find(x=>x.id===cb.dataset.aid); if(a){ a.factual=cb.checked; save(); rerenderDiag(); } });
