@@ -283,3 +283,43 @@ test('buildUnifiedDirective: клише — урезанный список пл
   assert.match(d, /последние 12 из 40/, 'автор должен видеть, что список урезан');
   assert.match(d, /НЕ синоним/, 'нет запрета на замену синонимом — клише вернутся другими словами');
 });
+
+// ───────────── ось без эталона не должна давать балл ─────────────
+// Живой случай книги «Поля для заметок»: state.voice.examples пуст, блок
+// «Образец голоса автора» в промпте исчезает — а ось «Голос» остаётся в схеме,
+// и модель ставила по ней 7, 7, 6, 7 на четырёх сценах подряд. Сравнивать было
+// не с чем: это заполнение поля, а не оценка, и при весе 1 из 7 оно тянуло
+// вверх ~16% итогового балла.
+test('parseEvaluator: skipAxes убирает ось из scores, weighted и minAxis', async () => {
+  const { parseEvaluator } = await import('../src/agents.js');
+  const raw = JSON.stringify({ scores:{ freshness:5, rhythm:5, concrete:6, voice:7, pace:6, brief:8 }, notes:[] });
+
+  const полный = parseEvaluator(raw, 7.5);
+  assert.equal(полный.scores.voice, 7);
+  assert.equal(полный.weighted, 6.4, '(5+5+6+7+6+8*2)/7 = 6.43');
+
+  const безГолоса = parseEvaluator(raw, 7.5, { skipAxes:['voice'] });
+  assert.equal(безГолоса.scores.voice, undefined, 'ось не должна попасть в scores — UI покажет «—»');
+  assert.equal(безГолоса.weighted, 6.3, '(5+5+6+6+8*2)/6 = 6.33 — без выдуманной оси');
+  assert.equal(безГолоса.minAxis, 5, 'minAxis считается по оставшимся осям');
+});
+
+test('parseEvaluator: пустой skipAxes и пропуск всех осей не ломают балл', async () => {
+  const { parseEvaluator, RUBRIC_AXES } = await import('../src/agents.js');
+  const raw = JSON.stringify({ scores:{ freshness:5, rhythm:5, concrete:6, voice:7, pace:6, brief:8 }, notes:[] });
+  assert.equal(parseEvaluator(raw, 7.5, { skipAxes:[] }).weighted, 6.4, 'пустой список — как раньше');
+  const все = parseEvaluator(raw, 7.5, { skipAxes: RUBRIC_AXES.map(a=>a.key) });
+  assert.equal(все.weighted, 6.4, 'пропустить ВСЕ оси нельзя — страховка возвращает полную рубрику');
+  assert.ok(Number.isFinite(все.weighted), 'балл не должен стать NaN');
+});
+
+test('evaluatorMessages: без образцов голоса прямо сказано, что ось не оценивается', async () => {
+  const { evaluatorMessages } = await import('../src/agents.js');
+  const scene = { title:'Тест', brief:'бриф' };
+  const без = evaluatorMessages(scene, 'текст черновика достаточной длины для проверки', [], '', []);
+  assert.match(без[1].content, /ОБРАЗЦОВ ГОЛОСА АВТОРА НЕТ/, 'модель должна знать, что эталона нет');
+  assert.match(без[1].content, /НЕ ОЦЕНИВАЕТСЯ/);
+  const с = evaluatorMessages(scene, 'текст черновика достаточной длины для проверки', ['образец прозы автора'], '', []);
+  assert.match(с[1].content, /Образец голоса автора/);
+  assert.ok(!/ОБРАЗЦОВ ГОЛОСА АВТОРА НЕТ/.test(с[1].content), 'с образцами предупреждения быть не должно');
+});

@@ -291,6 +291,11 @@ export async function runScene(state, scene, opts={}, onProgress){
     // Консенсус = Оценщик принял И Стражи молчат.
     const proseAg = ag(state,'prose'), evalAg = ag(state,'evaluator');
     const threshold = g.evaluatorThreshold ?? 7.5;
+    // Ось «Голос» судится сверкой с образцами голоса автора. Их нет — судить
+    // не по чему, и ось исключается из балла (см. skipAxes в parseEvaluator).
+    // Объявлено здесь, а не рядом с voiceExamples ниже: Оценщик вызывается
+    // РАНЬШЕ блока Стражей, где та переменная появляется.
+    const evalSkipAxes = (state.voice?.examples||[]).filter(Boolean).length ? [] : ['voice'];
     // ?? 3, а не 5: дефолт этого поля — 3 (defaultState в state.js). Расхождение
     // фолбэка с настоящим дефолтом означало, что проект без явно заданного поля
     // молча работал с другим числом итераций, чем показывали Настройки.
@@ -550,7 +555,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         }
         const evalMaxTk = evalAg.maxTokens ?? 1080;
         let eRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalMaxTk });
-        verdict = parseEvaluator(eRes.text, threshold);
+        verdict = parseEvaluator(eRes.text, threshold, { skipAxes: evalSkipAxes });
         // Живой инцидент: реальный usage апстрима (не оценка) показал tokensOut
         // РОВНО на заявленном maxTokens — JSON оборвался и не распарсился
         // (verdict.ok=false). Раньше это молча проглатывалось: черновик без
@@ -580,7 +585,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // посмотреть постфактум. Логируем её отдельным шагом для диагностики.
           logStep({ agent:'evaluator-retry', iter, input:`(попытка 1, ${nearLimit?'похоже на обрыв':'формат сломан'})`, output:eRes.text, tokensIn:eRes.tokensIn, tokensOut:eRes.tokensOut, cost:eRes.cost });
           eRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalRetryTk });
-          verdict = parseEvaluator(eRes.text, threshold);
+          verdict = parseEvaluator(eRes.text, threshold, { skipAxes: evalSkipAxes });
         }
         // Якорь ставим на ПЕРВЫЙ успешно распарсенный вердикт, не строго на итерации
         // 1 — раньше, если итерация 1 не распарсилась (verdict.ok===false), anchorVerdict
@@ -1031,7 +1036,15 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(scoreHistory.length >= 2){
         const last = scoreHistory[scoreHistory.length-1], prev = scoreHistory[scoreHistory.length-2];
         const adjacent = last && prev && last.iter === prev.iter + 1;
-        const stuck = adjacent ? RUBRIC_AXES.map(a=>a.key).filter(k=>(last[k]||0) <= (prev[k]||0) + 0.5) : [];
+        // Считаем только по осям, реально присутствующим в ОБОИХ замерах.
+        // Ось, исключённая из оценки (например «Голос» без образцов голоса —
+        // см. skipAxes в parseEvaluator), в scores не попадает, и старое
+        // `(last[k]||0) <= (prev[k]||0)+0.5` давало 0 <= 0.5 → «застряла»
+        // ВСЕГДА. Это не косметика: полная стагнация (все оси разом) досрочно
+        // обрывает прогон, так что отсутствующая ось молча приближала выход
+        // из цикла на каждой итерации.
+        const судимыеОси = RUBRIC_AXES.map(a=>a.key).filter(k=>last[k]!=null && prev[k]!=null);
+        const stuck = adjacent ? судимыеОси.filter(k=>last[k] <= prev[k] + 0.5) : [];
         if(stuck.length){
           stagnantNote = '\n\nОСИ БЕЗ ПРОГРЕССА — измени подход РАДИКАЛЬНО, не шлифуй то же самое: ' + stuck.map(k=>AXIS_LABELS[k]||k).join(', ');
           stagnantLastIter = true;
@@ -1044,7 +1057,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // (Прозаик + Оценщик + все Стражи) за деньги автора без результата.
         // Живой прогон новой книги: на третьей итерации встали все шесть осей
         // сразу, пайплайн честно это написал и продолжил работать.
-        fullStagnationStreak = (stuck.length === RUBRIC_AXES.length) ? fullStagnationStreak + 1 : 0;
+        fullStagnationStreak = (судимыеОси.length && stuck.length === судимыеОси.length) ? fullStagnationStreak + 1 : 0;
       }
       if(fullStagnationStreak >= 2 && iter < maxIter){
         onProgress && onProgress({log:{icon:'🛑', text:`Две итерации подряд не сдвинулась ни одна ось — дальше цикл только тратит деньги. Останавливаюсь на лучшем черновике; если он не устраивает, помогут ручная правка или перезапуск с другой директивой.`, state:'warn'}});
@@ -1263,7 +1276,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           const fMsgs = evaluatorMessages(scene, best, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline: paceBaseline2, recentEndings: state.recentSceneEndings });
           const fRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:fMsgs, maxTokens:(evalAg.maxTokens ?? 1080) });
           logStep({ agent:'evaluator-final', input:'(перепроверка после Линейного редактора)', output:fRes.text, tokensIn:fRes.tokensIn, tokensOut:fRes.tokensOut, cost:fRes.cost });
-          const fVerdict = parseEvaluator(fRes.text, threshold);
+          const fVerdict = parseEvaluator(fRes.text, threshold, { skipAxes: evalSkipAxes });
           if(fVerdict.ok){
             const было = bestEval.weighted, стало = fVerdict.weighted;
             // Просадка больше половины балла — редактор ухудшил текст, который

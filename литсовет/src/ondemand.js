@@ -31,7 +31,12 @@ export async function runAgentOnDemand(state, scene, agent){
   if(role==='evaluator'){
     const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
     const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??840 });
-    return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7.5) };
+    // Тот же принцип, что в pipeline.js: без образцов голоса ось «Голос»
+    // судить не по чему — исключаем её из балла, а не даём модели выдумать
+    // число. Разовый прогон Оценщика и прогон в цикле обязаны считать балл
+    // одинаково, иначе одна и та же сцена получает два разных числа.
+    const skipAxes = (state.voice?.examples||[]).filter(Boolean).length ? [] : ['voice'];
+    return { kind:'evaluator', verdict: parseEvaluator(res.text, g.evaluatorThreshold ?? 7.5, { skipAxes }) };
   }
   if(role==='architect'){
     const msgs = architectMessages(state, scene, bookContextBlock(state, scene));
