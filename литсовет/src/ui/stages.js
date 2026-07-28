@@ -1605,6 +1605,16 @@ function renderSceneList(s){
   return html;
 }
 
+// Черновик от оборванного прогона: проза есть, но финальная запись (статус,
+// оценка, сводка в память) не состоялась — прогон умер между стримом и
+// коммитом. Такая сцена во всех списках выглядит НЕнаписанной, хотя текст в
+// ней есть, и, что хуже, её события не попали в память — следующие сцены
+// пишутся вслепую к ним. handDone отсекает ручной черновик автора: он тоже
+// text+todo, но это осознанная работа рукой, а не сбой.
+function uncommittedDraft(scene){
+  return !!(scene && scene.text && scene.text.trim() && scene.status!=='done' && !scene.handDone);
+}
+
 // ─────────────────────────────── НАПИСАНИЕ ───────────────────────────────
 export function renderWrite(els){
   const s = getState();
@@ -1676,6 +1686,13 @@ export function renderWrite(els){
     <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${_edReviewOn?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):esc(scene.text)):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
     <div id="edPopup" class="ed-popup" style="display:none"></div>
+    ${uncommittedDraft(scene) ? `<div style="margin-top:10px;border:1px solid var(--warn,#c9a227);border-radius:8px;padding:11px 13px;background:var(--surface-2)">
+      <div style="font-size:12px">⚠ В сцене лежит <b>недописанный черновик</b> (${scene.words} сл.): проза есть, но прогон не дошёл до конца — Стражи и Оценщик её не проверяли, а сводки в памяти нет, поэтому следующие сцены о её событиях не знают.</div>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="acceptDraft" style="font-size:11px;padding:2px 9px" data-tip="Пометить сцену написанной и сделать сводку в память — один дешёвый вызов. Текст не меняется.">Принять как есть</button>
+        <button class="btn" id="regenDraft" style="font-size:11px;padding:2px 9px" data-tip="Прогнать сцену заново с нуля: Прозаик, Стражи, Оценщик.">Перегенерировать</button>
+      </div>
+    </div>` : ''}
     ${locked?renderChapterLockedBanner(s, ch):(showStop?renderEditorialStop(s, ch, isFactoryMode):'')}
     <div class="brief-box">
       <div class="field" style="margin:0 0 8px"><label>Бриф сцены</label>
@@ -1746,7 +1763,9 @@ export function renderWrite(els){
   const edEl = document.getElementById('editor');
   if(scene.text && !_edReviewOn){
     const editStartText = scene.text; // снимок ДО правки — сверяем на blur, реально ли текст изменился
-    edEl.addEventListener('input', ()=>{ scene.text=edEl.innerText; if(!scene.handDone){ scene.handDone=true; } scene._dirty=true; });
+    // words обновляем сразу, а не только на blur: страница, закрытая с курсором
+    // в редакторе, сохраняла новый текст со старым счётчиком (см. flush в state.js).
+    edEl.addEventListener('input', ()=>{ scene.text=edEl.innerText; scene.words=(scene.text.match(/\S+/g)||[]).length; if(!scene.handDone){ scene.handDone=true; } scene._dirty=true; });
     // Коммит правки (тут же ловит и Undo/Redo ниже — оба лишь ставят _dirty=true
     // и полагаются на этот blur): оценка/флаги относились к тексту ДО правки рукой.
     // Обнуляем оценку, только если текст на выходе реально отличается от снимка —
@@ -1794,6 +1813,26 @@ export function renderWrite(els){
     if(dInp) dInp.value = _pendingDirective;
     _pendingDirective = null;
   }
+
+  // Недописанный черновик от оборванного прогона (см. uncommittedDraft).
+  // «Принять как есть» намеренно НЕ ставит оценку: её никто не выставлял, и
+  // подсунуть выдуманную было бы враньём. Зато догоняет сводку в память —
+  // ради неё всё и затевалось, иначе дыра в непрерывности остаётся.
+  const acceptDraft = document.getElementById('acceptDraft');
+  if(acceptDraft) acceptDraft.onclick = async ()=>{
+    if(_busy) return;
+    _busy = true;
+    acceptDraft.disabled = true; acceptDraft.innerHTML = '<span class="spinner"></span> Принимаю…';
+    scene.status = 'done';
+    scene.words = (scene.text.match(/\S+/g)||[]).length;
+    save();
+    try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); }
+    catch(e){ alert('Сцена принята, но сводку в память сделать не удалось: '+e.message+'\nПопробуйте ещё раз — иначе следующие сцены не узнают её событий.'); }
+    _busy = false;
+    save();
+  };
+  const regenDraft = document.getElementById('regenDraft');
+  if(regenDraft) regenDraft.onclick = ()=>{ if(!_busy) doRun(els, s, scene, ''); };
 
   // Undo/redo ТЕКСТА в редакторе (правки рукой) — нативная история contenteditable
   const edU=document.getElementById('edUndo'), edR=document.getElementById('edRedo');
@@ -2794,7 +2833,10 @@ async function doRun(els, s, scene, directive, runFlags={}){
     if(!directive) scene.rejectedNotes = [];
     runOpts.onApproval = approvalGate;   // ручной режим: пауза на подтверждение
     const result = await runScene(s, scene, runOpts, prog=>{
-      if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; }
+      // words держим в шаге с text: стрим сохраняется на диск (переживает
+      // обрыв), а счётчик раньше писался только строкой ниже, в самом конце
+      // прогона — оборванный прогон оставлял прозу при words:0.
+      if(prog.streaming){ ed.textContent=prog.text; scene.text=prog.text; scene.words=(prog.text.match(/\S+/g)||[]).length; }
       else if(prog.log){ pushProc(prog); }
       else { btn.innerHTML=`<span class="spinner"></span> ${esc(prog.text)}`; pushProc(prog); }
     });
