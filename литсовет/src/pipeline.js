@@ -55,9 +55,21 @@ function anchorSurvives(text, anchor){ return !anchor || normalizeAnchor(text).i
 // может остаться без ответа, прежде чем перестать быть необязательным пробелом и
 // стать обязательной правкой (см. FACTUAL_ESCALATE_ITERS ниже по файлу).
 const FACTUAL_ESCALATE_ITERS = 3;
+// Сколько раз это замечание уже отклоняли (0 — ни разу).
+function rejectedCount(text, rejectedNotes){
+  if(!rejectedNotes || !rejectedNotes.length || !text) return 0;
+  const rn = rejectedNotes.find(x => noteSimilarity(text, x.quote + ' ' + (x.reason||'')) >= REJECT_SIM_THRESHOLD);
+  return rn ? (rn.count||1) : 0;
+}
+// Отклонённое замечание глушится, пока отказ выглядит как художественный
+// выбор. Начиная с REJECT_STUBBORN_TIMES-го отказа подряд это уже не выбор, а
+// увиливание: замечание снова становится видимым — и автору, и следующей
+// итерации. Порог тот же по смыслу, что FACTUAL_ESCALATE_ITERS у фактических
+// стражей, просто применён ко всем замечаниям.
+const REJECT_STUBBORN_TIMES = 3;
 function isRejectedNote(text, rejectedNotes){
-  if(!rejectedNotes || !rejectedNotes.length || !text) return false;
-  return rejectedNotes.some(rn => noteSimilarity(text, rn.quote + ' ' + (rn.reason||'')) >= REJECT_SIM_THRESHOLD);
+  const n = rejectedCount(text, rejectedNotes);
+  return n > 0 && n < REJECT_STUBBORN_TIMES;
 }
 // Запоминает вновь отклонённые пункты на сцене (дедуп против уже сохранённых).
 // Экспортирована — переиспользуется из ondemand.js (patchScene), чтобы
@@ -70,8 +82,14 @@ export function rememberRejected(scene, rejected){
   scene.rejectedNotes = scene.rejectedNotes || [];
   rejected.forEach(r=>{
     if(!r.quote) return;
-    const dup = scene.rejectedNotes.some(rn => noteSimilarity(rn.quote, r.quote) >= REJECT_SIM_THRESHOLD);
-    if(!dup) scene.rejectedNotes.push({ quote:r.quote, reason:r.reason||'', ts:Date.now() });
+    // Повтор НЕ отбрасывается молча, а считается: «отклонил один раз» и
+    // «отклонил трижды подряд» — разные вещи. Первый отказ — художественный
+    // выбор, третий — увиливание, и с этого момента замечание перестаёт
+    // глушиться (см. фильтр в основном цикле). Это та же логика, что у
+    // эскалации фактических стражей, распространённая на все замечания.
+    const прежний = scene.rejectedNotes.find(rn => noteSimilarity(rn.quote, r.quote) >= REJECT_SIM_THRESHOLD);
+    if(прежний){ прежний.count = (прежний.count||1) + 1; прежний.ts = Date.now(); }
+    else scene.rejectedNotes.push({ quote:r.quote, reason:r.reason||'', ts:Date.now(), count:1 });
   });
   if(scene.rejectedNotes.length > 30) scene.rejectedNotes = scene.rejectedNotes.slice(-30);
 }

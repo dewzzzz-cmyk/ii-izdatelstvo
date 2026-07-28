@@ -167,3 +167,35 @@ test('typo: переносы строк выживают', () => {
   const r = typo('Первый абзац.\n\nВторой абзац.');
   assert.match(r, /\n\n/);
 });
+
+// ─────────────── rememberRejected: счётчик упорства ───────────────
+// Один отказ — художественный выбор, три подряд — увиливание. Раньше повтор
+// молча отбрасывался как дубль, и эти два случая были неотличимы.
+test('rememberRejected: повторный отказ считается, а не теряется', async () => {
+  const { rememberRejected } = await import('../src/pipeline.js');
+  const сцена = {};
+  const замечание = [{ quote: 'Герой полностью пассивен', reason: 'приём' }];
+  rememberRejected(сцена, замечание);
+  assert.equal(сцена.rejectedNotes.length, 1);
+  assert.equal(сцена.rejectedNotes[0].count, 1);
+
+  rememberRejected(сцена, замечание);
+  rememberRejected(сцена, замечание);
+  assert.equal(сцена.rejectedNotes.length, 1, 'дубли не должны плодить записи');
+  assert.equal(сцена.rejectedNotes[0].count, 3, 'счётчик упорства не растёт');
+});
+
+test('rememberRejected: разные замечания — разные записи', async () => {
+  const { rememberRejected } = await import('../src/pipeline.js');
+  const сцена = {};
+  rememberRejected(сцена, [{ quote: 'Герой полностью пассивен', reason: 'приём' }]);
+  rememberRejected(сцена, [{ quote: 'Запах доносился до горизонта — абсурдный образ', reason: 'гипербола' }]);
+  assert.equal(сцена.rejectedNotes.length, 2);
+});
+
+test('rememberRejected: пункт без цитаты игнорируется', async () => {
+  const { rememberRejected } = await import('../src/pipeline.js');
+  const сцена = {};
+  rememberRejected(сцена, [{ reason: 'без цитаты' }]);
+  assert.equal((сцена.rejectedNotes || []).length, 0);
+});

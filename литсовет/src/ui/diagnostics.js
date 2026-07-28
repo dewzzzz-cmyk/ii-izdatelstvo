@@ -302,9 +302,18 @@ function bindFlagFix(){
 function renderRejectedNotes(scene){
   const rn = scene?.rejectedNotes;
   if(!rn || !rn.length) return '';
-  return `<div class="rn-block" data-tip="Прозаик мотивированно отказался вносить эти правки (посчитал их художественным приёмом) — Стражи больше не подсвечивают их повторно.">
-    <div class="rn-head"><span>🖋 Отклонено автором как приём (${rn.length})</span><button class="btn" id="rnClear" style="font-size:11px;padding:2px 8px">↺ показывать снова</button></div>
-    <div class="rn-list">${rn.slice(-8).map(r=>`<div class="rn-item">«${esc(r.quote)}»${r.reason?` — ${esc(r.reason)}`:''}</div>`).join('')}</div>
+  // Показываем, сколько раз Прозаик отклонял ОДНО И ТО ЖЕ. Один отказ —
+  // художественный выбор, три подряд — увиливание, и с третьего замечание
+  // перестаёт глушиться (REJECT_STUBBORN_TIMES в pipeline.js). Без счётчика
+  // «отклонил один раз» и «отклонил трижды» выглядели в панели одинаково.
+  const упрямых = rn.filter(r => (r.count||1) >= 3).length;
+  return `<div class="rn-block" data-tip="Прозаик мотивированно отказался вносить эти правки (посчитал их художественным приёмом) — Стражи больше не подсвечивают их повторно. Замечание, отклонённое три раза подряд, снова становится видимым.">
+    <div class="rn-head"><span>🖋 Отклонено автором как приём (${rn.length})${упрямых?` · ${упрямых} возвращено в работу`:''}</span><button class="btn" id="rnClear" style="font-size:11px;padding:2px 8px">↺ показывать снова</button></div>
+    <div class="rn-list">${rn.slice(-8).map(r=>{
+      const c = r.count||1;
+      const метка = c>=3 ? ` <b style="color:var(--warn,#c9a227)">×${c} — снова видимо</b>` : (c>1?` <span style="opacity:.7">×${c}</span>`:'');
+      return `<div class="rn-item">«${esc(r.quote)}»${r.reason?` — ${esc(r.reason)}`:''}${метка}</div>`;
+    }).join('')}</div>
   </div>`;
 }
 
