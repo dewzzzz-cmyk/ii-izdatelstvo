@@ -103,9 +103,17 @@ function renderCategoryCard(s, worldFacts, cat, busyAny, depthBusyAny){
             <button class="w-cand-del" data-id="${c.id}" title="Убрать этот вариант из списка" style="flex-shrink:0;border:none;background:none;color:var(--text-3);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px">✕</button>
           </div>
         </div>`).join('')}
+      ${/* Кандидаты — предложения, а не готовый канон: их надо прочитать и
+           отсеять лишнее (✕). Прежняя подпись «Сохранить в канон (8)» читалась
+           как «сохранить всё», а слова про выбор на экране не было вообще —
+           автор одним кликом мог занести в канон факты, спорящие друг с другом
+           (живой прогон: героиня одновременно бессмертная сущность и человек
+           со шрамом от травмы). Промпт теперь просит связный набор, но
+           последнее слово всё равно за автором. */''}
+      <div class="hint" style="margin-top:6px">Прочитайте и уберите лишнее крестиком — в канон уйдёт только оставшееся. Факты канона Стражи считают истиной, спорящие между собой сделают проверки бессмысленными.</div>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:6px">
         <button class="btn world-cat-clear" data-cat="${esc(cat)}">Отменить</button>
-        <button class="btn btn-primary world-cat-approve" data-cat="${esc(cat)}" ${selCount?'':'disabled'}>Сохранить в канон (${selCount})</button>
+        <button class="btn btn-primary world-cat-approve" data-cat="${esc(cat)}" ${selCount?'':'disabled'}>Добавить выбранные (${selCount})</button>
       </div>
     </div>` : ''}
 

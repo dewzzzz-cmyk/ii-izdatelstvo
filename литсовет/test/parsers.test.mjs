@@ -177,3 +177,24 @@ test('parseSceneSummary: отсутствующие поля не роняют �
   assert.deepEqual(s.characters, []);
   assert.deepEqual(s.facts, []);
 });
+
+// ───────────── промпт мира: связный набор, а не альтернативы ─────────────
+// Живой прогон: в одной выдаче про героиню пришли «бессмертная сущность»,
+// «шрам от старой травмы», «альтер-эго Тень» и «предотвращает своё убийство» —
+// четыре разные книги, и кнопка предлагала сохранить их все разом.
+test('worldSuggestMessages: требует одновременной истинности фактов', async () => {
+  const { worldSuggestMessages } = await import('../src/world.js');
+  const st = { project:{ genre:'мистика', idea:'библиотекарь и книга с пометками' }, bible:[] };
+  const m = worldSuggestMessages(st, 'персонажи');
+  const sys = m[0].content;
+  assert.match(sys, /ОДНОВРЕМЕННО/, 'нет требования одновременной истинности');
+  assert.match(sys, /не список альтернатив|альтернатив/, 'не сказано, что это не список вариантов');
+});
+
+test('worldSuggestMessages: категория и жанр доходят до промпта', async () => {
+  const { worldSuggestMessages } = await import('../src/world.js');
+  const st = { project:{ genre:'мистика', idea:'x' }, bible:[] };
+  const m = worldSuggestMessages(st, 'география');
+  assert.match(m[0].content, /география/);
+  assert.match(m[1].content, /мистика/);
+});
