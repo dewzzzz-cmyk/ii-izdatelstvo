@@ -5,7 +5,7 @@
 import { callLLM, extractJSON } from './llm.js';
 import { buildSceneContext, bookContextBlock } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
-         evaluatorMessages, parseEvaluator, RUBRIC_AXES } from './agents.js';
+         evaluatorMessages, parseEvaluator, RUBRIC_AXES, axisOfNote } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          lineEditMessages, runGuardParse, customGuardMessages, surgicalReviseMessages,
          radicalReviseMessages, parseDebateRevision, styleGuardMessages, readerGuardMessages,
@@ -119,9 +119,51 @@ async function gate(state, role, label, output, opts, extra={}){
   if(!manual(state, role) || !opts.onApproval) return { approve:true };
   return await opts.onApproval({ role, label, output, ...extra });
 }
+// Сколько НЕобязательных пунктов максимум уходит Прозаику за одну итерацию.
+// Критические замечания Стражей и якоря в бюджет не входят — они обязательны
+// всегда. Число выведено из живого замера: директива на 22-25 пунктов при
+// сцене в 900 слов — это новое требование каждые 36 слов, и Прозаик физически
+// может только точечно пропатчить каждое, а не переосмыслить сцену. Восемь
+// пунктов оставляют место на реальную переработку; остальное не теряется, а
+// ждёт следующей итерации (Оценщик и Стражи всё равно найдут это снова, если
+// проблема не ушла).
+const DIRECTIVE_BUDGET = 8;
+// Разделение фаз (см. фазы ниже): Оценщик и Стражи проверяют РАЗНОЕ, и смешивать
+// их в одной директиве — значит тратить бюджет внимания Прозаика на то, за что
+// балл не выставляется. Живой замер третьей итерации: 1394 симв. от Оценщика
+// против 8590 от Стражей — 86% инструкции уходило в измерение, которого нет ни
+// на одной оси рубрики, при том что низкие оси (Ритм 4-5, Конкретность 5,
+// Свежесть 5) не двигались три итерации подряд. Теперь итерации чередуются:
+// нечётная — проза (оси Оценщика), чётная — факты и приёмы (замечания Стражей).
+// Критические замечания идут в ОБЕИХ фазах — они не пожелание, а ошибка.
+function directivePhase(iter){ return (iter % 2 === 1) ? 'prose' : 'guards'; }
+
 // Объединённая директива: Прозаик получает всё сразу — оценщик + стражи + запреты.
-function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions, literaryNotes, tooShort){
+// opts: { phase:'prose'|'guards', scores, onDefer } — phase выбирает, чьи замечания
+// доминируют на этой итерации; scores (оси вердикта) сортируют замечания Оценщика
+// так, чтобы бюджет уходил на самые провальные оси; onDefer(n, что) сообщает
+// автору, сколько пунктов отложено на следующую итерацию.
+export function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestions, literaryNotes, tooShort, opts={}){
   const parts = [];
+  const phase = opts.phase || 'prose';
+  const scores = opts.scores || verdict.scores || {};
+  const deferred = [];
+  // «Бери первые N» — не то же самое, что «бери N самых нужных». Раньше список
+  // шёл в директиву как есть, порядком от модели, и замечание по оси с баллом 4
+  // могло стоять после трёх замечаний по осям с баллом 7. Сортируем по баллу
+  // оси возрастанием (сортировка устойчивая — внутри одной оси порядок модели
+  // сохраняется), незамеченные — в конец: их приоритет неизвестен.
+  const byAxis = (notes)=>notes
+    .map((n,i)=>({ n, i, ax:axisOfNote(n) }))
+    .sort((a,b)=>{
+      const sa = a.ax ? (scores[a.ax] ?? 10) : 99, sb = b.ax ? (scores[b.ax] ?? 10) : 99;
+      return sa !== sb ? sa - sb : a.i - b.i;
+    })
+    .map(o=>o.n);
+  const take = (list, n, label)=>{
+    if(list.length > n) deferred.push(`${list.length - n} ${label}`);
+    return list.slice(0, n);
+  };
   if((verdict.anchors||[]).length) parts.push('СОХРАНИ ДОСЛОВНО (якоря): ' + verdict.anchors.join('; '));
   // Ось «Темп» Оценщика пишет notes вида «избыточная деталь — сократи/убери» на
   // каждой итерации, не глядя на текущий объём сцены. Когда сцена уже заметно
@@ -133,21 +175,59 @@ function buildUnifiedDirective(verdict, allBanned, criticalFlags, factualQuestio
   // видна, просто без указания как её решать.
   const notes = (verdict.notes||[]).map(n=>
     (tooShort && SHORTEN_HINT_RE.test(n)) ? n + ' — НЕ сокращай: сцена и так короче цели, реши другим способом.' : n);
-  parts.push(...notes);
+  // В фазе прозы Оценщик забирает почти весь бюджет; в фазе Стражей ему
+  // остаются только 2 самые провальные оси — чтобы низкие оси не проваливались
+  // обратно, пока Прозаик занят логикой и фактурой.
+  const notesQuota = phase === 'prose' ? DIRECTIVE_BUDGET - 2 : 2;
+  const chosenNotes = take(byAxis(notes), notesQuota, 'замеч. Оценщика');
+  if(chosenNotes.length) parts.push((phase === 'prose'
+    ? 'ГЛАВНОЕ НА ЭТОЙ ИТЕРАЦИИ — КАЧЕСТВО ПРОЗЫ (по этим осям тебя и оценивают, они идут от самой провальной):\n'
+    : 'Оси с самым низким баллом — не дай им просесть ещё сильнее:\n') + chosenNotes.join('\n'));
   if(criticalFlags.length) parts.push('КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticalFlags.join('\n'));
   // Отдельно от критических: вопросы фактических стражей (логика/события) с severity
   // "warning" — их собственный промпт называет их пробелом, на который не нужно
   // выдумывать ответ, а не командой исправить. Раньше они попадали в criticalFlags
   // наравне с настоящими critical — Прозаик был вынужден изобретать факт, которого
   // в сцене нет, лишь бы «исправить» то, что на деле было вопросом автору.
-  if(factualQuestions && factualQuestions.length) parts.push('ВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (это пробел, не ошибка — не выдумывай факт: либо сделай формулировку нейтральной, либо оставь как есть для решения автора):\n' + factualQuestions.join('\n'));
+  // В фазе прозы вопросы Стражей откладываются целиком: они не влияют ни на
+  // одну ось Оценщика, а объёмом легко перекрывают всё остальное. Ничего не
+  // теряется — трекер повторов (factualWarningTracker) считает их на КАЖДОЙ
+  // итерации независимо от того, показаны ли они, и после FACTUAL_ESCALATE_ITERS
+  // повторов вопрос уходит в criticalFlags, которые идут в обеих фазах.
+  const chosenFactual = phase === 'guards'
+    ? take(factualQuestions||[], 4, 'вопр. Стражей')
+    : ((factualQuestions||[]).length ? (deferred.push(`${factualQuestions.length} вопр. Стражей`), []) : []);
+  if(chosenFactual.length) parts.push('ВОПРОСЫ СТРАЖЕЙ ЛОГИКИ/СОБЫТИЙ (это пробел, не ошибка — не выдумывай факт: либо сделай формулировку нейтральной, либо оставь как есть для решения автора):\n' + chosenFactual.join('\n'));
   // Замечания литературных стражей (голос/стиль/юмор/диалог/развязка/атмосфера/...)
   // с severity 'warning' — раньше эти стражи физически не успевали отработать до
   // последней итерации (см. гейт iter>=maxIter-1 выше), так что их находки было
   // некому применить. Теперь они успевают, но по своей природе это стилистические
   // рекомендации, а не обязательные к исправлению ошибки — формулируем как совет.
-  if(literaryNotes && literaryNotes.length) parts.push('ЗАМЕЧАНИЯ ЛИТЕРАТУРНЫХ СТРАЖЕЙ (стиль/приём — учти при правке, если не противоречит другим указаниям):\n' + literaryNotes.join('\n'));
-  if(allBanned.length) parts.push('убери клише (все предыдущие итерации): ' + allBanned.join(', '));
+  // Тот же принцип, что и для вопросов выше: советы литературных стражей — это
+  // отдельный вид работы, и в фазе прозы они только размывают фокус. Остаток
+  // бюджета после вопросов Стражей достаётся им.
+  const litQuota = phase === 'guards' ? Math.max(0, DIRECTIVE_BUDGET - 2 - chosenFactual.length) : 0;
+  const chosenLit = litQuota
+    ? take(literaryNotes||[], litQuota, 'сов. лит. стражей')
+    : ((literaryNotes||[]).length ? (deferred.push(`${literaryNotes.length} сов. лит. стражей`), []) : []);
+  if(chosenLit.length) parts.push('ЗАМЕЧАНИЯ ЛИТЕРАТУРНЫХ СТРАЖЕЙ (стиль/приём — учти при правке, если не противоречит другим указаниям):\n' + chosenLit.join('\n'));
+  // Раньше сюда уходил ВЕСЬ накопленный список (до 150 оборотов со всей книги —
+  // см. state.usedCliches) под формулировкой «убери клише». Две проблемы разом:
+  // список сам по себе весил больше, чем все замечания вместе, и главное —
+  // «убери эти обороты» не мешает написать НОВЫЕ клише на их месте. Живой замер
+  // подтвердил ровно это: каждая итерация давала ровно 3 клише, все три — новые,
+  // и ось «Свежесть» физически не могла вырасти. Теперь список урезан до
+  // последних 12 (остальное всё равно не читается), а запрет сформулирован как
+  // КЛАСС приёма с явным указанием, чем заменять — конкретной деталью, а не
+  // синонимом той же идеи.
+  if(allBanned.length){
+    const показать = allBanned.slice(-12);
+    parts.push('НЕ ИСПОЛЬЗУЙ эти обороты — они уже забракованы Оценщиком в этой книге'
+      + (allBanned.length > показать.length ? ` (показаны последние ${показать.length} из ${allBanned.length})` : '') + ': '
+      + показать.join(', ')
+      + '\nЗамена — НЕ синоним и НЕ другой образ той же идеи: это тот же штамп другими словами, и следующая проверка забракует его так же. Замена — конкретная наблюдаемая деталь ЭТОГО места: что именно видно, слышно, что делает тело или предмет здесь и сейчас. Если без образа фраза работает — убери образ совсем, это лучше нового сравнения.');
+  }
+  if(deferred.length && opts.onDefer) opts.onDefer(deferred);
   return parts.join('\n\n');
 }
 // Директивы прямо просят сократить/сжать текст — тогда безопасность-от-усечения
@@ -275,6 +355,15 @@ export async function runScene(state, scene, opts={}, onProgress){
     // много итераций подряд эскалируется в обязательную правку.
     let factualWarningTracker = [];
     const AXIS_LABELS = Object.fromEntries(RUBRIC_AXES.map(a=>[a.key, a.label]));
+    // Общие опции сборки директивы для обеих веток (ручной гейт Оценщика и
+    // автоматическая). Фаза считается от НОМЕРА текущей итерации, поэтому это
+    // функция, а не объект: iter меняется на каждом витке цикла.
+    const directiveOpts = (v)=>({
+      phase: directivePhase(iter),
+      scores: v?.scores,
+      onDefer: (list)=> onProgress && onProgress({log:{icon:'📋',
+        text:`Директива сжата до ${DIRECTIVE_BUDGET} пунктов (${directivePhase(iter)==='prose'?'фаза прозы — оси Оценщика':'фаза стражей — логика и приёмы'}). Отложено на следующую итерацию: ${list.join(', ')}`}}),
+    });
     // true, если предыдущая итерация обнаружила стагнацию осей — на СЛЕДУЮЩУЮ
     // итерацию идём через radicalReviseMessages вместо surgicalReviseMessages
     // (см. комментарий там же): иначе директива «измени РАДИКАЛЬНО» уходит в
@@ -897,7 +986,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           break;
         }
         if(gt.text?.trim()){ pRes.text=gt.text.trim(); prevDraft=pRes.text; }
-        directive = (gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + standingBlock;
+        directive = (gt.note || buildUnifiedDirective(verdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort, directiveOpts(verdict)) || directive) + standingBlock;
         continue;
       }
 
@@ -997,7 +1086,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       const truncNote = draftTruncated
         ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.'
         : '';
-      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort) || directive) + stagnantNote + categoryNote + lengthNote + truncNote + anchorNote + standingBlock;
+      directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort, directiveOpts(directiveVerdict)) || directive) + stagnantNote + categoryNote + lengthNote + truncNote + anchorNote + standingBlock;
       // Якоря ЭТОЙ итерации становятся базой для сверки со СЛЕДУЮЩЕЙ — только
       // если Оценщик реально распарсился (verdict.ok); иначе держим прошлые
       // якоря, а не обнуляем их из-за одного нераспарсенного ответа.
@@ -1138,6 +1227,53 @@ export async function runScene(state, scene, opts={}, onProgress){
       // больше недостоверны (тот же принцип, что и сброс lastEval/flags при любой
       // правке текста мимо основного прогона — см. фиксы в ui/stages.js, ui/chat.js).
       if(best !== beforeLineEdit) bestFlags = {};
+
+      // Балл сцены принадлежал тексту ДО Линейного редактора — и это было не
+      // мелкой неточностью, а систематическим враньём: живой замер показал, что
+      // редактор срезал 125 слов из 988 (−12.6%) уже ПОСЛЕ того, как Оценщик
+      // выставил 5.7, и в книгу ушёл текст, который никто не оценивал. Гарантии
+      // выше (клише не возвращаются, не больше 33% новых слов, якоря на месте)
+      // ограничивают ущерб, но не заменяют измерения. Пересчитываем — это +1
+      // платный вызов на сцену, и он оправдан только когда текст реально
+      // изменился.
+      if(best !== beforeLineEdit && agentEnabled('evaluator') && bestEval?.ok){
+        try{
+          onProgress && onProgress({stage:'evaluator', text:'Оценщик перепроверяет текст после Линейного редактора…'});
+          const doneWords2 = (state.structure||[]).filter(n=>n.type==='scene' && n.status==='done' && n.words).map(n=>n.words);
+          let paceBaseline2 = null;
+          if(doneWords2.length >= 3){
+            const sorted2 = [...doneWords2].sort((a,b)=>a-b);
+            paceBaseline2 = { medianWords: sorted2[Math.floor(sorted2.length/2)], sceneWords: (best.match(/\S+/g)||[]).length };
+          }
+          const fMsgs = evaluatorMessages(scene, best, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline: paceBaseline2, recentEndings: state.recentSceneEndings });
+          const fRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:fMsgs, maxTokens:(evalAg.maxTokens ?? 1080) });
+          logStep({ agent:'evaluator-final', input:'(перепроверка после Линейного редактора)', output:fRes.text, tokensIn:fRes.tokensIn, tokensOut:fRes.tokensOut, cost:fRes.cost });
+          const fVerdict = parseEvaluator(fRes.text, threshold);
+          if(fVerdict.ok){
+            const было = bestEval.weighted, стало = fVerdict.weighted;
+            // Просадка больше половины балла — редактор ухудшил текст, который
+            // Оценщик и Стражи уже утвердили. Мы теперь ЗНАЕМ это (раньше не
+            // знали), и оставлять худший вариант, имея измерение, бессмысленно —
+            // откатываемся. Допуск 0.5 гасит обычный шум LLM-судьи между двумя
+            // вызовами на почти одинаковом тексте, чтобы откат не срабатывал
+            // на дрожании оценки.
+            if(стало < было - 0.5){
+              onProgress && onProgress({log:{icon:'↩️', text:`Перепроверка после Линейного редактора: ${было}→${стало} — правка ухудшила текст, откатываю к варианту, который утвердили Оценщик и Стражи`, state:'warn'}});
+              best = beforeLineEdit;
+            } else {
+              bestEval = fVerdict; bestFlags = {};
+              onProgress && onProgress({log:{icon:'⚖️', text:`Балл сцены пересчитан по финальному тексту (после Линейного редактора): ${было}→${стало}`, state: стало >= было ? 'ok' : 'warn'}});
+            }
+          } else {
+            // Не молчим: без этого автор видел бы балл, не зная, что он от
+            // другого текста — ровно та проблема, которую пересчёт и решает.
+            onProgress && onProgress({log:{icon:'⚠️', text:`Перепроверка после Линейного редактора не распарсилась — балл сцены относится к тексту ДО его правки`, state:'warn'}});
+          }
+        }catch(e){
+          logStep({ agent:'evaluator-final', output:'[АГЕНТ ПРОВАЛИЛСЯ] '+e.message });
+          onProgress && onProgress({log:{icon:'⚠️', text:`Перепроверка после Линейного редактора не удалась (${e.message}) — балл относится к тексту ДО его правки`, state:'warn'}});
+        }
+      }
     }
 
     // Клише этой сцены (свои + унаследованные от предыдущих) — обратно в

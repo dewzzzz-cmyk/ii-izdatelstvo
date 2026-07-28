@@ -198,3 +198,88 @@ test('worldSuggestMessages: категория и жанр доходят до �
   assert.match(m[0].content, /география/);
   assert.match(m[1].content, /мистика/);
 });
+
+// ───────────── бюджет и фазы директивы Прозаику ─────────────
+// Живой замер сцены «Чужая смерть»: директива третьей итерации весила 9984
+// символа против 6297 символов прозы (25 требований на 900 слов), и только
+// 14% этого объёма приходилось на замечания Оценщика — то есть на то, за что
+// вообще выставляется балл. Оси при этом стояли три итерации подряд.
+test('axisOfNote: метка оси читается в обоих написаниях', async () => {
+  const { axisOfNote } = await import('../src/agents.js');
+  assert.equal(axisOfNote('[Свежесть образа] клише в описании страха'), 'freshness');
+  assert.equal(axisOfNote('Свежесть образа: клише в описании страха'), 'freshness');
+  assert.equal(axisOfNote('Ритм — имя персонажа три раза подряд'), 'rhythm');
+  assert.equal(axisOfNote('[Соответствие брифу] пропала мать героя'), 'brief');
+  assert.equal(axisOfNote('Герой — пассивен, ничего не решает'), null, 'не-ось не должна опознаваться');
+  assert.equal(axisOfNote(''), null);
+});
+
+test('buildUnifiedDirective: бюджет соблюдён, приоритет — низшим осям', async () => {
+  const { buildUnifiedDirective } = await import('../src/pipeline.js');
+  const verdict = {
+    anchors: [],
+    scores: { freshness:4, rhythm:5, concrete:5, voice:8, pace:8, brief:9 },
+    // Восемь замечаний при квоте 6 — два должны отсеяться, и отсеяться должны
+    // именно те, что относятся к самым благополучным осям.
+    notes: [
+      '[Соответствие брифу] мелочь-бриф',
+      '[Голос] мелочь-голос',
+      '[Темп] мелочь-темп',
+      '[Свежесть образа] главная проблема — тут балл 4',
+      '[Ритм] вторая по важности',
+      '[Конкретность] третья по важности',
+      '[Свежесть образа] вторая проблема той же провальной оси',
+      '[Ритм] вторая проблема ритма',
+    ],
+  };
+  const отложено = [];
+  const d = buildUnifiedDirective(verdict, [], [], [], [], false,
+    { phase:'prose', scores:verdict.scores, onDefer:l=>отложено.push(...l) });
+  const pos = s => d.indexOf(s);
+  assert.ok(pos('главная проблема') >= 0, 'замечание по самой низкой оси должно попасть в директиву');
+  assert.ok(pos('главная проблема') < pos('мелочь-голос'),
+    'ось с баллом 4 должна идти раньше оси с баллом 8');
+  assert.ok(!d.includes('мелочь-бриф'), 'ось с баллом 9 должна отсеяться первой');
+  assert.ok(!d.includes('мелочь-темп'), 'вторая ось с баллом 8 должна отсеяться следом');
+  assert.deepEqual(отложено, ['2 замеч. Оценщика'], 'автор должен узнать, сколько отложено');
+});
+
+test('buildUnifiedDirective: фаза прозы откладывает замечания Стражей', async () => {
+  const { buildUnifiedDirective } = await import('../src/pipeline.js');
+  const verdict = { anchors: [], scores:{ freshness:4 }, notes:['[Свежесть образа] клише'] };
+  const factual = ['[Логика] откуда часы в кармане'];
+  const literary = ['[Диалог] реплики взаимозаменяемы'];
+  const отложено = [];
+  const prose = buildUnifiedDirective(verdict, [], [], factual, literary, false,
+    { phase:'prose', scores:verdict.scores, onDefer:l=>отложено.push(...l) });
+  assert.ok(!prose.includes('откуда часы'), 'вопрос Стража не должен идти в фазе прозы');
+  assert.ok(!prose.includes('взаимозаменяемы'), 'совет лит. стража не должен идти в фазе прозы');
+  assert.ok(prose.includes('клише'), 'замечание Оценщика должно остаться');
+  assert.equal(отложено.length, 2, 'об отложенном должен узнать автор');
+
+  const guards = buildUnifiedDirective(verdict, [], [], factual, literary, false,
+    { phase:'guards', scores:verdict.scores });
+  assert.ok(guards.includes('откуда часы'), 'в фазе стражей вопрос должен появиться');
+  assert.ok(guards.includes('взаимозаменяемы'), 'в фазе стражей совет должен появиться');
+});
+
+test('buildUnifiedDirective: критические замечания идут в обеих фазах', async () => {
+  const { buildUnifiedDirective } = await import('../src/pipeline.js');
+  const verdict = { anchors: [], scores:{}, notes:[] };
+  const crit = ['[Логика] герой знает то, чего знать не может'];
+  for(const phase of ['prose','guards']){
+    const d = buildUnifiedDirective(verdict, [], crit, [], [], false, { phase });
+    assert.ok(d.includes('знать не может'), `критическое замечание пропало в фазе ${phase}`);
+  }
+});
+
+test('buildUnifiedDirective: клише — урезанный список плюс запрет на класс', async () => {
+  const { buildUnifiedDirective } = await import('../src/pipeline.js');
+  const verdict = { anchors: [], scores:{}, notes:[] };
+  const banned = Array.from({length:40}, (_,i)=>`клише${i}`);
+  const d = buildUnifiedDirective(verdict, banned, [], [], [], false, { phase:'prose' });
+  assert.ok(!d.includes('клише0'), 'старые клише не должны тащиться целиком');
+  assert.ok(d.includes('клише39'), 'последние клише должны остаться');
+  assert.match(d, /последние 12 из 40/, 'автор должен видеть, что список урезан');
+  assert.match(d, /НЕ синоним/, 'нет запрета на замену синонимом — клише вернутся другими словами');
+});
