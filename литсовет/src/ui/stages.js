@@ -1821,13 +1821,30 @@ export function renderWrite(els){
   const acceptDraft = document.getElementById('acceptDraft');
   if(acceptDraft) acceptDraft.onclick = async ()=>{
     if(_busy) return;
+    // Без ключа summarizeScene молча возвращает null (memory.js: `if(!g.apiKey
+    // || !scene.text) return null`) — не бросает. Если этого не проверить,
+    // кнопка пометит сцену готовой, снимет баннер и отрапортует успех, хотя
+    // сводки нет: дыра в памяти останется, но станет НЕВИДИМОЙ. Это хуже
+    // исходного состояния, поэтому статус не трогаем, пока сводка не удалась.
+    if(!s.global.apiKey){
+      alert('Нужен ключ API (Настройки ⚙): без него сводку в память сделать нечем, а без сводки следующие сцены не узнают событий этой. Статус сцены не меняю — иначе предупреждение исчезнет, а дыра останется.');
+      return;
+    }
     _busy = true;
+    const prevStatus = scene.status;
     acceptDraft.disabled = true; acceptDraft.innerHTML = '<span class="spinner"></span> Принимаю…';
-    scene.status = 'done';
     scene.words = (scene.text.match(/\S+/g)||[]).length;
-    save();
-    try{ await summarizeScene(s, scene); scene.drift = driftCheck(s, scene); }
-    catch(e){ alert('Сцена принята, но сводку в память сделать не удалось: '+e.message+'\nПопробуйте ещё раз — иначе следующие сцены не узнают её событий.'); }
+    let ok = false;
+    try{ ok = !!(await summarizeScene(s, scene)); }
+    catch(e){ ok = false; console.warn('summarize on accept failed', e); }
+    if(ok){
+      scene.status = 'done';
+      scene.drift = driftCheck(s, scene);
+    }else{
+      scene.status = prevStatus;   // баннер остаётся: дыра в памяти никуда не делась
+      alert('Сводку в память сделать не удалось (архивариус не ответил или вернул нераспознаваемый ответ). Статус сцены оставляю прежним, чтобы предупреждение не исчезло — попробуйте ещё раз.');
+      acceptDraft.disabled = false; acceptDraft.textContent = 'Принять как есть';
+    }
     _busy = false;
     save();
   };
