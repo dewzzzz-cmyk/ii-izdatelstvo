@@ -476,7 +476,17 @@ export async function runScene(state, scene, opts={}, onProgress){
       // Черновик уже заметно короче цели — используется и директивой ниже (глушит
       // команды «сократи» из notes Оценщика), и в самом lengthNote дальше по циклу.
       const curWords = (pRes.text.match(/\S+/g)||[]).length;
-      const tooShort = !!(scene.targetWords && curWords < scene.targetWords*0.7);
+      // 0.7 → 0.9. Замерено на живом прогоне: сцены приземляются на 78-87% цели
+      // (561/720 и 624/720), то есть СТАРЫЙ порог не срабатывал ни разу, и
+      // противовес существовал только на бумаге. Механика перекоса: у Оценщика
+      // есть оси, толкающие объём ВНИЗ (темп, «вода»/padding — он находил их на
+      // каждой из трёх итераций), Линейный редактор режет следом, а вверх не
+      // толкает никто. Отсюда систематический недобор 10-20%, который никто не
+      // замечает, потому что каждая отдельная правка выглядит разумной.
+      // 0.9 означает: пока сцена не дотянула до цели, замечание про «воду»
+      // решается переписыванием, а не удалением. Сцену это не «раздувает» —
+      // редактировать по-прежнему можно, нельзя только укорачивать.
+      const tooShort = !!(scene.targetWords && curWords < scene.targetWords*0.9);
       // Грубый недобор (<60% цели) — отдельный, жёсткий порог: такая сцена
       // почти всегда не «лаконична», а недописана — выброшены сущности брифа
       // (живой случай: открывающая сцена 621 из 1500 слов прошла консенсус,
@@ -954,7 +964,7 @@ export async function runScene(state, scene, opts={}, onProgress){
       for(let g0=0; g0<6; g0++){
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
-          const leRes = await callLLM({ ...llmFor(state,leAg), temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote, { anchors: leAnchors, rejectedNotes: scene.rejectedNotes }), maxTokens:leMaxTk });
+          const leRes = await callLLM({ ...llmFor(state,leAg), temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote, { anchors: leAnchors, rejectedNotes: scene.rejectedNotes, targetWords: scene.targetWords }), maxTokens:leMaxTk });
           // Защита от усечённого ответа — раньше проверяла ТОЛЬКО длину (>50% исходного).
           // Живой прогон показал обрыв на 90% длины (3710 из 4139 симв., без завершающей
           // пунктуации, посреди слова) — формально проходил порог длины и сохранялся как

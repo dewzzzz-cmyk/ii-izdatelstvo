@@ -824,11 +824,24 @@ export function applySkeleton(state, skeleton, uid){
   // молча снести его работу хуже, чем оставить лишнее. Вместо этого — флаг для
   // предупреждения в UI со списком имён, которых новый скелет может не знать.
   // Решение по нему принимает автор (см. renderStructure).
-  const newBriefs = nodes.filter(n=>n.type==='scene').map(n=>`${n.title} ${n.brief||''} ${n.entryState||''}`).join(' ');
-  const ghosts = oldCharNames.filter(name => name.length>=3 && !newBriefs.includes(name));
-  state.canonStaleAfterSkeleton = ghosts.length
-    ? { names: ghosts.slice(0,12), at: Date.now() }
-    : null;
+  const ghosts = findGhostCharacters(state, oldCharNames);
+  // Пустой список пишем как { names: [] }, а не null: null теперь означает
+  // «проверка ни разу не проводилась» и включает ленивый пересчёт в UI для
+  // проектов, чей скелет пересобирали до появления этой проверки.
+  state.canonStaleAfterSkeleton = { names: ghosts.slice(0,12), at: Date.now() };
+}
+
+// Имена в каноне, которых новый скелет не знает. Сравнение чисто позиционное:
+// текущие персонажи против текущих брифов — снимок «прежней» книги не нужен,
+// потому что applySkeleton не трогает state.characters. Поэтому ту же функцию
+// можно вызвать задним числом для книги, собранной старой версией приложения.
+export function findGhostCharacters(state, charNames){
+  const nodes = state.structure || [];
+  const briefs = nodes.filter(n=>n.type==='scene')
+    .map(n=>`${n.title} ${n.brief||''} ${n.entryState||''}`).join(' ');
+  if(!briefs.trim()) return [];   // скелета нет — сравнивать не с чем
+  const names = charNames || (state.characters||[]).map(c=>c.name).filter(Boolean);
+  return names.filter(name => name.length>=3 && !briefs.includes(name));
 }
 
 // Слияние ТОЧЕЧНОЙ правки (structurePatchMode) обратно в state.structure —

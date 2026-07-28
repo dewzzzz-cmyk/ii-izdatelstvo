@@ -11,7 +11,7 @@ import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './d
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup, capBibleSize } from '../memory.js';
-import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords, findGhostCharacters } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter, isChapterLocked } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -1214,6 +1214,16 @@ export function worldCheckStale(s){
 // ─────────────────────────────── СТРУКТУРА (мин.) ───────────────────────────────
 export function renderStructure(els){
   const s = getState();
+  // Ленивая проверка канона для книг, чей скелет пересобирали ДО появления
+  // этого предупреждения: у них флага нет вовсе, а призрачные персонажи есть —
+  // и молча вредят прозе ровно так же. null означает «не проверяли ни разу»,
+  // { names: [] } — «проверяли, чисто», поэтому нажатое «Оставить как есть»
+  // (ставит { names: [] }) баннер обратно не поднимает.
+  if(s.canonStaleAfterSkeleton == null && (s.structure||[]).length && (s.characters||[]).length){
+    const ghosts = findGhostCharacters(s);
+    s.canonStaleAfterSkeleton = { names: ghosts.slice(0,12), at: Date.now() };
+    if(ghosts.length) save();
+  }
   const scenes = (s.structure||[]).filter(n=>n.type==='scene');
   els.left.innerHTML = `<div class="ph">Структура</div>${renderSceneList(s)}`;
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ s.ui.activeScene=r.dataset.sc; s.ui.stage='write'; save(); });
@@ -1363,7 +1373,9 @@ export function renderStructure(els){
       return !names.some(n=>hay.includes(n));
     });
     const removed = before - s.bible.length;
-    s.canonStaleAfterSkeleton = null;
+    // Не null: null означает «не проверяли», и ленивая проверка подняла бы
+    // баннер заново на следующем рендере.
+    s.canonStaleAfterSkeleton = { names: [], at: Date.now() };
     save();
     alert(`Удалено персонажей: ${names.length}, фактов канона: ${removed}. Закреплённые факты сохранены.`);
   };
@@ -1372,7 +1384,7 @@ export function renderStructure(els){
   // отдельная стадия: переключаем и то и другое, иначе кнопка ведёт в пустоту.
   if(goCanonReview) goCanonReview.onclick = ()=>{ s.ui.stage='write'; s.ui.rightTab='mem'; save(); };
   const dismissCanonStale = document.getElementById('dismissCanonStale');
-  if(dismissCanonStale) dismissCanonStale.onclick = ()=>{ s.canonStaleAfterSkeleton = null; save(); };
+  if(dismissCanonStale) dismissCanonStale.onclick = ()=>{ s.canonStaleAfterSkeleton = { names: [], at: Date.now() }; save(); };
   const dismissIllustRelink = document.getElementById('dismissIllustRelink');
   if(dismissIllustRelink) dismissIllustRelink.onclick = ()=>{ s.illustrationsRelinked = null; save(); };
 
