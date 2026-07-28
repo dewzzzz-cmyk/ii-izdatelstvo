@@ -614,3 +614,35 @@ test('очередь правок: подключена во все три мо�
     assert.ok(src.includes("bindFixQueue('" + kind + "', s)"), kind + ': панель отрисована, но обработчики не навешаны');
   });
 });
+
+// ── Прайс моделей ──────────────────────────────────────────────────────────
+// llm.js на неизвестной модели считает по тарифу-заглушке (самому дешёвому в
+// таблице). Из-за этого дефолт провайдера OpenAI — 'gpt-5' — которого не было
+// ни в списке моделей, ни в прайсе, считался по тарифу DeepSeek: занижение в
+// десятки раз, и по счётчику это не отличалось от честной суммы.
+test('прайс: дефолт каждого провайдера есть и в списке моделей, и в прайсе', async () => {
+  const { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, MODEL_PRICES } = await import('../src/providers.js');
+  TEXT_PROVIDERS.filter(p=>p.v!=='custom').forEach(p=>{
+    assert.ok((TEXT_MODEL_OPTIONS[p.v]||[]).includes(p.model),
+      `${p.v}: дефолтная модель «${p.model}» отсутствует в своём же списке — в селекте выбор будет пустым`);
+    assert.ok(MODEL_PRICES[p.model],
+      `${p.v}: у дефолтной модели «${p.model}» нет прайса — расход посчитается по чужому тарифу и молча`);
+  });
+});
+
+test('прайс: у каждой предлагаемой модели есть цена', async () => {
+  const { TEXT_MODEL_OPTIONS, MODEL_PRICES } = await import('../src/providers.js');
+  Object.entries(TEXT_MODEL_OPTIONS).forEach(([prov, list])=>{
+    list.forEach(m=>assert.ok(MODEL_PRICES[m], `${prov}/${m}: модель предлагается в UI, но её нет в MODEL_PRICES`));
+  });
+});
+
+test('прайс: модель без цены попадает в spend.unpriced, а шапка ставит «≈»', async () => {
+  const fs = await import('node:fs');
+  const llm = fs.readFileSync(new URL('../src/llm.js', import.meta.url), 'utf8');
+  assert.ok(llm.includes('st.spend.unpriced'),
+    'llm.js обязан запоминать модель без прайса — иначе заниженная сумма выглядит точной');
+  const app = fs.readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+  assert.ok(/spend\.unpriced/.test(app) && app.includes("'≈'"),
+    'шапка обязана помечать сумму как нижнюю оценку, когда прайс известен не для всех моделей');
+});

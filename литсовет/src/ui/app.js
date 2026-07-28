@@ -81,8 +81,14 @@ function renderRail(){
   if(els.projSpend){
     if(totalSpend > 0){
       els.projSpend.style.display = '';
-      els.projSpend.textContent = `💰 $${totalSpend.toFixed(3)}`;
-      els.projSpend.setAttribute('data-tip', `Текст: $${spend.text.toFixed(3)} · Картинки: $${spend.images.toFixed(3)}`);
+      // Если хоть один вызов ушёл на модель без прайса, сумма посчитана по
+      // тарифу-заглушке (самому дешёвому) и является нижней оценкой — «≈»
+      // и подсказка обязаны это сказать, иначе цифра выглядит точной.
+      const без = (spend.unpriced||[]).filter(Boolean);
+      els.projSpend.textContent = `💰 ${без.length?'≈':''}$${totalSpend.toFixed(3)}`;
+      els.projSpend.setAttribute('data-tip',
+        `Текст: $${spend.text.toFixed(3)} · Картинки: $${spend.images.toFixed(3)}`
+        + (без.length ? `\n⚠ Нет прайса для: ${без.join(', ')} — их вызовы посчитаны по самому дешёвому тарифу, реальная сумма выше.` : ''));
     } else {
       els.projSpend.style.display = 'none';
     }

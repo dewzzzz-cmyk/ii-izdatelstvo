@@ -129,14 +129,28 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       if(onToken && text.length > emitted.length) onToken(text.slice(emitted.length));
       const finalTokensIn = realTokensIn ?? tokensIn;
       const tokensOut = realTokensOut ?? estimateTokens(text);
-      const p = PRICES[model] || {in:0.14, out:0.28};
+      // Модель без записи в PRICES считалась по тарифу DeepSeek — самому
+      // дешёвому в таблице. Для gpt-класса это занижение в 20-100 раз, и
+      // отличить «книга обошлась в $2» от «в $2 по чужому прайсу» было
+      // нельзя. Тариф-заглушка остаётся (иначе счётчик застынет и станет
+      // врать в другую сторону), но модель запоминается, и шапка честно
+      // показывает, что сумма — нижняя оценка.
+      const known = PRICES[model];
+      const p = known || {in:0.14, out:0.28};
       const cost = finalTokensIn/1e6*p.in + tokensOut/1e6*p.out;
       // Единая точка учёта расхода на текущий проект — см. state.spend в
       // state.js. Считаем здесь, а не в каждой из ~20 функций, которые зовут
       // callLLM: так гарантированно не пропустим ни один запрос, независимо
       // от того, через какого агента/кнопку он прошёл.
       const st = getState();
-      if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.text += cost; }
+      if(st){
+        st.spend = st.spend || {text:0, images:0};
+        st.spend.text += cost;
+        if(!known && model){
+          st.spend.unpriced = st.spend.unpriced || [];
+          if(!st.spend.unpriced.includes(model)) st.spend.unpriced.push(model);
+        }
+      }
       // hitLimit — ДОСТОВЕРНЫЙ признак «ответ обрезан по maxTokens», сказанный
       // самим апстримом ('length' у OpenAI-совместимых, 'max_tokens' у Anthropic),
       // а не эвристика looksTokenTruncated по хвосту текста. Нужен всем ~44

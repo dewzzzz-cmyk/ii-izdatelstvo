@@ -5,7 +5,10 @@
 
 export const TEXT_PROVIDERS = [
   { v:'deepseek',  label:'DeepSeek',           baseURL:'https://api.deepseek.com', model:'deepseek-chat' },
-  { v:'openai',    label:'OpenAI',             baseURL:'https://api.openai.com/v1', model:'gpt-5' },
+  // Дефолт обязан быть моделью, которая есть и в TEXT_MODEL_OPTIONS, и в
+  // MODEL_PRICES: здесь стоял 'gpt-5' — не было ни там, ни там, и счётчик
+  // расхода молча считал OpenAI по тарифу DeepSeek (см. фолбэк в llm.js).
+  { v:'openai',    label:'OpenAI',             baseURL:'https://api.openai.com/v1', model:'gpt-5.4' },
   { v:'anthropic', label:'Claude (Anthropic)', baseURL:'https://api.anthropic.com', model:'claude-sonnet-5' },
   { v:'gemini',    label:'Google Gemini',      baseURL:'https://generativelanguage.googleapis.com/v1beta/openai/', model:'gemini-2.5-flash' },
   { v:'qwen',      label:'Qwen (Alibaba)',     baseURL:'https://dashscope.aliyuncs.com/compatible-mode/v1', model:'qwen-plus' },
@@ -23,7 +26,9 @@ export const TEXT_PROVIDERS = [
 // потерялся сам по себе.
 export const TEXT_MODEL_OPTIONS = {
   deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
-  openai: ['gpt-4o', 'gpt-4o-mini'],
+  // gpt-5.5 — флагман (релиз 2026-04-23), gpt-5.4 — прежний флагман вдвое
+  // дешевле. gpt-4o/mini оставлены, чтобы уже сохранённый выбор не слетел.
+  openai: ['gpt-5.5', 'gpt-5.4', 'gpt-4o', 'gpt-4o-mini'],
   // Требует платного API-ключа с console.anthropic.com (pay-as-you-go) —
   // подписка Claude.ai Pro/Max программного доступа НЕ даёт, ключ от нее
   // здесь не подойдёт (см. предупреждение у поля ключа в Настройках).
@@ -51,6 +56,8 @@ export const MODEL_PRICES = {
   'deepseek-reasoner': { in:0.55,  out:2.19 },
   'deepseek-v4-flash': { in:0.14,  out:0.28 },
   'deepseek-v4-pro':   { in:0.435, out:0.87 },
+  'gpt-5.5':           { in:5,     out:30 },
+  'gpt-5.4':           { in:2.5,   out:15 },
   'gpt-4o':            { in:2.5,   out:10 },
   'gpt-4o-mini':       { in:0.15,  out:0.6 },
   // Anthropic (console.anthropic.com) — claude-opus-4-8 подтверждена по
@@ -61,6 +68,11 @@ export const MODEL_PRICES = {
   'claude-haiku-4-5':  { in:1,     out:5 },
   'gemini-2.5-flash':  { in:0.3,   out:2.5 },
   'qwen-plus':         { in:0.26,  out:0.78 },
+  // ВНИМАНИЕ: это ПРЯМЫЕ прайсы Moonshot и Z.ai — Литсовет ходит на их
+  // собственные baseURL (api.moonshot.ai, api.z.ai), а не через OpenRouter.
+  // У агрегаторов эти же модели дешевле (K2.6 ≈0.60/3.41, GLM-4.7 ≈0.40/1.75),
+  // и это НЕ повод «поправить» числа ниже — по ним счёт не выставляется.
+  // Сверено 2026-07-29.
   'kimi-k2.6':         { in:0.95,  out:4 },
   'kimi-k3':           { in:3,     out:15 },
   'glm-4.7':           { in:0.6,   out:2.2 },
