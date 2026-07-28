@@ -6,7 +6,7 @@ import { runAgentOnDemand } from '../ondemand.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
 import { ART_STYLES } from '../artStyles.js';
-import { runScene, isRunning } from '../pipeline.js';
+import { runScene, isRunning, requestCancel, isCancelRequested } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
@@ -1739,6 +1739,10 @@ export function renderWrite(els){
     </div>
     <div class="run-row">
       <button class="btn btn-primary" id="runBtn" style="flex:1" ${locked?'disabled':''} data-tip="${locked?'Заблокировано: закройте предыдущую главу.':''}">${scene.text?'▶ Запустить снова':'▶ Запустить агентов'}</button>
+      ${/* Прогон сцены — это десяток платных вызовов подряд, и до сих пор
+           прервать его было нечем: только перезагрузка страницы, с потерей
+           написанного. Кнопка появляется ТОЛЬКО во время прогона. */''}
+      ${_busy ? `<button class="btn" id="stopRun" data-tip="Остановить после текущего вызова. Он уже оплачен и доработает, следующего не будет. Лучший из написанных черновиков сохранится — ничего не потеряется.">${isCancelRequested()?'⏳ Останавливаюсь…':'🛑 Стоп'}</button>` : ''}
       <button class="btn" id="regenSettings" data-tip="Настройки перегенерации: креативность Прозаика и объём сцены">⚙</button>
       ${(scene.proseVersions&&scene.proseVersions.length)?`<button class="btn" id="revertProse" data-tip="Вернуть прошлый вариант прозы (откат перегенерации)">↶ ${scene.proseVersions.length}</button>`:''}
     </div>
@@ -1807,6 +1811,16 @@ export function renderWrite(els){
   document.getElementById('reRun').onclick = ()=>{ const d=document.getElementById('directive').value.trim(); runWith(d); };
   document.querySelectorAll('.ia-chip').forEach(c=>c.onclick=()=>{ document.getElementById('directive').value=c.dataset.d; });
   document.getElementById('runBtn').onclick = ()=>runWith('');
+  // «Стоп»: помечаем отмену и сразу перерисовываем кнопку в «Останавливаюсь…».
+  // Мгновенно прерывать нечего — текущий вызов уже оплачен, пусть дорабатывает;
+  // отменяется всё, что после него. Сам прогон завершится штатно и сохранит
+  // лучший черновик (см. requestCancel в pipeline.js).
+  const stopRun = document.getElementById('stopRun');
+  if(stopRun) stopRun.onclick = ()=>{
+    requestCancel();
+    stopRun.textContent = '⏳ Останавливаюсь…';
+    stopRun.disabled = true;
+  };
   // Живой запрос автора: правка рукой (и Линейный редактор) намеренно
   // обнуляют scene.lastEval/flags — они относились к тексту ДО правки и
   // сверять их с новым текстом нельзя (см. edEl blur выше). Раньше вернуть

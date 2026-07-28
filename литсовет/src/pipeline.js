@@ -20,6 +20,22 @@ import { genreWantsHumor } from './genres.js';
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
 export function isRunning(){ return _running; }
 
+// ── Отмена прогона ──────────────────────────────────────────────────────
+// Прогон сцены — это десяток платных вызовов подряд (Прозаик, Оценщик и все
+// Стражи на каждой итерации), и до сих пор прервать его было нечем: кнопки
+// нет, единственный способ — перезагрузить страницу, потеряв уже написанное.
+// Флаг проверяется на границах итераций и перед платными шагами: текущий
+// вызов LLM дорабатывает (обрывать его на полпути незачем — он уже оплачен),
+// но следующего не будет. Лучший на момент отмены черновик сохраняется, как
+// при обычном завершении, — отмена не должна стоить автору текста.
+// Отмена реализована ВЫХОДОМ ИЗ ЦИКЛА, а не исключением: так лучший черновик
+// сохраняется тем же штатным путём, что и при обычном завершении, и не нужно
+// поднимать best/bestEval/bestFlags из тела try наружу ради catch. Отмена — не
+// ошибка, а «хватит, доволен тем, что есть».
+let _cancelRequested = false;
+export function requestCancel(){ if(_running) _cancelRequested = true; }
+export function isCancelRequested(){ return _cancelRequested; }
+
 // Фактические стражи — бегут каждую итерацию, пока текст ещё меняется (в отличие от
 // литературных, которые видят текст только один раз, в конце).
 const FACTUAL_GUARD_ROLES = new Set(['logic','events']);
@@ -150,6 +166,7 @@ function flagsText(flags){
 export async function runScene(state, scene, opts={}, onProgress){
   if(_running) throw new Error('Уже идёт прогон — дождитесь завершения.');
   _running = true;
+  _cancelRequested = false;   // прошлая отмена не должна убивать новый прогон
   const g = state.global;
   const prevSceneText = opts.prevSceneText || prevDoneSceneText(state, scene);
   const runId = startRun(scene.id, 'Сцена: ' + (scene.title||scene.id));
@@ -267,6 +284,12 @@ export async function runScene(state, scene, opts={}, onProgress){
     let fullStagnationStreak = 0;   // подряд идущие итерации, где встали ВСЕ оси
 
     while(iter < maxIter && safety++ < 20){
+      // Точка отмены на границе итерации: текущий платный вызов уже оплачен и
+      // доработал, следующего не будет. Лучший черновик сохранится ниже.
+      if(_cancelRequested){
+        onProgress && onProgress({log:{icon:'🛑', text:`Остановлено автором на итерации ${iter}. Сохраняю лучший черновик из уже написанных — ничего не потеряно.`, state:'warn'}});
+        break;
+      }
       iter++;
       const isRevision = !!(iter > 1 && prevDraft || iter === 1 && prevDraft && directive);
       let streamed = '';
@@ -1023,6 +1046,9 @@ export async function runScene(state, scene, opts={}, onProgress){
       // раньше только этот шаг во всём пайплайне не имел такой проверки.
       const leAnchors = prevIterAnchors;
       for(let g0=0; g0<6; g0++){
+        // Отмена действует и здесь: нажав «Стоп», автор не должен оплачивать
+        // ещё один вызов только потому, что цикл правок уже завершился.
+        if(_cancelRequested) break;
         onProgress && onProgress({stage:'lineedit', text:'Линейный редактор правит…'});
         try{
           const leRes = await callLLM({ ...llmFor(state,leAg), temperature:leAg.temp??0.3, messages:lineEditMessages(best, state.style?.forbidden, leNote, { anchors: leAnchors, rejectedNotes: scene.rejectedNotes, targetWords: scene.targetWords }), maxTokens:leMaxTk });
@@ -1052,6 +1078,33 @@ export async function runScene(state, scene, opts={}, onProgress){
             const belowTarget = !!(scene.targetWords && beforeWords < scene.targetWords*0.95);
             if(belowTarget && afterWords < beforeWords*0.98){
               onProgress && onProgress({log:{icon:'📏', text:`Линейный редактор срезал ${beforeWords-afterWords} сл. (${beforeWords}→${afterWords}) на сцене, которая и так короче цели (${scene.targetWords}) — правка отклонена, текст остаётся как до неё`, state:'warn'}});
+              break;
+            }
+            // Линейный редактор идёт ПОСЛЕ того, как Оценщик и Стражи приняли
+            // текст, и его результат уже никто не проверяет: bestEval не
+            // пересчитывается, то есть балл на сцене относится к тексту ДО его
+            // правки. Значит его свобода должна быть ограничена не уговорами, а
+            // проверками — как у якорей ниже.
+            //
+            // 1. Клише, забаненные Оценщиком, не должны вернуться. Проверка
+            //    бесплатная: список уже собран в bannedCliches по ходу цикла.
+            const вернувшиесяКлише = [...bannedCliches].filter(c =>
+              c && c.length >= 8 && leRes.text.includes(c) && !best.includes(c));
+            if(вернувшиесяКлише.length){
+              onProgress && onProgress({log:{icon:'🚫', text:`Линейный редактор вернул клише, забракованное Оценщиком («${вернувшиесяКлише[0].slice(0,50)}»${вернувшиесяКлише.length>1?` +${вернувшиесяКлише.length-1}`:''}) — правка отклонена, текст остаётся как до неё`, state:'warn'}});
+              break;
+            }
+            // 2. Это ЛЁГКАЯ правка, а не переписывание. Если изменилось больше
+            //    трети слов, агент вышел за свою роль и переписал то, что
+            //    Оценщик и Стражи уже утвердили. Сравниваем множества слов —
+            //    грубо, зато без единого вызова и без ложных срабатываний на
+            //    перестановке предложений.
+            const словаДо = new Set((best.toLowerCase().match(/[а-яёa-z]+/g)||[]));
+            const словаПосле = (leRes.text.toLowerCase().match(/[а-яёa-z]+/g)||[]);
+            const общих = словаПосле.filter(w=>словаДо.has(w)).length;
+            const доляНовых = словаПосле.length ? 1 - общих/словаПосле.length : 0;
+            if(доляНовых > 0.33){
+              onProgress && onProgress({log:{icon:'✋', text:`Линейный редактор переписал ${Math.round(доляНовых*100)}% слов — это уже не шлифовка, а переписывание утверждённого Оценщиком и Стражами текста. Правка отклонена.`, state:'warn'}});
               break;
             }
             const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
