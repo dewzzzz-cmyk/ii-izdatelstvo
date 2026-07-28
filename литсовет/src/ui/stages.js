@@ -3,7 +3,7 @@
 
 import { getState, save, uid, addRule, charNamesMatch, ag, llmFor,
          saveReview, getReview, toggleReviewDone, isReviewDone } from '../state.js';
-import { runAgentOnDemand } from '../ondemand.js';
+import { runAgentOnDemand, patchScene } from '../ondemand.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
 import { ART_STYLES } from '../artStyles.js';
@@ -2570,6 +2570,96 @@ function doneBox(kind, key, label='сделано'){
     <input type="checkbox" class="rv-done-cb" data-kind="${esc(kind)}" data-key="${esc(key)}"${on?' checked':''}> ${esc(label)}
   </label>`;
 }
+// ── Очередь правок по разбору книги ────────────────────────────────────────
+// Замечания Критика и Бета-ридера адресованы РАЗНЫМ сценам, поэтому «→ Прозаику»
+// одной кнопкой на всех невозможен: прогон работает по одной сцене. Очередь
+// решает это иначе — идёт по выбранным пунктам подряд, для каждого находит его
+// сцену и вносит точечную правку тем же patchScene(), что и одиночная кнопка.
+// Полный цикл Прозаик⇄Оценщик⇄Стражи здесь НЕ запускается: на десяти сценах это
+// сотня платных вызовов, а автор просил «поправить по списку», а не переписать
+// книгу.
+function fixQueueBarHTML(kind){
+  return `<div class="flags-toolbar" id="${kind}QTop" style="margin:6px 0">
+    <label class="fl-selall"><input type="checkbox" id="${kind}QAll"> Выбрать все</label>
+    <span id="${kind}QCount" class="muted" style="font-size:12px"></span>
+    <button class="btn" id="${kind}QCopy" style="display:none" data-tip="Скопировать выбранные замечания одним текстом">📋 Скопировать</button>
+    <button class="btn" id="${kind}QRun" style="display:none" data-tip="Пройти по выбранным сценам и внести каждое замечание точечной правкой. Каждая сцена — один платный вызов.">▶ Исправить по очереди</button>
+  </div>`;
+}
+// Чекбокс пункта очереди. Показываем ТОЛЬКО когда сцена реально найдена в
+// структуре: очередь ищет сцену по тому же названию, и галочка на ненайденной
+// сцене молча пропускалась бы в прогоне — выбрал пять, исправилось три.
+function queueBox(s, kind, sceneTitle, note){
+  if(!note || !findSceneByTitle(s, sceneTitle)) return '';
+  return `<label class="q-pick" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;user-select:none">
+    <input type="checkbox" class="${kind}-qcb" data-scene="${esc(sceneTitle)}" data-note="${esc(note)}"> в очередь
+  </label>`;
+}
+function bindFixQueue(kind, s){
+  const bar=document.getElementById(kind+'QTop'); if(!bar) return;
+  const cbs=()=>[...document.querySelectorAll('.'+kind+'-qcb')];
+  const runBtn=document.getElementById(kind+'QRun');
+  const copyBtn=document.getElementById(kind+'QCopy');
+  const countEl=document.getElementById(kind+'QCount');
+  const upd=()=>{
+    const n=cbs().filter(c=>c.checked).length;
+    countEl.textContent = n ? `${n} выбрано` : '';
+    runBtn.style.display = n?'':'none';  copyBtn.style.display = n?'':'none';
+    runBtn.textContent = `▶ Исправить по очереди (${n})`;
+    bar.classList.toggle('has-sel', n>0);
+  };
+  cbs().forEach(cb=>cb.onchange=upd);
+  const all=document.getElementById(kind+'QAll');
+  if(all) all.onchange=()=>{ cbs().forEach(cb=>cb.checked=all.checked); upd(); };
+
+  copyBtn.onclick=()=>{
+    const t=cbs().filter(c=>c.checked).map((c,i)=>`${i+1}. «${c.dataset.scene}»: ${c.dataset.note}`).join('\n\n');
+    navigator.clipboard?.writeText(t).catch(()=>{});
+    copyBtn.textContent='✓ Скопировано';
+    setTimeout(()=>{ copyBtn.textContent='📋 Скопировать'; }, 1400);
+  };
+
+  runBtn.onclick=async ()=>{
+    const выбраны=cbs().filter(c=>c.checked);
+    if(!выбраны.length) return;
+    const st=getState();
+    if(!st.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    // Подтверждение обязательно: это N платных вызовов и N изменённых сцен.
+    // Молча запускать такое по одному клику нельзя.
+    if(!confirm(`Будет внесено ${выбраны.length} правк${выбраны.length===1?'а':'и'} — по одному платному вызову на сцену.\n\nТекст каждой сцены изменится; прошлая версия сохранится для отката (кнопка ↶ у сцены).\n\nПродолжить?`)) return;
+    runBtn.disabled=true; all && (all.disabled=true);
+    let готово=0, пропущено=[], ошибки=[];
+    for(const cb of выбраны){
+      runBtn.textContent=`⏳ ${готово+1} из ${выбраны.length}…`;
+      const sc=findSceneByTitle(st, cb.dataset.scene);
+      if(!sc || !sc.text){ пропущено.push(cb.dataset.scene); continue; }
+      try{
+        const fixed=await patchScene(st, sc, cb.dataset.note);
+        sc.proseVersions=sc.proseVersions||[]; sc.proseVersions.unshift(sc.text);
+        if(sc.proseVersions.length>10) sc.proseVersions.length=10;
+        sc.text=fixed; sc.words=(fixed.match(/\S+/g)||[]).length;
+        sc.lastEval=null; sc.flags={};   // относились к тексту ДО правки
+        save();
+        готово++;
+        cb.checked=false;
+        const row=cb.closest('div'); if(row) row.style.opacity='0.45';
+      }catch(e){
+        // Одна упавшая сцена не должна ронять всю очередь: остальные правки
+        // автор уже оплатил ожиданием. Собираем и показываем в конце.
+        ошибки.push(`«${cb.dataset.scene}»: ${e.message}`);
+      }
+    }
+    runBtn.disabled=false; all && (all.disabled=false);
+    runBtn.textContent='▶ Исправить по очереди';
+    upd();
+    const итог=[`Готово: ${готово} из ${выбраны.length}.`];
+    if(пропущено.length) итог.push(`Пропущены (сцена не найдена или пуста): ${пропущено.join(', ')}.`);
+    if(ошибки.length) итог.push(`Не удалось:\n${ошибки.join('\n')}`);
+    alert(итог.join('\n\n'));
+  };
+  upd();
+}
+
 function bindDoneBoxes(){
   document.querySelectorAll('.rv-done-cb').forEach(cb=>cb.onchange=()=>{
     toggleReviewDone(getState(), cb.dataset.kind, cb.dataset.key);
@@ -2596,6 +2686,7 @@ function openBetaReadModal(s, r){
   root.innerHTML=`<div class="modal-bg" id="brBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>📖 Бета-ридер</h2>
     <div class="muted" style="margin-bottom:10px;font-size:12px">Читает книгу целиком (первая и последняя сцена — дословно, остальное — по сводкам) и честно отвечает как реальный читатель, не редактор.</div>
+    ${r.paceDrops.some(p=>findSceneByTitle(s,p.sceneTitle))?fixQueueBarHTML('beta'):''}
     <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto">
       ${row('Крючок начала', r.hookScore, r.hookNote)}
       ${row('Ясность мотивации героя', r.motivationClarity, r.motivationNote)}
@@ -2607,6 +2698,7 @@ function openBetaReadModal(s, r){
           <div class="row" style="gap:6px;flex-wrap:wrap">
             ${fixSceneBtn(s, p.sceneTitle, p.note)}
             ${!findSceneByTitle(s, p.sceneTitle)?copyNoteBtn(p.note):''}
+            ${queueBox(s,'beta',p.sceneTitle,p.note)}
             ${doneBox('beta','pace:'+i)}
           </div>
         </div>`).join('')}
@@ -2624,6 +2716,7 @@ function openBetaReadModal(s, r){
   bindFixButtons(s, close);
   bindCopyNotes();
   bindDoneBoxes();
+  bindFixQueue('beta', s);
 }
 
 function openCriticModal(s, r){
@@ -2631,6 +2724,7 @@ function openCriticModal(s, r){
   root.innerHTML=`<div class="modal-bg" id="crBg"><div class="modal" style="width:600px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>🎭 Критик</h2>
     <div class="muted" style="margin-bottom:10px;font-size:12px">Несокращённая рецензия — не анкета со баллами. Мнение может быть резким; это осознанно.</div>
+    ${r.problems.some(p=>findSceneByTitle(s,p.sceneTitle))?fixQueueBarHTML('critic'):''}
     <div style="display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow:auto">
       <div class="apv-row" style="flex-direction:column;align-items:stretch;gap:2px;background:var(--accent-bg)">
         <b>Вердикт</b><div style="font-size:13px;white-space:pre-wrap">${esc(r.verdict||'—')}</div>
@@ -2649,6 +2743,7 @@ function openCriticModal(s, r){
             <div class="row" style="gap:6px;flex-wrap:wrap">
               ${fixSceneBtn(s, p.sceneTitle, noteText)}
               ${!findSceneByTitle(s, p.sceneTitle)?copyNoteBtn(noteText):''}
+              ${queueBox(s,'critic',p.sceneTitle,noteText)}
               ${doneBox('critic','scene:'+i)}
             </div>
           </div>`;
@@ -2709,6 +2804,7 @@ function openCriticModal(s, r){
   bindFixButtons(s, close);
   bindCopyNotes();
   bindDoneBoxes();
+  bindFixQueue('critic', s);
 }
 
 function openChekhovModal(s, setups){
@@ -2728,6 +2824,7 @@ function openChekhovModal(s, setups){
   root.innerHTML=`<div class="modal-bg" id="chBg"><div class="modal" style="width:560px;max-width:94vw" onclick="event.stopPropagation()">
     <h2>🔫 Ружья Чехова${unresolved?` · ${unresolved} без развязки`:''}</h2>
     <div class="muted" style="margin-bottom:10px;font-size:12px">Значимые сюжетные заготовки и получили ли они развязку. Если книга не закончена — заготовки из последних сцен намеренно не отмечены как «без развязки».</div>
+    ${setups.some(x=>!x.resolved && findSceneByTitle(s,x.sceneTitle))?fixQueueBarHTML('chekhov'):''}
     <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto">
       ${setups.map(x=>{
         const directive = `Дай развязку заготовке «${x.what}» (введено: ${x.introducedIn||'—'}) — она осталась непогашенной.`;
@@ -2737,6 +2834,7 @@ function openChekhovModal(s, setups){
         ${!x.resolved?`<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:2px">
           ${fixSceneBtn(s, x.sceneTitle, directive)}
           ${!findSceneByTitle(s, x.sceneTitle)?copyNoteBtn(directive):''}
+          ${queueBox(s,'chekhov',x.sceneTitle,directive)}
         </div>`:''}
       </div>`;}).join('')}
     </div>
@@ -2748,6 +2846,7 @@ function openChekhovModal(s, setups){
   bindFixButtons(s, close);
   bindCopyNotes();
   bindDoneBoxes();
+  bindFixQueue('chekhov', s);
 }
 function stageDoneFor(s,id){
   switch(id){

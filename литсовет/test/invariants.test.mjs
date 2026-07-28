@@ -568,3 +568,49 @@ test('модули вне цикла читают лимит и модель и�
     assert.ok(!/model:\s*g\.model/.test(src), файл + '.js: остался захардкоженный g.model');
   }
 });
+
+// ── Очередь правок по разбору книги ────────────────────────────────────────
+// Замечания Критика/Бета-ридера/Ружей Чехова адресованы разным сценам, поэтому
+// пакетная кнопка «→ Прозаику» невозможна — сделана очередь. Здесь проверяются
+// её свойства, которые ломаются молча: пропуск ненайденной сцены выглядел бы
+// как успех, потеря старого текста лишила бы отката, падение одной сцены
+// оборвало бы уже оплаченные ожиданием остальные.
+test('очередь правок: галочка только у найденной сцены', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/ui/stages.js', import.meta.url), 'utf8');
+  const тело = src.slice(src.indexOf('function queueBox('), src.indexOf('function bindFixQueue('));
+  assert.ok(тело.includes('findSceneByTitle(s, sceneTitle)'),
+    'queueBox обязан проверять, что сцена есть в структуре: иначе выбранный пункт молча пропустится в прогоне');
+});
+
+test('очередь правок: старый текст сцены сохраняется до перезаписи', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/ui/stages.js', import.meta.url), 'utf8');
+  const тело = src.slice(src.indexOf('function bindFixQueue('), src.indexOf('function bindDoneBoxes('));
+  const push = тело.indexOf('proseVersions.unshift(sc.text)');
+  const write = тело.indexOf('sc.text=fixed');
+  assert.ok(push > -1 && write > -1, 'очередь должна и сохранять версию, и писать новый текст');
+  assert.ok(push < write, 'версия обязана уходить в историю ДО перезаписи — иначе откат сохранит уже новый текст');
+  assert.ok(тело.includes('sc.lastEval=null'),
+    'оценка относилась к тексту до правки — не сбросив её, автор увидит чужой балл');
+});
+
+test('очередь правок: подтверждение и устойчивость к падению одной сцены', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/ui/stages.js', import.meta.url), 'utf8');
+  const тело = src.slice(src.indexOf('function bindFixQueue('), src.indexOf('function bindDoneBoxes('));
+  assert.ok(тело.includes('confirm('),
+    'запуск N платных вызовов по одному клику требует подтверждения');
+  const цикл = тело.slice(тело.indexOf('for(const cb of'));
+  assert.ok(цикл.includes('try{') && цикл.includes('}catch(e){'),
+    'ошибка одной сцены не должна обрывать остальную очередь');
+});
+
+test('очередь правок: подключена во все три модалки разбора', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/ui/stages.js', import.meta.url), 'utf8');
+  ['beta','critic','chekhov'].forEach(kind=>{
+    assert.ok(src.includes("fixQueueBarHTML('" + kind + "')"), kind + ': нет панели очереди');
+    assert.ok(src.includes("bindFixQueue('" + kind + "', s)"), kind + ': панель отрисована, но обработчики не навешаны');
+  });
+});
