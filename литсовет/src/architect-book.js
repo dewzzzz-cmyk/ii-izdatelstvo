@@ -3,7 +3,7 @@
 // Temp 0.6. Выход валидируется по схеме с ретраем (спека 11).
 // + Оценщик структуры: после генерации оценивает скелет и даёт рекомендации.
 
-import { callLLM, extractJSON } from './llm.js';
+import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { genreBeatsNote, genreWantsHumor } from './genres.js';
 import { bibleForPrompt } from './bible.js';
 import { ag, llmFor } from './state.js';
@@ -539,6 +539,7 @@ export async function runBookArchitectPatch(state, opts={}){
   startRun(null, 'Архитектор (точечная правка)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
+    assertNotTruncated(res, 'Книжный архитектор');
     const v = validateSkeletonPatch(res.text, affectedChapters);
     logStep({ agent:'bookArchitectPatch', iter:attempt+1, input:`(правка глав ${affectedChapters.join(', ')}, лимит ${maxTokens})`, output:res.text,
       tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });
@@ -611,6 +612,7 @@ export async function regenerateScene(state, scene, hint){
   startRun(null, 'Архитектор (перегенерация сцены)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
+    assertNotTruncated(res, 'Книжный архитектор');
     const j = extractJSON(res.text);
     logStep({ agent:'bookArchitectScene', iter:attempt+1, input:`(перегенерация сцены, лимит ${maxTokens})`, output:res.text,
       tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:!!(j && typeof j.brief==='string'), error:(j && typeof j.brief==='string')?undefined:'невалидный JSON' } });
@@ -689,6 +691,7 @@ export async function regenerateDownstream(state, pivotScene, hint){
   startRun(null, 'Архитектор (каскадная перегенерация)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
+    assertNotTruncated(res, 'Книжный архитектор');
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
     logStep({ agent:'bookArchitectDownstream', iter:attempt+1, input:`(каскад ${downstream.length} сцен, лимит ${maxTokens})`, output:res.text,
@@ -1029,6 +1032,7 @@ export async function runStructureEval(state, skeleton, prevEval){
   let j = null, lastErr = '';
   for(let attempt=0; attempt<=(state.global.retries??2); attempt++){
     const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.2, messages:msgs, maxTokens:3600 });
+    assertNotTruncated(res, 'Книжный архитектор');
     j = extractJSON(res.text);
     if(j && typeof j.score === 'number') break;
     lastErr = 'нераспознаваемый ответ'; j = null;
@@ -1105,6 +1109,7 @@ export async function regenerateChapter(state, chapter, hint){
   startRun(null, 'Архитектор (перегенерация главы)');
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ ...llm, temperature:architectAgent.temp??0.7, messages:[{role:'system',content:sys},{role:'user',content:user}], maxTokens });
+    assertNotTruncated(res, 'Книжный архитектор');
     const j = extractJSON(res.text);
     const arr = j && Array.isArray(j.scenes) ? j.scenes.filter(x=>x&&typeof x.brief==='string') : null;
     logStep({ agent:'bookArchitectChapter', iter:attempt+1, input:`(перегенерация главы, ${scenes.length} сцен, лимит ${maxTokens})`, output:res.text,

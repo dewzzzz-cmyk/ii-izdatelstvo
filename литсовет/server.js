@@ -184,6 +184,11 @@ async function handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStrea
       // OpenAI) — переводим из input_tokens/output_tokens Anthropic сюда же,
       // чтобы не трогать общий парсинг usage на клиенте ради одного провайдера.
       if(j.usage) usage = { prompt_tokens: j.usage.input_tokens, completion_tokens: j.usage.output_tokens };
+      // Достоверный признак обрыва ПО ЛИМИТУ от самого апстрима (не эвристика по
+      // хвосту текста): Anthropic — stop_reason==='max_tokens', OpenAI-совместимые —
+      // finish_reason==='length'. Кладём в тот же маркер USAGE, чтобы не заводить
+      // второй формат: клиент уже парсит его JSON целиком (см. USAGE_MARKER_RE).
+      if(j.stop_reason) usage = Object.assign(usage||{}, { finish: j.stop_reason });
     }catch{}
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-cache'});
     res.end(content + (usage ? `\n[[LITSOVET:USAGE:${JSON.stringify(usage)}]]` : '')); return;
@@ -191,7 +196,7 @@ async function handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStrea
 
   res.writeHead(200, { 'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'no-cache' });
   const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
-  let inTokens = 0, outTokens = 0;
+  let inTokens = 0, outTokens = 0, finishReason = '';
   const emitLine=(line)=>{
     const s=line.trim(); if(!s.startsWith('data:')) return;
     const data=s.slice(5).trim(); if(!data) return;
@@ -200,6 +205,7 @@ async function handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStrea
       if(parsed.type==='content_block_delta' && parsed.delta?.type==='text_delta') res.write(parsed.delta.text);
       if(parsed.type==='message_start' && parsed.message?.usage?.input_tokens) inTokens = parsed.message.usage.input_tokens;
       if(parsed.type==='message_delta' && parsed.usage?.output_tokens) outTokens = parsed.usage.output_tokens;
+      if(parsed.type==='message_delta' && parsed.delta?.stop_reason) finishReason = parsed.delta.stop_reason;
     }catch{}
   };
   let streamBroke = false;
@@ -255,7 +261,8 @@ async function handleGenerate(req, res){
       }
       catch(e){ return send(res, 502, 'READ_ERROR: '+e.message); }
       let content = '', usage = null;
-      try { const j = JSON.parse(fullBody); content = j.choices?.[0]?.message?.content || ''; usage = j.usage || null; }
+      try { const j = JSON.parse(fullBody); content = j.choices?.[0]?.message?.content || ''; usage = j.usage || null;
+        const fr = j.choices?.[0]?.finish_reason; if(fr) usage = Object.assign(usage||{}, { finish: fr }); }
       catch(e) {
         content = fullBody.split('\n').filter(l => l.startsWith('data: ') && l !== 'data: [DONE]')
           .map(l => { try{ return JSON.parse(l.slice(6)).choices?.[0]?.delta?.content||''; }catch{ return ''; } }).join('');
@@ -267,7 +274,7 @@ async function handleGenerate(req, res){
     const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
     // С stream_options.include_usage апстрим шлёт финальный чанк вида
     // {choices:[], usage:{...}} — без delta.content, но с реальными токенами.
-    let capturedUsage = null;
+    let capturedUsage = null, capturedFinish = '';
     const emitLine=(line)=>{
       const s=line.trim(); if(!s.startsWith('data:')) return;
       const data=s.slice(5).trim(); if(data==='[DONE]') return;
@@ -276,6 +283,7 @@ async function handleGenerate(req, res){
         const d = parsed.choices?.[0]?.delta?.content;
         if(d) res.write(d);
         if(parsed.usage) capturedUsage = parsed.usage;
+        const fr = parsed.choices?.[0]?.finish_reason; if(fr) capturedFinish = fr;
       }catch{}
     };
     let streamBroke = false;
@@ -306,7 +314,10 @@ async function handleGenerate(req, res){
     // Реальные токены апстрима (см. stream_options.include_usage выше) — если
     // соединение оборвалось (streamBroke), финальный чанк с usage до нас не
     // дошёл, и маркера не будет: клиент честно откатится на свою оценку.
-    else if(capturedUsage) res.write(`\n[[LITSOVET:USAGE:${JSON.stringify(capturedUsage)}]]`);
+    // finish_reason приходит в чанке С контентом, а usage — отдельным финальным
+    // (stream_options.include_usage). Пишем маркер, если есть ХОТЬ ОДНО из двух:
+    // иначе провайдер без include_usage терял бы и признак обрыва по лимиту.
+    else if(capturedUsage || capturedFinish) res.write(`\n[[LITSOVET:USAGE:${JSON.stringify(Object.assign({}, capturedUsage, capturedFinish?{finish:capturedFinish}:{}))}]]`);
     res.end();
   });
 }

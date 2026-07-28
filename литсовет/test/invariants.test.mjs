@@ -456,3 +456,29 @@ test('миграция: явное «как глобально» (пустая �
   const pr = (после.agents||[]).find(a=>a.role==='prose');
   assert.equal(pr.model, '', 'снятое переопределение не должно возвращаться дефолтом роли');
 });
+
+// ───────────── обрыв по лимиту токенов вне пайплайна сцены ─────────────
+// 36 из 44 вызовов LLM вне написания сцены (Мир, Структура, Критик книги,
+// Иллюстрации, История, Серия) разбирали ответ через extractJSON, а тот на
+// оборванном JSON возвращает null — вызывающий читал это как «ничего не
+// найдено». «Нестыковок нет» было неотличимо от «ответ не поместился».
+test('assertNotTruncated: молчит на нормальном ответе, бросает на обрыве', async () => {
+  const { assertNotTruncated } = await import('../src/llm.js');
+  assert.doesNotThrow(()=>assertNotTruncated({ text:'ок', hitLimit:false }, 'Мир'));
+  assert.doesNotThrow(()=>assertNotTruncated(null, 'Мир'), 'null не должен ронять вызывающего');
+  assert.doesNotThrow(()=>assertNotTruncated({ text:'ок' }, 'Мир'), 'ответ старого сервера без флага — не обрыв');
+  assert.throws(()=>assertNotTruncated({ text:'{"a":', hitLimit:true }, 'Критик книги'),
+    /обрезан лимитом токенов \(Критик книги\)/, 'обрыв должен называть агента и не молчать');
+});
+
+test('все модули вне пайплайна сцены проверяют обрыв', async () => {
+  const fs = await import('node:fs');
+  const модули = ['world','bookreview','architect-book','historian','illustrations','series','craftsignals','inline'];
+  for(const m of модули){
+    const src = fs.readFileSync(new URL(`../src/${m}.js`, import.meta.url), 'utf8');
+    const вызовов = (src.match(/await callLLM\(/g)||[]).length;
+    const проверок = (src.match(/assertNotTruncated\(/g)||[]).length;
+    assert.ok(проверок > 0, `${m}.js: ${вызовов} вызовов LLM и ни одной проверки обрыва — обрыв пройдёт молча`);
+    assert.match(src, /assertNotTruncated.*from '\.\/llm\.js'/s, `${m}.js: хелпер не импортирован`);
+  }
+});

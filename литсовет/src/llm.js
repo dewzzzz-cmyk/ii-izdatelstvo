@@ -21,6 +21,19 @@ const STREAM_TRUNCATED_MARKER = '\n[[LITSOVET:STREAM_TRUNCATED]]';
 // эвристика просто иначе считает баланс кириллицы/пунктуации в JSON).
 const USAGE_MARKER_RE = /\n\[\[LITSOVET:USAGE:(\{[\s\S]*?\})\]\]\s*$/;
 
+// Обрыв по лимиту токенов для агентов ВНЕ пайплайна сцены (Мир, Структура,
+// Критик книги, Иллюстрации, История, Серия). Все они разбирают ответ через
+// extractJSON, а тот на оборванном JSON возвращает null — и вызывающий читает
+// это как «ничего не найдено». Итог: «нестыковок нет» и «замечаний нет»
+// неотличимы от «ответ не поместился». Бросаем понятную ошибку: у всех этих
+// функций вызывающий UI уже ловит исключение и показывает текст автору, а
+// молчаливый пустой результат не показывает ничего.
+export function assertNotTruncated(res, что){
+  if(res && res.hitLimit){
+    throw new Error(`Ответ модели обрезан лимитом токенов (${что}). Результат неполный — не применяю. Увеличьте лимит этого агента в настройках или упростите запрос.`);
+  }
+}
+
 export async function callLLM({ baseURL, apiKey, model, temperature, messages, maxTokens, retries=2 }, onToken, onRetry){
   const tokensIn = messages.reduce((s,m)=>s+estimateTokens(m.content), 0);
   let lastErr = null;
@@ -100,7 +113,7 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       // выше) — маркер обрезается из текста ДО того, как он уйдёт дальше в
       // пайплайн прозой/JSON. Если апстрим usage не прислал (не-OpenAI-совместимый
       // провайдер, старый сервер до этого фикса) — тихо падаем на оценку, как раньше.
-      let realTokensIn = null, realTokensOut = null;
+      let realTokensIn = null, realTokensOut = null, finishReason = '';
       const usageMatch = text.match(USAGE_MARKER_RE);
       if(usageMatch){
         text = text.slice(0, usageMatch.index);
@@ -108,6 +121,7 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
           const usage = JSON.parse(usageMatch[1]);
           if(typeof usage.prompt_tokens === 'number') realTokensIn = usage.prompt_tokens;
           if(typeof usage.completion_tokens === 'number') realTokensOut = usage.completion_tokens;
+          if(typeof usage.finish === 'string') finishReason = usage.finish;
         }catch{}
       }
       // Досылаем остаток, придержанный LOOKBACK-буфером выше — text уже
@@ -123,7 +137,16 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       // от того, через какого агента/кнопку он прошёл.
       const st = getState();
       if(st){ st.spend = st.spend || {text:0, images:0}; st.spend.text += cost; }
-      return { text: text.trim(), tokensIn: finalTokensIn, tokensOut, cost };
+      // hitLimit — ДОСТОВЕРНЫЙ признак «ответ обрезан по maxTokens», сказанный
+      // самим апстримом ('length' у OpenAI-совместимых, 'max_tokens' у Anthropic),
+      // а не эвристика looksTokenTruncated по хвосту текста. Нужен всем ~44
+      // вызовам вне пайплайна сцены (Мир, Структура, Критик книги, Иллюстрации,
+      // История, Серия): все они разбирают ответ через extractJSON, а тот на
+      // оборванном JSON возвращает null — и вызывающий читает это как «ничего
+      // не найдено». Так «нестыковок нет» и «замечаний нет» становились
+      // неотличимы от «ответ не поместился в лимит».
+      const hitLimit = finishReason === 'length' || finishReason === 'max_tokens';
+      return { text: text.trim(), tokensIn: finalTokensIn, tokensOut, cost, finishReason, hitLimit };
     }catch(e){
       if(e.nonRetryable) throw e;
       lastErr = e.message;

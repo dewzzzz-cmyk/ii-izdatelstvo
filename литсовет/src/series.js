@@ -1,7 +1,7 @@
 // Режим серии (спека 5.2): из импортированной книги извлекаем голос,
 // персонажей (с состоянием на конец книги), факты в Bible, сводку книги.
 
-import { callLLM, extractJSON } from './llm.js';
+import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { extractVoice } from './voice.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 import { smartTrunc } from './tokens.js';
@@ -56,6 +56,7 @@ export async function importSeriesBook(state, title, text){
   // 2. Канон/персонажи/сводка — через LLM
   const knownNames = (state.characters||[]).map(c=>c.name).filter(Boolean);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.3, messages:extractMessages(title, text, knownNames), maxTokens:2400 });
+  assertNotTruncated(res, 'Импорт книги серии');
   const j = extractJSON(res.text) || {};
 
   // персонажи (findOrCreateCharacter — защита от дублей форм имени)

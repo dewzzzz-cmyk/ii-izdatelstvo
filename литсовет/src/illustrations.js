@@ -7,7 +7,7 @@
 //      денег за каждую картинку — вызывается ТОЛЬКО по явному клику автора,
 //      никогда не автоматически.
 
-import { callLLM, extractJSON } from './llm.js';
+import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { bookOverview, doneScenesOrdered } from './bookreview.js';
 import { generateImage } from './imagegen.js';
 import { ART_STYLES } from './artStyles.js';
@@ -51,6 +51,7 @@ export async function suggestIllustrations(state){
   const scenes = doneScenesOrdered(state);
   const msgs = illustrationSuggestMessages(state);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:1800, retries:g.retries });
+  assertNotTruncated(res, 'Арт-директор');
   const j = extractJSON(res.text);
   const arr = j && Array.isArray(j.candidates) ? j.candidates : null;
   if(!arr) throw new Error('Не удалось разобрать ответ арт-директора.');
@@ -210,6 +211,7 @@ export async function suggestOneIllustration(state, target){
   if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const msgs = singleTargetMessages(state, target);
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.6, messages:msgs, maxTokens:600, retries:g.retries });
+  assertNotTruncated(res, 'Арт-директор');
   const j = extractJSON(res.text);
   if(!j || !j.prompt) throw new Error('Не удалось разобрать ответ арт-директора.');
   let sceneId = null, sceneTitle = '';

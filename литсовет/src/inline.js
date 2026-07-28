@@ -2,7 +2,7 @@
 // НЕ запускает полный пайплайн — меняет ТОЛЬКО выделенное, вписывая между
 // «до» и «после». Результат сплайсится обратно в прозу на место выделения.
 
-import { callLLM } from './llm.js';
+import { callLLM, assertNotTruncated } from './llm.js';
 import { ag, llmFor } from './state.js';
 
 const ACTIONS = {
@@ -42,6 +42,9 @@ export async function transformSelection(state, action, selected, before, after)
     temperature: prose.temp ?? 0.8, messages:[{role:'system',content:sys},{role:'user',content:user}],
     maxTokens: 840,
   });
+  // Инлайн-правка возвращает ЧИСТЫЙ текст, не JSON — обрыв здесь не даёт
+  // пустоты, а вставляет в книгу оборванную на полуслове фразу.
+  assertNotTruncated(res, 'Инлайн-правка');
   return res.text.trim();
 }
 

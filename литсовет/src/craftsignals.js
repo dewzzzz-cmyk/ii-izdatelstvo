@@ -14,7 +14,7 @@
 // говорящим котом, с дневником погибшего исследователя или вовсе без
 // постоянного источника — потому что метка каждый раз своя, под книгу.
 
-import { callLLM, extractJSON } from './llm.js';
+import { callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 
 const SETUP_TYPES = ['серьёзный_вопрос', 'напряжённый_момент', 'бытовая_реплика', 'другое'];
@@ -47,6 +47,7 @@ export async function extractCraftSignature(state, scene){
   if(!g?.apiKey || !scene?.text) return null;
   const res = await callLLM({ baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, temperature:0.2,
     messages: craftSignatureMessages(scene.text), maxTokens:600, retries:g.retries });
+  assertNotTruncated(res, 'Сигналы ремесла');
   const j = extractJSON(res.text);
   if(!j) return null;
   return {
