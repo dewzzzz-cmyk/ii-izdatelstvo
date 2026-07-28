@@ -146,8 +146,30 @@ export function extractJSON(text){
   // блок ```json ... ```
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if(fence){ try{ return JSON.parse(fence[1]); }catch{} }
-  // первый {...} в тексте
-  const brace = text.match(/\{[\s\S]*\}/);
-  if(brace){ try{ return JSON.parse(brace[0]); }catch{} }
+  // Первый СБАЛАНСИРОВАННЫЙ {...} в тексте. Раньше здесь стоял жадный
+  // /\{[\s\S]*\}/ — он тянул до ПОСЛЕДНЕЙ скобки во всём ответе, поэтому
+  // валидный JSON, за которым идёт проза со скобками (модель любит дописать
+  // «шаблон {название} подставится сам»), разбирался в null: ответ был
+  // корректным, а пайплайн считал его мусором. Считаем глубину и учитываем
+  // строки с экранированием, чтобы скобка внутри значения не сбивала счёт.
+  const obj = firstBalanced(text);
+  if(obj){ try{ return JSON.parse(obj); }catch{} }
   return null;
+}
+
+// Первый сбалансированный {...}-фрагмент строки либо null.
+function firstBalanced(text){
+  const start = text.indexOf('{');
+  if(start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for(let i = start; i < text.length; i++){
+    const c = text[i];
+    if(esc){ esc = false; continue; }
+    if(c === '\\'){ if(inStr) esc = true; continue; }
+    if(c === '"'){ inStr = !inStr; continue; }
+    if(inStr) continue;
+    if(c === '{') depth++;
+    else if(c === '}'){ depth--; if(depth === 0) return text.slice(start, i+1); }
+  }
+  return null;   // скобки не закрылись — ответ оборван по токенам
 }
