@@ -110,5 +110,14 @@ function bindHandlers(els, s){
     }
   });
   const fb2 = document.getElementById('pubFb2');
-  if(fb2) fb2.onclick = ()=>{ exportFb2(s); };
+  // exportFb2 стала async (конвертация картинок в JPEG через canvas — см.
+  // toFb2Binary в export.js). Без await/catch отказ утонул бы в неперехваченном
+  // промисе: кнопка выглядела бы сработавшей, а файл не скачался.
+  if(fb2) fb2.onclick = async ()=>{
+    const orig = fb2.textContent;
+    fb2.disabled = true; fb2.textContent = 'Готовлю FB2…';
+    try{ await exportFb2(s); }
+    catch(e){ alert('Не удалось собрать FB2: ' + (e?.message || e)); }
+    finally{ fb2.disabled = false; fb2.textContent = orig; }
+  };
 }

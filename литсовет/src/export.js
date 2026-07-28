@@ -103,6 +103,37 @@ function decodeDataUrlImage(dataUrl){
   }catch(e){ console.warn('image decode failed', e); _epubSkipped.push(m[1]+' (ошибка декодирования)'); return null; }
 }
 
+// ── Картинка → блок <binary> для FB2 ──
+// В схеме FB2 2.0 допустимы только image/jpeg и image/png: WEBP там нет вообще,
+// а Recraft (текущий провайдер по умолчанию у автора) отдаёт именно WEBP — то
+// есть «просто вставить как есть» дало бы файл, который читалки не покажут.
+// Поэтому всё, что не jpeg/png, пережимаем в JPEG через canvas: качество для
+// иллюстраций достаточное, а совместимость полная. JPEG не умеет прозрачность,
+// поэтому под картинку кладём белый фон — иначе прозрачные места станут чёрными.
+function toFb2Binary(dataUrl, id){
+  return new Promise(resolve=>{
+    const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl||'');
+    if(!m) return resolve(null);
+    const kind = m[1].toLowerCase();
+    if(kind==='jpeg' || kind==='jpg') return resolve({ id:id+'.jpg', contentType:'image/jpeg', b64:m[2] });
+    if(kind==='png')                  return resolve({ id:id+'.png', contentType:'image/png',  b64:m[2] });
+    const img = new Image();
+    img.onload = ()=>{
+      try{
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,c.width,c.height);
+        ctx.drawImage(img, 0, 0);
+        const jpg = c.toDataURL('image/jpeg', 0.88).split(',')[1];
+        resolve({ id:id+'.jpg', contentType:'image/jpeg', b64:jpg });
+      }catch{ resolve(null); }
+    };
+    img.onerror = ()=>resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 function download(blob, filename){
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
@@ -284,14 +315,45 @@ function fb2Author(raw){
   return `<author><first-name>${xesc(first)}</first-name>${middle}<last-name>${xesc(last)}</last-name></author>`;
 }
 
-export function exportFb2(state){
+export async function exportFb2(state){
   const book = buildBook(state);
   const p = state.project || {};
-  const sections = book.chapters.map(ch=>{
+
+  // ── Картинки ──
+  // Раньше FB2 был единственным форматом БЕЗ иллюстраций вообще: .md, .doc и
+  // EPUB картинку встраивали, а FB2 отдавал голый текст (8 КБ против 1.6-2.1 МБ
+  // на живом прогоне). Та же асимметрия, что была с потерянным именем автора.
+  // Собираем всё заранее: конвертация в JPEG асинхронна (canvas), поэтому и сама
+  // функция стала async.
+  const binaries = [];
+  const addBinary = async (dataUrl, id) => {
+    const b = await toFb2Binary(dataUrl, id);
+    if(b) binaries.push(b);
+    return b;
+  };
+  const coverBin = p.coverDataUrl ? await addBinary(p.coverDataUrl, 'cover') : null;
+  const mapItem = worldMapItem(state);
+  const mapBin = mapItem ? await addBinary(mapItem.dataUrl, 'map') : null;
+
+  const sections = [];
+  if(mapBin) sections.push(`<section><title><p>Карта мира</p></title>\n<p><image l:href="#${mapBin.id}"/></p>\n</section>`);
+  let imgN = 0;
+  for(const ch of book.chapters){
     const title = ch.title ? `<title><p>${xesc(ch.title)}</p></title>` : '';
-    const body = ch.scenes.map(sc=>paraXhtml(sc.text)).join('\n');
-    return `<section>${title}\n${body}\n</section>`;
-  }).join('\n');
+    const parts = [];
+    for(const sc of ch.scenes){
+      const illust = illustrationForScene(state, sc.id);
+      if(illust){
+        const b = await addBinary(illust, 'img'+(++imgN));
+        // Картинка идёт ПЕРЕД текстом сцены — тот же порядок, что в .md/.doc/EPUB.
+        if(b) parts.push(`<p><image l:href="#${b.id}"/></p>`);
+      }
+      parts.push(paraXhtml(sc.text));
+    }
+    sections.push(`<section>${title}\n${parts.join('\n')}\n</section>`);
+  }
+  const sectionsXml = sections.join('\n');
+  const binariesXml = binaries.map(b=>`<binary id="${b.id}" content-type="${b.contentType}">${b.b64}</binary>`).join('\n');
   // <title-info> раньше содержал ТОЛЬКО <book-title> — файл открывался, но был
   // невалиден по схеме FB2 2.0, где genre, author и lang обязательны, и главное:
   // имя автора не попадало в файл вообще. Остальные три экспорта (.md, .doc,
@@ -304,12 +366,13 @@ export function exportFb2(state){
   const fb2 = `<?xml version="1.0" encoding="UTF-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
 <description>
-<title-info><genre>${genre}</genre>${fb2Author(p.author)}<book-title>${xesc(book.title)}</book-title>${p.synopsis?`<annotation><p>${xesc(p.synopsis)}</p></annotation>`:''}<lang>ru</lang></title-info>
+<title-info><genre>${genre}</genre>${fb2Author(p.author)}<book-title>${xesc(book.title)}</book-title>${p.synopsis?`<annotation><p>${xesc(p.synopsis)}</p></annotation>`:''}${coverBin?`<coverpage><image l:href="#${coverBin.id}"/></coverpage>`:''}<lang>ru</lang></title-info>
 <document-info>${fb2Author(p.author)}<program-used>Литсовет</program-used><date value="${stamp}">${stamp}</date><id>${xesc(state.id||'litsovet')}</id><version>1.0</version></document-info>
 </description>
 <body>
-${sections}
+${sectionsXml}
 </body>
+${binariesXml}
 </FictionBook>`;
   download(new Blob([fb2],{type:'application/xml'}), book.title+'.fb2');
 }
