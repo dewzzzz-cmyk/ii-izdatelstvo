@@ -457,3 +457,23 @@ test('draftBeatsBest: неразобранная оценка не побежд�
   const { draftBeatsBest } = await import('../src/pipeline.js');
   assert.equal(draftBeatsBest(чрн({scored:false}), чрн({scored:true, weighted:6.3})), false);
 });
+
+// Порог «баллы различаются» обязан стоять ВЫШЕ собственного шума Оценщика.
+// Замер: 6.3 / 6.7 / 6.5 на одном тексте = разброс 0.4. Пока в промпт
+// подставлялся якорь с прошлыми баллами, оценка держалась искусственно
+// неподвижной и порог 0.05 был безопасен. Якорь убран — шум вернулся.
+test('draftBeatsBest: разница в пределах шума Оценщика не считается улучшением', async () => {
+  const { draftBeatsBest, EVAL_NOISE } = await import('../src/pipeline.js');
+  assert.ok(EVAL_NOISE >= 0.4, 'порог ниже измеренного шума 0.4 — подбрасывание монеты будет принято за рост');
+  // 6.6 против 6.3 — это шум, а не улучшение: решать должны критические находки.
+  assert.equal(draftBeatsBest(чрн({weighted:6.6, criticals:3}), чрн({weighted:6.3, criticals:1})), false,
+    'черновик с ХУДШИМИ критическими не должен выигрывать на шумовой разнице балла');
+  assert.equal(draftBeatsBest(чрн({weighted:6.6, criticals:0}), чрн({weighted:6.3, criticals:2})), true,
+    'при шумовой разнице балла решают критические — здесь их меньше');
+});
+
+test('draftBeatsBest: рост выше шума по-прежнему решает сам', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({weighted:7.5, criticals:3}), чрн({weighted:6.3, criticals:0})), true,
+    'разница 1.2 — настоящий рост, он важнее счёта критических');
+});
