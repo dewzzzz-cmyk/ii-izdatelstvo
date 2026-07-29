@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider, MODEL_PRICES } from './providers.js'
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.67.0';
+export const APP_VERSION = '1.68.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Единый источник —
 // providers.js (та же таблица кормит подсказку цены прямо в селекте модели,

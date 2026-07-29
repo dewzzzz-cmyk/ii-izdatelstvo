@@ -613,11 +613,28 @@ export async function runScene(state, scene, opts={}, onProgress){
           paceBaseline = { medianWords: sorted[Math.floor(sorted.length/2)], sceneWords: (pRes.text.match(/\S+/g)||[]).length };
         }
         const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline, recentEndings: state.recentSceneEndings });
-        // Anchor-score: передаём baseline итерации 1 чтобы Оценщик не дрейфовал между итерациями
-        if(iter > 1 && anchorVerdict?.ok){
-          const baseStr = Object.entries(anchorVerdict.scores).map(([k,v])=>`${AXIS_LABELS[k]||k}:${v}`).join(', ');
-          eMsgs[1].content += `\n\nИтерация ${iter}. Базовые оценки черновика 1: [${baseStr}]. Оценивай ТЕКУЩИЙ черновик относительно baseline — ось должна расти там где проблема устранена, и падать если добавлена новая.`;
-        }
+        // ЗДЕСЬ БЫЛ ЯКОРЬ: Оценщику дописывали оси черновика 1 «чтобы он не
+        // дрейфовал между итерациями». Замер на одном и том же тексте показал,
+        // что лекарство хуже болезни:
+        //   собственный шум без якоря  — 6.3 / 6.7 / 6.5, разброс 0.4
+        //   с якорем                   — 5.0 … 7.7,        разброс 2.7
+        // Балл ехал за подставленным числом: с ложным низким якорем [3,3,3,3,3]
+        // тот же текст получил 5.0, с ложным высоким [9,9,9,9,9] — 7.7. То есть
+        // оценивался не текст, а наша же подсказка.
+        //
+        // Отсюда и «балл не растёт»: якорь — это ВСЕГДА оси первого черновика
+        // (anchorVerdict фиксируется один раз и не обновляется), поэтому каждая
+        // итерация подтягивалась обратно к стартовой сетке, и улучшению негде
+        // было проявиться. Вдобавок формулировка «ось должна падать, если
+        // добавлена новая проблема» заставляла модель на похожем тексте
+        // страховаться в минус: с настоящим якорем тот же черновик получил 6.0
+        // против 6.7 без него.
+        //
+        // anchorVerdict остаётся — он нужен для показа Δ в логе и для детектора
+        // стагнации, которые смотрят на разобранные вердикты, а не на промпт.
+        // Ценой отказа остаётся собственный шум ±0.4: сцена у самого порога
+        // может пройти или не пройти на удачном броске. Это честнее, чем
+        // управляемая нами же оценка.
         const evalMaxTk = evalAg.maxTokens ?? 1080;
         let eRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:eMsgs, maxTokens:evalMaxTk });
         verdict = parseEvaluator(eRes.text, threshold, { skipAxes: evalSkipAxes });
