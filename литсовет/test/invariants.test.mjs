@@ -683,3 +683,29 @@ test('инородная письменность: точечная правка
   assert.ok(тело.includes('findForeignScript(draft)'),
     'сравнивать надо с исходником: иначе сцену с иероглифом нельзя починить как раз той правкой, которая для этого нужна');
 });
+
+// Обе проверки якорей обязаны спрашивать «был во входе и пропал в выходе».
+// Без условия «был во входе» проверка отвечает на вопрос «есть ли эта строка в
+// тексте», а рапортует, будто на вопрос «не убрал ли её агент» — так Линейный
+// редактор получил отказ в 3 сценах из 3 за фразы из чужого черновика.
+test('якоря: обе проверки идут через anchorsLostBy, а не через голый anchorSurvives', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  assert.ok(src.includes('anchorsLostBy(beforeLineEdit, candidate, leAnchors)'),
+    'Линейный редактор: проверка обязана сравнивать с тем текстом, который ему дали');
+  assert.ok(src.includes('anchorsLostBy(revisedFrom, pRes.text, prevIterAnchors)'),
+    'Прозаик: тот же класс дефекта — правит revisedFrom, а якоря от оценки другого черновика');
+  assert.ok(!/filter\(a\s*=>\s*!anchorSurvives\(/.test(src),
+    'остался фильтр без условия «был во входе» — он снова будет обвинять агента в чужой потере');
+});
+
+test('якоря: revisedFrom снимается ДО перезаписи prevDraft', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  const снимок = src.indexOf('const revisedFrom = prevDraft;');
+  const перезапись = src.indexOf('prevDraft = pRes.text;', снимок);
+  assert.ok(снимок > -1 && перезапись > снимок,
+    'если снять снимок после перезаписи, проверка сравнит текст сам с собой и молча перестанет ловить настоящие потери');
+  const проверка = src.indexOf('anchorsLostBy(revisedFrom, pRes.text');
+  assert.ok(проверка > перезапись, 'проверка должна идти после обоих — иначе revisedFrom ещё не объявлен');
+});

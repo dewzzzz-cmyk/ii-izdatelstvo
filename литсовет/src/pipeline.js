@@ -67,6 +67,16 @@ function noteSimilarity(a, b){ return cosine(tfvec(tokensOf(a)), tfvec(tokensOf(
 // этой проверки уже потеря, не совпадение.
 function normalizeAnchor(s){ return String(s||'').toLowerCase().replace(/[«»"'''`]/g,'').replace(/\s+/g,' ').trim(); }
 function anchorSurvives(text, anchor){ return !anchor || normalizeAnchor(text).includes(normalizeAnchor(anchor)); }
+// Потерян ЛИШЬ тот якорь, который БЫЛ во входе и пропал в выходе. Условие «был
+// во входе» — не придирка, а суть проверки: без него она отвечает на вопрос
+// «есть ли эта строка в тексте», а рапортует, будто на вопрос «не убрал ли её
+// агент». Живой прогон: Линейный редактор получил отказ в 3 сценах из 3, при
+// этом якоря были цитатами из ЧУЖОГО черновика — best остаётся черновиком 1,
+// пока оценка не выросла СТРОГО (см. условие обновления best), а якоря берутся
+// из последней итерации. Редактор эти фразы в глаза не видел, а обвиняли его.
+export function anchorsLostBy(before, after, anchors){
+  return (anchors||[]).filter(a => a && anchorSurvives(before, a) && !anchorSurvives(after, a));
+}
 // Сколько итераций подряд один и тот же вопрос фактических стражей (логика/события)
 // может остаться без ответа, прежде чем перестать быть необязательным пробелом и
 // стать обязательной правкой (см. FACTUAL_ESCALATE_ITERS ниже по файлу).
@@ -521,6 +531,11 @@ export async function runScene(state, scene, opts={}, onProgress){
         }
         logInput = ctx.messages[1].content; logLayers = ctx.layers;
       }
+      // Текст, который Прозаик РЕАЛЬНО правил на этой итерации — снимок до
+      // перезаписи строкой ниже. Нужен проверке якорей: она обязана спрашивать
+      // «был во входе и пропал в выходе», а prevDraft к моменту проверки уже
+      // равен pRes.text, и сравнение шло бы текста с самим собой.
+      const revisedFrom = prevDraft;
       prevDraft = pRes.text;
       if(pRes.text) lastGenerated = pRes.text;
       logStep({ agent:'prose', iter, input:logInput, output:pRes.text,
@@ -667,8 +682,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       // потерял то, что сам же Оценщик на прошлой итерации попросил сохранить
       // дословно, это регресс, а не улучшение. Не применяется к самому первому
       // черновику (isRevision===false) — там ещё нечего было терять.
+      // Та же поправка, что у Линейного редактора: якоря приходят от оценки
+      // ПРЕДЫДУЩЕГО черновика, а правил Прозаик revisedFrom — и это не всегда
+      // один и тот же текст (см. подмену prevDraft на best ниже по файлу, когда
+      // директива строится от bestEval). Без условия «был во входе» проверка
+      // обвиняла бы Прозаика в потере того, чего ему не давали.
       const lostAnchors = (isRevision && prevIterAnchors.length)
-        ? prevIterAnchors.filter(a => !anchorSurvives(pRes.text, a))
+        ? anchorsLostBy(revisedFrom, pRes.text, prevIterAnchors)
         : [];
       if(lostAnchors.length) onProgress && onProgress({log:{icon:'📌', text:`Правка потеряла якорь(я), закреплённые предыдущей оценкой: «${lostAnchors[0].slice(0,60)}»${lostAnchors.length>1?` (+${lostAnchors.length-1})`:''} — консенсус отложен, следующая правка должна их вернуть`, state:'warn'}});
 
@@ -1254,7 +1274,7 @@ export async function runScene(state, scene, opts={}, onProgress){
             const gt = await gate(state,'lineedit','Линейный редактор', '', opts, {draft:leRes.text, editable:true});
             if(gt.approve){
               const candidate = (gt.text!=null && gt.text.trim())?gt.text.trim():leRes.text;
-              const leLostAnchors = leAnchors.filter(a=>!anchorSurvives(candidate, a));
+              const leLostAnchors = anchorsLostBy(beforeLineEdit, candidate, leAnchors);
               if(leLostAnchors.length){
                 onProgress && onProgress({log:{icon:'📌', text:`Линейный редактор потерял закреплённый якорь («${leLostAnchors[0].slice(0,60)}»${leLostAnchors.length>1?` +${leLostAnchors.length-1}`:''}) — правка отклонена, текст остаётся как до Линейного редактора`, state:'warn'}});
                 break;
