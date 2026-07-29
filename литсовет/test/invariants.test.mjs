@@ -709,3 +709,25 @@ test('якоря: revisedFrom снимается ДО перезаписи prevD
   const проверка = src.indexOf('anchorsLostBy(revisedFrom, pRes.text');
   assert.ok(проверка > перезапись, 'проверка должна идти после обоих — иначе revisedFrom ещё не объявлен');
 });
+
+// Выбор лучшего черновика вынесен в чистую функцию и должен вызываться из
+// пайплайна. Прежнее правило «строго выше балла» при застывшей оценке
+// (6.3 -> 6.3 -> 6.3 в трёх живых прогонах) навсегда оставляло best первым
+// черновиком, и все последующие итерации выбрасывались независимо от качества.
+test('выбор черновика: пайплайн ходит через draftBeatsBest, а не через самописное условие', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  assert.ok(src.includes('if(draftBeatsBest(этот, лучший))'),
+    'условие выбора обязано идти через общую функцию — иначе тай-брейк снова разойдётся с тестами');
+  assert.ok(!/verdict\.weighted\s*>\s*\(bestEval\.weighted/.test(src),
+    'осталось прежнее «строго больше балла» — при равных баллах оно снова заморозит best на первом черновике');
+});
+
+test('выбор черновика: счётчики для тай-брейка обновляются вместе с best', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+  const блок = src.slice(src.indexOf('if(draftBeatsBest(этот, лучший))'), src.indexOf('// Заметка про потерянные якоря'));
+  assert.ok(блок.includes('bestCriticals = criticals.length'),
+    'без обновления bestCriticals тай-брейк сравнивал бы с нулём и любой черновик «выигрывал» бы по критическим');
+  assert.ok(блок.includes('bestQuestions = factualQuestions.length'), 'то же для вопросов');
+});

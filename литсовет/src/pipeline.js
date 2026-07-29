@@ -74,6 +74,31 @@ function anchorSurvives(text, anchor){ return !anchor || normalizeAnchor(text).i
 // этом якоря были цитатами из ЧУЖОГО черновика — best остаётся черновиком 1,
 // пока оценка не выросла СТРОГО (см. условие обновления best), а якоря берутся
 // из последней итерации. Редактор эти фразы в глаза не видел, а обвиняли его.
+// Кто из двух черновиков лучше. Порядок приоритетов сохранён прежний
+// (проверен литературно → чист → выше балл), добавлены только тай-брейки при
+// РАВНОМ балле. Причина: в трёх живых прогонах подряд балл стоял намертво
+// (6.3 → 6.3 → 6.3), а правило требовало СТРОГО большего — значит best
+// навсегда оставался черновиком 1, и всё, что Прозаик делал дальше,
+// выбрасывалось независимо от качества. Именно это рассинхронизировало якоря
+// Линейного редактора (он правил черновик 1, а якоря приходили от оценки
+// черновика 3). При равном балле судим тем, что система и так измеряет:
+// сначала критические находки, потом нерешённые вопросы Стражей.
+// Полное равенство оставляет РАННИЙ черновик — иначе поздние итерации
+// вытесняли бы равные ранние без единой причины.
+export function draftBeatsBest(c, b){
+  if(!b) return true;
+  if(c.literaryChecked !== b.literaryChecked) return !!c.literaryChecked;
+  if(c.clean !== b.clean) return !!c.clean;
+  // Оценщик выключен — балла не существует, сравнивать нечем. Сохраняем прежнее
+  // правило «побеждает последний»: менять его заодно я не собирался.
+  if(c.noScore) return true;
+  if(!c.scored) return false;          // оценка есть, но не разобралась — не побеждает
+  const dс = (c.weighted||0) - (b.weighted||0);
+  if(Math.abs(dс) >= 0.05) return dс > 0;
+  if((c.criticals||0) !== (b.criticals||0)) return (c.criticals||0) < (b.criticals||0);
+  return (c.questions||0) < (b.questions||0);
+}
+
 export function anchorsLostBy(before, after, anchors){
   return (anchors||[]).filter(a => a && anchorSurvives(before, a) && !anchorSurvives(after, a));
 }
@@ -323,6 +348,9 @@ export async function runScene(state, scene, opts={}, onProgress){
       (agentEnabled('styleguard') && (state.style?.rules||[]).filter(Boolean).length) ||
       (state.agents||[]).some(a=>a.custom && a.enabled!==false);
     let best = null, bestEval = null, bestClean = false, bestFlags = {}, bestLiteraryChecked = false;
+    // Нужны для тай-брейка при РАВНОМ балле (см. draftBeatsBest): без них
+    // «6.3 против 6.3» было неразрешимо, и побеждал всегда первый черновик.
+    let bestCriticals = 0, bestQuestions = 0;
     // opts.directive — «стоячее» указание (например, от целевой правки по
     // конкретным находкам, заданной вызывающим кодом), не разовая подсказка.
     // Раньше directive безусловно перезаписывался в конце КАЖДОЙ итерации
@@ -994,12 +1022,13 @@ export async function runScene(state, scene, opts={}, onProgress){
       // (пусть и с находками) черновик всегда предпочитается непроверенному —
       // «мы знаем, что не так» лучше, чем «никто не смотрел».
       const thisClean = criticals.length === 0 && !draftTruncated && !lostAnchors.length && (!agentEnabled('evaluator') || verdict.ok);
-      if(!bestEval ||
-         (literaryChecked && !bestLiteraryChecked) ||
-         (literaryChecked === bestLiteraryChecked && (
-           (thisClean && !bestClean) ||
-           (thisClean === bestClean && (!agentEnabled('evaluator') || (verdict.ok && verdict.weighted > (bestEval.weighted||0))))
-         ))){
+      const этот = { literaryChecked, clean:thisClean, noScore:!agentEnabled('evaluator'),
+        scored:!!verdict.ok, weighted:verdict.weighted||0,
+        criticals:criticals.length, questions:factualQuestions.length };
+      const лучший = bestEval ? { literaryChecked:bestLiteraryChecked, clean:bestClean,
+        noScore:!agentEnabled('evaluator'), scored:!!bestEval.ok, weighted:bestEval.weighted||0,
+        criticals:bestCriticals, questions:bestQuestions } : null;
+      if(draftBeatsBest(этот, лучший)){
         // bestFlags — снимок flags ИМЕННО этой итерации (flags — общая переменная,
         // сбрасывается и переписывается на каждой итерации; без снимка возвращённые
         // флаги могли бы описывать текст из ДРУГОЙ, не победившей итерации —
@@ -1007,6 +1036,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // возникший на итерации 3 (не выигравшей) — так итог показывал бы
         // критическую находку для текста, которого в возвращённом best уже нет.
         best = pRes.text; bestEval = verdict; bestClean = thisClean; bestFlags = {...flags}; bestLiteraryChecked = literaryChecked;
+        bestCriticals = criticals.length; bestQuestions = factualQuestions.length;
       }
 
       // Заметка про потерянные якоря — общая для обеих веток (с/без Оценщика).

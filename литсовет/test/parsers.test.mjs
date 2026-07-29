@@ -391,3 +391,69 @@ test('anchorsLostBy: пустой список якорей и пустые ст
   assert.deepEqual(anchorsLostBy('текст', 'текст', []), []);
   assert.deepEqual(anchorsLostBy('текст', 'текст', ['', null, undefined]), []);
 });
+
+// ── Выбор лучшего черновика ────────────────────────────────────────────────
+// Живые прогоны: балл стоит намертво (6.3 → 6.3 → 6.3), а правило требует
+// СТРОГО большего балла — значит best навсегда остаётся черновиком 1, и все
+// последующие итерации выбрасываются, чем бы они ни были лучше. Данные сцены
+// «Последний спуск»: ит.1 = 6.3/1 крит./4 вопр., ит.2 = 6.3/1/1, ит.3 = 6.3/3/0.
+// По меркам самой системы лучший — второй, а выигрывал первый.
+const чрн = (o={}) => ({ literaryChecked:false, clean:false, scored:true,
+  weighted:6.3, criticals:1, questions:0, ...o });
+
+test('draftBeatsBest: первый черновик берётся всегда', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн(), null), true);
+});
+
+test('draftBeatsBest: литературно проверенный бьёт непроверенного даже с худшим баллом', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({literaryChecked:true, weighted:5.0}), чрн({weighted:8.0})), true);
+});
+
+test('draftBeatsBest: чистый бьёт нечистого при равной проверенности', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({clean:true}), чрн({clean:false})), true);
+});
+
+test('draftBeatsBest: строго больший балл по-прежнему выигрывает', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({weighted:6.8}), чрн({weighted:6.3})), true);
+  assert.equal(draftBeatsBest(чрн({weighted:6.0}), чрн({weighted:6.3})), false);
+});
+
+test('draftBeatsBest: равный балл — выигрывает тот, у кого меньше критических', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({criticals:1}), чрн({criticals:3})), true, 'меньше критических — лучше');
+  assert.equal(draftBeatsBest(чрн({criticals:3}), чрн({criticals:1})), false, 'ит.3 (3 крит.) не должна побеждать ит.2 (1 крит.)');
+});
+
+test('draftBeatsBest: равный балл и критические — выигрывает тот, у кого меньше вопросов', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  // Ровно случай из прогона: ит.2 (6.3/1/1) против ит.1 (6.3/1/4).
+  assert.equal(draftBeatsBest(чрн({criticals:1, questions:1}), чрн({criticals:1, questions:4})), true);
+});
+
+test('draftBeatsBest: при полном равенстве остаётся РАННИЙ черновик', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн(), чрн()), false, 'без выигрыша не меняем — иначе поздние итерации вытесняют равные ранние');
+});
+
+test('draftBeatsBest: меньше критических НЕ спасает при худшем балле', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({weighted:5.0, criticals:0}), чрн({weighted:6.3, criticals:5})), false);
+});
+
+test('draftBeatsBest: без Оценщика сохраняется прежнее правило «побеждает последний»', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  // Балла не существует — сравнивать нечем. Менять это поведение заодно с
+  // тай-брейком было бы тихой подменой логики там, где её не просили менять.
+  assert.equal(draftBeatsBest(чрн({noScore:true, scored:false}), чрн({noScore:true, scored:false})), true);
+  // Но приоритеты выше балла продолжают работать и без Оценщика.
+  assert.equal(draftBeatsBest(чрн({noScore:true, clean:false}), чрн({noScore:true, clean:true})), false);
+});
+
+test('draftBeatsBest: неразобранная оценка не побеждает разобранную', async () => {
+  const { draftBeatsBest } = await import('../src/pipeline.js');
+  assert.equal(draftBeatsBest(чрн({scored:false}), чрн({scored:true, weighted:6.3})), false);
+});
