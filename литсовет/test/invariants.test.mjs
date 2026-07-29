@@ -501,7 +501,12 @@ test('assertNotTruncated: молчит на нормальном ответе, �
 
 test('все модули вне пайплайна сцены проверяют обрыв', async () => {
   const fs = await import('node:fs');
-  const модули = ['world','bookreview','architect-book','historian','illustrations','series','craftsignals','inline'];
+  // ondemand.js — «Разбор по требованию» (см. её же шапку: «вне полного
+  // пайплайна») пропущен в этом списке не по архитектуре, а по недосмотру:
+  // до фикса обрыв по лимиту токенов на ручном запуске стража/архитектора
+  // молча читался как «замечаний нет» — тот же класс, что этот тест ловит
+  // для остальных модулей.
+  const модули = ['world','bookreview','architect-book','historian','illustrations','series','craftsignals','inline','ondemand'];
   for(const m of модули){
     const src = fs.readFileSync(new URL(`../src/${m}.js`, import.meta.url), 'utf8');
     const вызовов = (src.match(/await callLLM\(/g)||[]).length;

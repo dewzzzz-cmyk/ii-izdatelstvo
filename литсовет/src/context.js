@@ -3,7 +3,7 @@
 // Полная иерархическая память (серия/книги/главы/сцены) добавляется в ПП3.
 
 import { estimateTokens, smartTrunc, trimToTokens } from './tokens.js';
-import { bibleForPrompt } from './bible.js';
+import { bibleForPrompt, bibleMatches, formatBibleEntries } from './bible.js';
 import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
 import { charNamesMatch, effectiveRules } from './state.js';
@@ -135,9 +135,20 @@ export function buildSceneContext(state, scene, opts={}){
   const chars = serializeCharacterStates(characters, scene.presentChars);
   if(chars) layers.push({ name:'characters', text:'=== ПЕРСОНАЖИ ===\n'+chars });
 
-  // 4. Bible — топ-5 по брифу сцены
-  const bibleBlock = bibleForPrompt(bible, scene.brief || scene.title || '', 5);
-  if(bibleBlock) layers.push({ name:'bible', text:'=== КАНОН (БИБЛИЯ) ===\n'+bibleBlock });
+  // 4. Bible — топ-5 по брифу сцены. Закреплённые (pinned) факты вынесены в
+  // ОТДЕЛЬНЫЙ fixed-слой: bibleMatches() гарантирует их присутствие в выдаче
+  // независимо от релевантности (см. её комментарий в bible.js — pin нужен
+  // именно для фактов, которые нельзя пропустить, даже если бриф сцены о них
+  // не намекает). Но applyBudget ниже урезает слой 'bible' ЦЕЛИКОМ при нехватке
+  // бюджета (см. dropOrder) — и раньше закреплённые факты сидели в ТОМ ЖЕ
+  // слое, что и обычные top-K находки, поэтому на длинной книге с урезанным
+  // бюджетом бюджетный урезатель мог выбросить их вместе с остальным каноном,
+  // хотя весь смысл pin — «этот факт обязателен, даже если бюджет жмёт».
+  const bibleHits = bibleMatches(bible, scene.brief || scene.title || '', 5);
+  const pinnedHits = bibleHits.filter(b=>b.pinned);
+  const restHits = bibleHits.filter(b=>!b.pinned);
+  if(pinnedHits.length) layers.push({ name:'biblePinned', text:'=== КАНОН (ЗАКРЕПЛЁННЫЕ ФАКТЫ) ===\n'+formatBibleEntries(pinnedHits), fixed:true });
+  if(restHits.length) layers.push({ name:'bible', text:'=== КАНОН (БИБЛИЯ) ===\n'+formatBibleEntries(restHits) });
 
   // 5. Живой контекст: текст предыдущей сцены (усекается через smartTrunc)
   if(opts.prevSceneText){
@@ -297,7 +308,7 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style, chapte
   // приём пейс-мейкинга: не жёсткий клиффхэнгер каждый раз, а открытый вопрос/
   // нерешённое напряжение, которое тянет читателя к следующей сцене.
   lines.push('Крючок в конце: последний абзац сцены должен оставлять открытый вопрос, решение-на-грани или нерешённое напряжение — не всё разрешай. Это НЕ обязательно жёсткий клиффхэнгер (не злоупотребляй), достаточно, чтобы читателю хотелось узнать, что дальше.');
-  lines.push('Факты из блока «КАНОН (БИБЛИЯ)» исторически зафиксированы — не изменяй их, не вводи деталей, противоречащих канону.');
+  lines.push('Факты из блоков «КАНОН (БИБЛИЯ)» и «КАНОН (ЗАКРЕПЛЁННЫЕ ФАКТЫ)» исторически зафиксированы — не изменяй их, не вводи деталей, противоречащих канону.');
   lines.push('Пиши только прозу, без заголовков и пояснений.');
   return lines.join('\n');
 }
@@ -312,7 +323,7 @@ export const LAYER_LABELS = {
   observed:'замеченные паттерны', openThreads:'открытые сюжетные линии',
   scenes:'сводки сцен', chapters:'сводки глав', series:'память серии',
   characters:'состояния персонажей', bible:'КАНОН (Библия)',
-  prevScene:'текст предыдущей сцены',
+  biblePinned:'КАНОН (закреплённые факты)', prevScene:'текст предыдущей сцены',
 };
 
 // Возвращает отчёт о том, что реально урезано: [{слой, вид, сколько}].

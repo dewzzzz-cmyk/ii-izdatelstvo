@@ -92,7 +92,9 @@ export function betaReaderMessages(state){
 
 export async function runBetaRead(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // Ключ проверяем через llmFor (учитывает per-роль override critic), не голый
+  // global — тот же класс бага, что уже чинили в ondemand.js/llmFor().
+  if(!llmFor(state, ag(state,'critic')).apiKey) throw new Error('Не задан API-ключ (⚙).');
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 2) throw new Error('Нужно хотя бы 2 законченные сцены (нужны начало и финал).');
   const msgs = betaReaderMessages(state);
@@ -209,7 +211,8 @@ export function worldDepthMessages(state){
 
 export async function runWorldDepthCheck(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // См. runBetaRead выше: ключ через llmFor (per-роль override critic).
+  if(!llmFor(state, ag(state,'critic')).apiKey) throw new Error('Не задан API-ключ (⚙).');
   if(!hasWorldDepthFacts(state)) throw new Error('В Библии нет фактов категории «магия/технология»/«система» — заполните их на вкладке «Мир».');
   const msgs = worldDepthMessages(state);
   const res = await callLLM({ ...llmFor(state, ag(state,'critic')), temperature: ag(state,'critic').temp ?? 0.4, messages: msgs, maxTokens: ag(state,'critic').maxTokens ?? 2880 });
@@ -261,7 +264,8 @@ export function flatCharacterMessages(state){
 
 export async function runFlatCharacterCheck(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // См. runBetaRead выше: ключ через llmFor (per-роль override critic).
+  if(!llmFor(state, ag(state,'critic')).apiKey) throw new Error('Не задан API-ключ (⚙).');
   if(!hasCharactersToCheck(state)) throw new Error('Нужно хотя бы 2 персонажа в карточках (Память → Персонажи).');
   const msgs = flatCharacterMessages(state);
   const res = await callLLM({ ...llmFor(state, ag(state,'critic')), temperature: ag(state,'critic').temp ?? 0.4, messages: msgs, maxTokens: ag(state,'critic').maxTokens ?? 2880 });
@@ -277,7 +281,8 @@ export async function runFlatCharacterCheck(state){
 
 export async function runCriticReview(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // См. runBetaRead выше: ключ через llmFor (per-роль override critic).
+  if(!llmFor(state, ag(state,'critic')).apiKey) throw new Error('Не задан API-ключ (⚙).');
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 2) throw new Error('Нужно хотя бы 2 законченные сцены (нужны начало и финал).');
   const msgs = criticReviewMessages(state);
@@ -299,7 +304,8 @@ export async function runCriticReview(state){
 
 export async function runChekhovCheck(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // См. runBetaRead выше: ключ через llmFor (per-роль override critic).
+  if(!llmFor(state, ag(state,'critic')).apiKey) throw new Error('Не задан API-ключ (⚙).');
   const scenes = doneScenesOrdered(state);
   if(scenes.length < 3) throw new Error('Нужно хотя бы 3 законченные сцены.');
   const msgs = chekhovMessages(state);
@@ -352,7 +358,8 @@ export function titleSuggestMessages(state){
 
 export async function suggestTitles(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
+  // См. runBetaRead выше: ключ через llmFor (per-роль override critic).
+  if(!llmFor(state, ag(state,'critic')).apiKey) throw new Error('Не задан API-ключ (⚙).');
   if(!canSuggestTitles(state)) throw new Error('Нужна хотя бы идея книги и 2 написанные главы.');
   const msgs = titleSuggestMessages(state);
   const res = await callLLM({ ...llmFor(state, ag(state,'critic')), temperature: ag(state,'critic').temp ?? 0.9, messages: msgs, maxTokens: ag(state,'critic').maxTokens ?? 2160 });

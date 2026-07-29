@@ -3,7 +3,7 @@
 // предложениями правок. Не меняет текст сам (кроме предложения Линейного
 // редактора, которое автор применяет вручную).
 
-import { callLLM, extractJSON, findForeignScript, MAX_OUTPUT_TOKENS } from './llm.js';
+import { callLLM, extractJSON, findForeignScript, MAX_OUTPUT_TOKENS, assertNotTruncated } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
@@ -21,11 +21,17 @@ import { rememberRejected } from './pipeline.js';
 //   kind:'architect' → { plan }         (якоря/шаги/запреты)
 export async function runAgentOnDemand(state, scene, agent){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ (⚙).');
   const draft = (scene.text||'').trim();
   if(!draft && agent.role!=='architect')
     throw new Error('Сначала напишите или вставьте текст сцены — оценивать нечего.');
   const base = llmFor(state, agent);
+  // Проверяем ключ ПОСЛЕ llmFor(), а не g.apiKey напрямую (как было) — тот же
+  // класс бага, что уже чинили в llmFor() самой: у роли может быть свой
+  // provider+ключ (см. per-роль переопределение), и это законная настройка,
+  // даже если глобальный g.apiKey пуст (см. patchScene() ниже — там уже
+  // проверяли правильно). Раньше «Разбор по требованию» отказывал с «Не задан
+  // API-ключ» ровно в этом легальном случае, хотя вызов прошёл бы успешно.
+  if(!base.apiKey) throw new Error('Не задан API-ключ (⚙).');
   const role = agent.role;
 
   if(role==='evaluator'){
@@ -41,6 +47,12 @@ export async function runAgentOnDemand(state, scene, agent){
   if(role==='architect'){
     const msgs = architectMessages(state, scene, bookContextBlock(state, scene));
     const res = await callLLM({ ...base, temperature:agent.temp??0.4, messages:msgs, maxTokens:agent.maxTokens??3600 });
+    // Без этой проверки обрыв по лимиту токенов давал parseArchitect(null) →
+    // UI показывал нейтральное «План не получен.» — неотличимо от «модель
+    // выбрала пустой план» или сетевого сбоя. Тот же приём assertNotTruncated,
+    // что уже стоит на всех остальных разовых JSON-агентах вне цикла сцены
+    // (Мир, Критик книги, История и т.д., см. llm.js) — здесь его не было.
+    assertNotTruncated(res, 'Архитектор сцены');
     return { kind:'architect', plan: parseArchitect(res.text) };
   }
   if(role==='lineedit'){
@@ -59,7 +71,10 @@ export async function runAgentOnDemand(state, scene, agent){
     // что чинили в pipeline.js: ответ может быть нужной длины, но обрываться не
     // на знаке препинания (обрыв ближе к концу лимита). looksTokenTruncated —
     // общая эвристика из guards.js, теперь применяется и здесь.
-    if(looksTokenTruncated(res.text))
+    // res.hitLimit — достоверный признак от самого апстрима (finish_reason),
+    // а не эвристика по хвосту текста: ловит и случай, когда обрыв пришёлся
+    // ровно на знак препинания (совпадение), а looksTokenTruncated молчит.
+    if(res.hitLimit || looksTokenTruncated(res.text))
       throw new Error(`Ответ обрывается не на знаке препинания (похоже на обрыв лимитом ${maxTk} ток.) — попробуйте ещё раз.`);
     return { kind:'lineedit', text:res.text.trim() };
   }
@@ -81,15 +96,25 @@ export async function runAgentOnDemand(state, scene, agent){
   else if(role==='atmosphere')msgs = atmosphereGuardMessages(draft, agent.strictness, state.project?.genre);
   else if(role==='humor')     msgs = humorGuardMessages(draft, agent.strictness, state.project?.genre);
   else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
-  const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??4200 });
+  const guardMaxTk = agent.maxTokens??4200;
+  const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:guardMaxTk });
+  const j = extractJSON(res.text);
+  // Обрыв по лимиту токенов давал extractJSON тот же null, что и страж,
+  // честно не нашедший ни одной проблемы (flags:[]) — автор в UI видел
+  // «замечаний нет» вместо «ответ не поместился». Тот же класс уже чинили
+  // для автопрогона стража (guardJob() в pipeline.js, с ретраем), но ручной
+  // ("по требованию") запуск отсюда — единственный путь без ЛЮБОЙ проверки.
+  // res.hitLimit ловит и более редкий случай, когда обрыв пришёлся ровно на
+  // границу закрывающей скобки — JSON.parse формально прошёл, а содержимое
+  // всё равно неполное.
+  if(res.hitLimit || (!j && res.text && res.text.trim())){
+    throw new Error(`Ответ стража обрублен лимитом токенов (${guardMaxTk} ток.) — замечания не проверены. Увеличьте лимит этого агента в настройках или попробуйте ещё раз.`);
+  }
   // Тот же захват passive-флага, что уже есть в guardJob() (pipeline.js) —
   // без него ручной ("по требованию") запуск стража «Читатель» из этой
   // вкладки не обновлял scene.passivityFlag, и книжная сводка пассивности
   // (passivityIsSystemic()) видела только автопрогоны из основного пайплайна.
-  if(role==='reader'){
-    const j = extractJSON(res.text);
-    if(j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
-  }
+  if(role==='reader' && j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 
@@ -102,6 +127,10 @@ export async function askSceneQuestion(state, scene, question){
   if(!question || !question.trim()) throw new Error('Пустой вопрос.');
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
   const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:8400 });
+  // См. тот же чек в runAgentOnDemand выше — без него обрыв по лимиту токенов
+  // выглядел бы как «страж проверил вопрос и не нашёл ничего», а не как
+  // «ответ не поместился».
+  assertNotTruncated(res, 'Ответ на вопрос о сцене');
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 

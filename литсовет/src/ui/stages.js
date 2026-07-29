@@ -996,7 +996,7 @@ function renderStructureEval(ev){
 // структуру по замечаниям» было целиком ручной кнопкой — автор жал её сам
 // столько раз, сколько хотел, оценка вообще не проверялась автоматически.
 // Теперь генерация/переработка идёт до s.global.structureMaxIter раз (по
-// умолчанию 3, настраивается в карточке «Книжный архитектор»), останавливаясь
+// умолчанию 1, настраивается в карточке «Книжный архитектор»), останавливаясь
 // раньше, если оценка достигла 8/10 — тот же порог, что уже решал, показывать
 // ли кнопку «Улучшить» в renderStructureEval выше.
 const AXIS_NAMES_STRUCT = { arc:'Арка', pacing:'Темп', conflict:'Конфликт', balance:'Баланс', ending:'Финал' };
@@ -1031,7 +1031,11 @@ function currentSkeletonAsPrevious(s){
   } : null;
 }
 async function runIterativeArchitect(s, { chCount, seedEval, btnId }){
-  const maxIter = Math.max(1, s.global.structureMaxIter ?? 3);
+  // ?? 1 — совпадает с defaultState() в state.js (structureMaxIter:1) и с def:1
+  // в ui/diagnostics.js. Раньше здесь стояло ?? 3 — тот же класс разъезда, что
+  // уже чинили у evaluatorMaxIter: слайдер в карточке агента честно показывал
+  // 1, а сам цикл при незаданном поле молча прогонял 3 внутренние итерации.
+  const maxIter = Math.max(1, s.global.structureMaxIter ?? 1);
   let prevEval = seedEval || null;
   let prevScore = prevEval ? prevEval.score : null;
   let skeleton = null, evalResult = null;

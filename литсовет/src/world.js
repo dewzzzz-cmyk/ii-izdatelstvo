@@ -148,7 +148,12 @@ export function worldSuggestMessages(state, category, opts={}){
 
 export async function suggestWorldFacts(state, category, opts={}){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // Проверяем ключ, который РЕАЛЬНО пойдёт в запрос (llmFor с учётом
+  // per-роль переопределения worldbuilder), а не голый g.apiKey — иначе автор,
+  // настроивший Мироустроителю свой провайдер+ключ при пустом глобальном,
+  // получал отказ «не задан ключ» на легальной конфигурации (тот же класс
+  // бага, что уже чинили в ondemand.js/llmFor()).
+  if(!llmFor(state, ag(state,'worldbuilder')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const msgs = worldSuggestMessages(state, category, opts);
   // 960 → 2400: лимит должен расти вместе с числом запрошенных фактов (6-10
   // вместо 3-6, см. промпт выше), иначе JSON обрывался бы ровно на том, что мы
@@ -261,7 +266,9 @@ export function worldOverviewMessages(state, category=null, opts={}){
 
 export async function runWorldOverview(state, category=null, opts={}){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // См. suggestWorldFacts выше: ключ проверяем через llmFor (учитывает
+  // per-роль override worldbuilder), не голый global.
+  if(!llmFor(state, ag(state,'worldbuilder')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const { worldFacts, facts } = overviewFactSet(state, category);
   const minFacts = category ? 2 : 3;
   // Гейт — по фактам МИРА, не по общему facts: без них нечего оценивать на
@@ -330,7 +337,9 @@ function catLabel(cat){ return cat || 'из прозы'; }
 // галочку на каждом edit/delete, отмеченное применяется, снятое — нет.
 export async function proposeConflictFix(state, item){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // См. suggestWorldFacts выше: ключ проверяем через llmFor (учитывает
+  // per-роль override worldbuilder), не голый global.
+  if(!llmFor(state, ag(state,'worldbuilder')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const sys = 'Ты — редактор канона мира книги. Ниже — противоречие между несколькими фактами и сами факты дословно. Для КАЖДОГО факта выбери действие: "keep" — факт корректен, оставить без изменений; "edit" — точечно исправить (поменяй только то, что нужно для устранения противоречия, не переписывай целиком и не теряй остальную информацию); "delete" — факт ошибочен или дублирует другой, удалить его целиком (правильная версия остаётся в другом факте). Если противоречие в том, что один факт верен, а другой ошибочен/дублирует — правильное решение именно keep+delete, а не выдумывание компромиссных формулировок. Хотя бы один факт обязан остаться (не все delete).';
   const user = [
     `Противоречие: ${item.text}`,
@@ -365,7 +374,9 @@ export async function proposeConflictFix(state, item){
 
 export async function proposeMergeFix(state, item){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // См. suggestWorldFacts выше: ключ проверяем через llmFor (учитывает
+  // per-роль override worldbuilder), не голый global.
+  if(!llmFor(state, ag(state,'worldbuilder')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const sys = 'Ты — редактор канона мира книги. Ниже — несколько фактов, которые по сути говорят одно и то же. Объедини их в ОДИН насыщенный факт, сохранив всю содержательную информацию из каждого, без повторов и без потери деталей.';
   const user = [
     `Почему стоит объединить: ${item.text}`,
@@ -431,7 +442,9 @@ export function findWorldDuplicates(state, threshold=DUPLICATE_THRESHOLD){
 // сторона (ui/world.js) сама присваивает fact.text и вызывает rebuildBibleVecs.
 export async function rerollWorldFact(state, fact){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // См. suggestWorldFacts выше: ключ проверяем через llmFor (учитывает
+  // per-роль override worldbuilder), не голый global.
+  if(!llmFor(state, ag(state,'worldbuilder')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const sys = 'Ты — соавтор по мироустройству. Автору не понравилась формулировка факта мира — предложи ДРУГУЮ версию ТОЙ ЖЕ сути (тот же смысл, другие слова), не меняя факт по содержанию.';
   const user = [
     `Жанр: ${state.project.genre||'роман'}.`,
@@ -693,7 +706,9 @@ export function missingFactsMessages(state, skeleton){
 
 export async function suggestMissingWorldFacts(state, skeleton){
   const g = state.global;
-  if(!g.apiKey) return [];
+  // См. suggestWorldFacts выше: ключ проверяем через llmFor (учитывает
+  // per-роль override worldbuilder), не голый global.
+  if(!llmFor(state, ag(state,'worldbuilder')).apiKey) return [];
   try{
     const msgs = missingFactsMessages(state, skeleton);
     // 960 → 2400 вместе с ростом числа фактов (5 → 12, см. промпт): иначе

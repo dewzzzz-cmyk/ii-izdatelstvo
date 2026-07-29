@@ -35,12 +35,21 @@ function strictnessLine(strictness){
 function parseFlags(text){
   const j = extractJSON(text);
   if(!j || !Array.isArray(j.flags)) return [];
-  return j.flags.filter(f=>f&&f.title).map(f=>({
-    severity: ['critical','warning','ok'].includes(f.severity)?f.severity:'warning',
-    title: String(f.title).slice(0,120),
-    detail: String(f.detail||'').slice(0,300),
-    quote: f.quote? String(f.quote).slice(0,200):'',
-  }));
+  return j.flags.filter(f=>f&&f.title).map(f=>{
+    // Раньше сравнение было регистрозависимым: модель, вернувшая "Critical"/
+    // "CRITICAL" вместо "critical" (обычный разнобой форматирования JSON у LLM),
+    // молча превращалась в 'warning' — а criticals в pipeline.js собираются
+    // строго по f.severity==='critical' и блокируют принятие сцены. Настоящая
+    // критическая находка Стража тихо переставала быть блокирующей просто
+    // из-за регистра буквы, без единого сигнала об ошибке.
+    const sevNorm = String(f.severity||'').trim().toLowerCase();
+    return {
+      severity: ['critical','warning','ok'].includes(sevNorm)?sevNorm:'warning',
+      title: String(f.title).slice(0,120),
+      detail: String(f.detail||'').slice(0,300),
+      quote: f.quote? String(f.quote).slice(0,200):'',
+    };
+  });
 }
 
 // ── Детектор механических повторов фразы (НЕ LLM — быстрая проверка n-грамм). ──
@@ -621,16 +630,39 @@ function parseRejected(text){
   let m;
   while((m = marker.exec(text))){
     const before = text.slice(0, m.index);
+    let quote = null;
     const closeIdx = before.lastIndexOf('»');
-    if(closeIdx < 0) continue;
-    let depth = 1, i = closeIdx - 1;
-    for(; i >= 0; i--){
-      if(text[i] === '»') depth++;
-      else if(text[i] === '«'){ depth--; if(depth === 0) break; }
+    if(closeIdx >= 0){
+      let depth = 1, i = closeIdx - 1;
+      for(; i >= 0; i--){
+        if(text[i] === '»') depth++;
+        else if(text[i] === '«'){ depth--; if(depth === 0) break; }
+      }
+      if(i >= 0) quote = text.slice(i+1, closeIdx).trim();
     }
-    if(i < 0) continue;
-    const quote = text.slice(i+1, closeIdx).trim();
-    if(quote.length < 4) continue;
+    // Фолбэк на прямые/типографские кавычки: промпт просит цитировать замечание
+    // именно в «ёлочках», но это не enforced форматом ответа — модель иногда
+    // цитирует в "прямых" или “типографских” кавычках вместо «ёлочек». Без
+    // фолбэка такая запись молча терялась (quote==null → continue ниже), и
+    // scene.rejectedNotes её не получал: то же самое замечание, которое Прозаик
+    // только что осознанно отклонил, Стражи поднимали заново на следующей
+    // итерации, как будто отклонения никогда не было — тот же класс бага, что
+    // и с забытым rememberRejected в одном из мест вызова.
+    if(quote == null){
+      const sClose = before.lastIndexOf('"');
+      if(sClose >= 0){
+        const sOpen = before.lastIndexOf('"', sClose-1);
+        if(sOpen >= 0) quote = before.slice(sOpen+1, sClose).trim();
+      }
+    }
+    if(quote == null){
+      const cClose = before.lastIndexOf('”'); // ”
+      if(cClose >= 0){
+        const cOpen = before.lastIndexOf('“', cClose-1); // “
+        if(cOpen >= 0) quote = before.slice(cOpen+1, cClose).trim();
+      }
+    }
+    if(quote == null || quote.length < 4) continue;
     const nl = text.indexOf('\n', marker.lastIndex);
     const reason = text.slice(marker.lastIndex, nl<0?undefined:nl).trim();
     out.push({ quote, reason });

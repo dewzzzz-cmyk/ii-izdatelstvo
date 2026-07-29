@@ -48,7 +48,9 @@ export function illustrationSuggestMessages(state){
 
 export async function suggestIllustrations(state){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // Ключ проверяем через llmFor (учитывает per-роль override artdirector),
+  // не голый global — тот же класс бага, что уже чинили в ondemand.js/llmFor().
+  if(!llmFor(state, ag(state,'artdirector')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const scenes = doneScenesOrdered(state);
   const msgs = illustrationSuggestMessages(state);
   const res = await callLLM({ ...llmFor(state, ag(state,'artdirector')), temperature: ag(state,'artdirector').temp ?? 0.6, messages: msgs, maxTokens: ag(state,'artdirector').maxTokens ?? 3600 });
@@ -209,7 +211,8 @@ function singleTargetMessages(state, target){
 
 export async function suggestOneIllustration(state, target){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
+  // См. suggestIllustrations выше: ключ через llmFor (per-роль override artdirector).
+  if(!llmFor(state, ag(state,'artdirector')).apiKey) throw new Error('Не задан API-ключ текстовой модели (⚙).');
   const msgs = singleTargetMessages(state, target);
   const res = await callLLM({ ...llmFor(state, ag(state,'artdirector')), temperature: ag(state,'artdirector').temp ?? 0.6, messages: msgs, maxTokens: ag(state,'artdirector').maxTokens ?? 1200 });
   assertNotTruncated(res, 'Арт-директор');

@@ -304,8 +304,11 @@ export function validateSkeletonPatch(raw, allowedNumbers){
 // Запуск с ретраем при невалидном JSON (спека 11: кривой JSON ломает пайплайн).
 export async function runBookArchitect(state, opts={}){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ.');
   const architectAgent = ag(state, 'bookArchitect');
+  // Ключ проверяем через llmFor (учитывает per-роль override bookArchitect,
+  // используемый ниже в callLLM), не голый global.apiKey — тот же класс бага,
+  // что уже чинили в ondemand.js/llmFor().
+  if(!llmFor(state, architectAgent).apiKey) throw new Error('Не задан API-ключ.');
   const msgs = bookArchitectMessages(state, opts);
   // ~140 токенов на сцену (русский бриф 1-2 предложения + поля) + накладные
   const p = state.project;
@@ -517,8 +520,9 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
 
 export async function runBookArchitectPatch(state, opts={}){
   const g = state.global;
-  if(!g.apiKey) throw new Error('Не задан API-ключ.');
   const architectAgent = ag(state, 'bookArchitect');
+  // См. runBookArchitect выше: ключ через llmFor (per-роль override bookArchitect).
+  if(!llmFor(state, architectAgent).apiKey) throw new Error('Не задан API-ключ.');
   const { affectedChapters } = opts;
   const msgs = bookArchitectPatchMessages(state, opts);
   // Бюджет только под затронутые главы — тот же тариф на сцену (300 ток.),

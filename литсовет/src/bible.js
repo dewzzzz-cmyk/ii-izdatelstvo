@@ -162,9 +162,17 @@ function keywordFallback(bible, low, sset){
   });
 }
 
-// Формат для промпта.
+// Формат для промпта. Вынесено отдельно (не только внутри bibleForPrompt),
+// чтобы вызывающий код (context.js) мог отформатировать pinned- и
+// обычные находки bibleMatches() по отдельности — см. её комментарий про
+// то, что pinned-факты должны попадать в промпт ВСЕГДА, независимо от
+// урезания контекста по бюджету.
+export function formatBibleEntries(entries){
+  return (entries||[]).map(b=>`• ${b.keys||'канон'}: ${b.text}`).join('\n');
+}
+
 export function bibleForPrompt(bible, query, k=5){
-  return bibleMatches(bible, query, k).map(b=>`• ${b.keys||'канон'}: ${b.text}`).join('\n');
+  return formatBibleEntries(bibleMatches(bible, query, k));
 }
 
 // Разбор строк вида "ключи | факт".

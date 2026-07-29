@@ -519,7 +519,10 @@ export async function runScene(state, scene, opts={}, onProgress){
         // текст были), ни проверка длины ниже (обрыв был не настолько драматичным,
         // чтобы просесть под 60%) этого не поймали. looksTokenTruncated — та же
         // эвристика, что уже стоит на первом черновике и на Линейном редакторе.
-        if(pRes.text && pRes.text !== prevDraft && looksTokenTruncated(pRes.text)){
+        // pRes.hitLimit — достоверный признак от самого апстрима (finish_reason):
+        // ловит и обрыв, который случайно пришёлся на знак препинания и поэтому
+        // не виден эвристике по хвосту текста.
+        if(pRes.text && pRes.text !== prevDraft && (pRes.hitLimit || looksTokenTruncated(pRes.text))){
           onProgress && onProgress({log:{icon:'⚠️', text:'Прозаик: правка обрывается не на знаке препинания (похоже на обрыв токенами, хотя тег [ТЕКСТ] был на месте) — используем предыдущий черновик', state:'warn'}});
           pRes.text = prevDraft;
         }
@@ -552,7 +555,9 @@ export async function runScene(state, scene, opts={}, onProgress){
         // вообще: текст молча уходил дальше по пайплайну оборванным на полуслове.
         // Настоящая проза почти всегда кончается на пунктуацию конца предложения —
         // резкий обрыв без неё сильный сигнал упора в maxTokens, не завершения мысли.
-        if(looksTokenTruncated(pRes.text)){
+        // pRes.hitLimit — прямой finish_reason апстрима, ловит и совпадение, когда
+        // обрыв пришёлся ровно на знак препинания и эвристика ниже промолчала бы.
+        if(pRes.hitLimit || looksTokenTruncated(pRes.text)){
           // Раньше потолок в 8000 срезал повтор до +28% вместо честного ×2 для
           // сцен с proseMaxTk уже за 4000 (2500+ слов) — повтор с почти тем же
           // лимитом почти гарантированно упирался туда же.
@@ -665,8 +670,11 @@ export async function runScene(state, scene, opts={}, onProgress){
           // ответ был вдвое короче лимита (значит дело не в лимите, а в том, что
           // JSON сломан по другой причине — экранирование кавычек, лишний текст
           // и т.п.) — автору не по чему было отличить «нужен лимит больше» от
-          // «формат ответа сломан». Сверяем реальную длину ответа с потолком.
-          const nearLimit = (eRes.tokensOut||0) >= evalMaxTk*0.85;
+          // «формат ответа сломан». eRes.hitLimit — прямой finish_reason от
+          // апстрима (см. llm.js), достовернее приблизительного сравнения
+          // tokensOut с потолком; ratio-эвристика остаётся запасным вариантом
+          // для провайдеров, не присылающих finish_reason.
+          const nearLimit = eRes.hitLimit || (eRes.tokensOut||0) >= evalMaxTk*0.85;
           // Живой инцидент: автор поднял слайдер Оценщика до 8000 (максимум
           // слайдера) — старый потолок ретрая (константа 7200) оказался НИЖЕ
           // исходного лимита, так что «повтор с большим лимитом» на самом деле
@@ -1101,10 +1109,14 @@ export async function runScene(state, scene, opts={}, onProgress){
           {draft:pRes.text, editable:true, verdict, guardFlags:guardFlagList, criticalCount:criticals.length});
         if(gt.approve){
           const edited = gt.text?.trim();
-          best = edited || pRes.text; bestEval = verdict;
-          // Если автор правил текст в гейте вручную — flags этой итерации относились
-          // к тексту ДО правки, дальше недостоверны (тот же принцип, что и сброс
-          // lastEval/flags при ручной правке в редакторе — см. фикс в ui/stages.js).
+          best = edited || pRes.text;
+          // Если автор правил текст в гейте вручную — verdict (как и flags) этой
+          // итерации относился к тексту ДО правки, дальше недостоверен (тот же
+          // принцип, что и сброс lastEval/flags при ручной правке в редакторе —
+          // см. фикс в ui/stages.js). Комментарий ниже уже называл оба поля, но
+          // раньше обнулялся только bestFlags — bestEval оставался старым баллом
+          // и приписывался тексту, который Оценщик никогда не видел.
+          bestEval = edited ? null : verdict;
           bestFlags = edited ? {} : {...flags};
           break;
         }
@@ -1218,10 +1230,22 @@ export async function runScene(state, scene, opts={}, onProgress){
         ? '\n\nПРЕДЫДУЩИЙ ОТВЕТ ОБОРВАЛСЯ НА ПОЛУСЛОВЕ (упор в лимит токенов/сети) — допиши/перепиши сцену целиком до естественного конца, не редактируй точечно.'
         : '';
       directive = (buildUnifiedDirective(directiveVerdict, allBanned, criticals, factualQuestions, literaryNotes, tooShort, directiveOpts(directiveVerdict)) || directive) + stagnantNote + categoryNote + lengthNote + truncNote + anchorNote + standingBlock;
-      // Якоря ЭТОЙ итерации становятся базой для сверки со СЛЕДУЮЩЕЙ — только
-      // если Оценщик реально распарсился (verdict.ok); иначе держим прошлые
-      // якоря, а не обнуляем их из-за одного нераспарсенного ответа.
-      if(verdict && verdict.ok) prevIterAnchors = verdict.anchors || [];
+      // Якоря для сверки со СЛЕДУЮЩЕЙ итерацией обязаны принадлежать ТОМУ ЖЕ
+      // тексту, что станет prevDraft на следующем витке — а это directiveVerdict
+      // (bestEval, если эта итерация просела, см. подмену prevDraft=best чуть
+      // выше), не обязательно verdict текущей итерации. Раньше здесь стояло
+      // verdict.anchors: если balll просел и prevDraft был подменён на best,
+      // директива корректно просила сохранить якоря bestEval, а якоря для
+      // ПРОВЕРКИ на следующей итерации брались от текста, который тут же был
+      // отброшен (текущего, просевшего). anchorsLostBy(revisedFrom, ...) там
+      // требует «якорь был во входе» (см. комментарий у anchorSurvives) — якорь
+      // из отброшенного черновика в prevDraft=best чаще всего отсутствовал, и
+      // условие «был во входе» просто тихо снимало его с проверки: реальная
+      // потеря якоря bestEval, который directive как раз просила сохранить,
+      // оставалась незамеченной. Обновляем только если directiveVerdict реально
+      // распарсился — иначе держим прошлые якоря, а не обнуляем их из-за одного
+      // нераспарсенного ответа.
+      if(directiveVerdict && directiveVerdict.ok) prevIterAnchors = directiveVerdict.anchors || [];
     }
     if(!best){
       // Ни одна итерация не набрала "best" (например: автор 20 раз подряд
@@ -1392,9 +1416,24 @@ export async function runScene(state, scene, opts={}, onProgress){
             paceBaseline2 = { medianWords: sorted2[Math.floor(sorted2.length/2)], sceneWords: (best.match(/\S+/g)||[]).length };
           }
           const fMsgs = evaluatorMessages(scene, best, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline: paceBaseline2, recentEndings: state.recentSceneEndings });
-          const fRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:fMsgs, maxTokens:(evalAg.maxTokens ?? 1080) });
+          const fMaxTk = evalAg.maxTokens ?? 1080;
+          let fRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:fMsgs, maxTokens:fMaxTk });
+          let fVerdict = parseEvaluator(fRes.text, threshold, { skipAxes: evalSkipAxes });
+          // Тот же ретрай с удвоенным лимитом, что уже стоит на основном вызове
+          // Оценщика внутри цикла (см. evalRetryTk выше) — раньше здесь его не
+          // было вовсе: обрыв токенами на этой, финальной, перепроверке молча
+          // не давал второго шанса, и bestEval оставался баллом ДО Линейного
+          // редактора без единого предупреждения о причине (лог ниже говорит
+          // «не распарсилась», но раньше терял ровно тот случай, что чаще всего
+          // и есть причина — обрыв по лимиту).
+          if(!fVerdict.ok){
+            const fRetryTk = Math.max(fMaxTk + 1, Math.min(MAX_OUTPUT_TOKENS, fMaxTk * 2));
+            onProgress && onProgress({log:{icon:'⚠️', text:`Перепроверка после Линейного редактора: ответ не распарсился (лимит был ${fMaxTk}) — повтор с лимитом ${fRetryTk}`, state:'warn'}});
+            logStep({ agent:'evaluator-final-retry', input:'(попытка 1)', output:fRes.text, tokensIn:fRes.tokensIn, tokensOut:fRes.tokensOut, cost:fRes.cost });
+            fRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:fMsgs, maxTokens:fRetryTk });
+            fVerdict = parseEvaluator(fRes.text, threshold, { skipAxes: evalSkipAxes });
+          }
           logStep({ agent:'evaluator-final', input:'(перепроверка после Линейного редактора)', output:fRes.text, tokensIn:fRes.tokensIn, tokensOut:fRes.tokensOut, cost:fRes.cost });
-          const fVerdict = parseEvaluator(fRes.text, threshold, { skipAxes: evalSkipAxes });
           if(fVerdict.ok){
             const было = bestEval.weighted, стало = fVerdict.weighted;
             // Просадка больше половины балла — редактор ухудшил текст, который
@@ -1473,11 +1512,23 @@ async function guardJob(state, role, messages, flagsOut, onProgress, scene){
     // Тот же принцип повтора с увеличенным лимитом, что уже стоит у Прозаика и
     // Оценщика — потолок ниже (4000), т.к. ответ Стража штатно короткий (title/
     // detail/quote на пару флагов), не полноценная проза.
-    if(!j && res.text && res.text.trim()){
+    // res.hitLimit — достоверный finish_reason апстрима (см. llm.js): ловит и
+    // случай, когда обрыв пришёлся ровно на закрывающую скобку — JSON.parse
+    // формально прошёл (j не null), а содержимое всё равно неполное, и без
+    // этой проверки страж прошёл бы как «честно проверил» без единого ретрая.
+    if((!j || res.hitLimit) && res.text && res.text.trim()){
       const retryMaxTk = Math.max(maxTk+1, Math.min(4000, maxTk*2));
-      onProgress && onProgress({log:{icon:'⚠️', text:`Страж «${guardLabel(state,role)}»: ответ не распарсился (похоже на обрыв токенами, лимит был ${maxTk}) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
+      const причина = !j ? `ответ не распарсился (похоже на обрыв токенами, лимит был ${maxTk})` : `ответ обрублен лимитом токенов (${maxTk}), хотя JSON формально сошёлся`;
+      onProgress && onProgress({log:{icon:'⚠️', text:`Страж «${guardLabel(state,role)}»: ${причина} — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
       res = await callLLM({ ...llmFor(state,a), temperature:a.temp??0.2, messages, maxTokens: retryMaxTk });
       j = extractJSON(res.text);
+      // Раньше результат повтора принимался безусловно — если обрыв повторился
+      // (тот же лимит или второй сбой подряд), это нигде не всплывало: flags
+      // ниже становился [] и выглядел как «страж проверил и не нашёл проблем»,
+      // а не «проверка не удалась второй раз».
+      if((!j || res.hitLimit) && res.text && res.text.trim()){
+        onProgress && onProgress({log:{icon:'⚠️', text:`Страж «${guardLabel(state,role)}»: повтор тоже не поместился в лимит — замечания этой итерации не проверены`, state:'warn'}});
+      }
     }
     const flags = runGuardParse(res.text);
     flagsOut[role] = flags;

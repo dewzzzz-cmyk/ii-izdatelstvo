@@ -54,15 +54,35 @@ export function parseArchitect(text){
   // toStr (см. ниже, у parseEvaluator) — та же защита: architectToText делает
   // anchors.join('; ')/beats.join(' → ') прямо в промпт Прозаика, нестроковый
   // элемент утёк бы туда как «[object Object]» уже на ПЕРВОМ черновике сцены.
+  // toArr — тот же класс, но на уровень выше: модель иногда возвращает поле,
+  // которое схема просит массивом ("anchors": [...]), одиночной строкой
+  // ("anchors": "мать героя"), когда пункт всего один. Раньше это тихо
+  // схлопывалось в [] (Array.isArray проверка не проходила) — план терял
+  // ЕДИНСТВЕННЫЙ якорь целиком, и обязательное покрытие сущностей брифа
+  // (см. инструкцию ниже) молчаливо переставало работать именно в том
+  // случае, когда покрывать нужно было меньше всего.
   return {
-    anchors: Array.isArray(j.anchors)? j.anchors.map(toStr) : [],
-    presentChars: Array.isArray(j.presentChars)? j.presentChars.map(toStr) : [],
-    forbiddenWords: Array.isArray(j.forbiddenWords)? j.forbiddenWords.map(toStr) : [],
-    beats: Array.isArray(j.beats)? j.beats.map(toStr) : [],
-    goal: typeof j.goal==='string'? j.goal : '',
-    obstacle: typeof j.obstacle==='string'? j.obstacle : '',
-    historicalDetail: typeof j.historicalDetail==='string'? j.historicalDetail : '',
+    anchors: toArr(j.anchors),
+    presentChars: toArr(j.presentChars),
+    forbiddenWords: toArr(j.forbiddenWords),
+    beats: toArr(j.beats),
+    // Раньше нестроковое значение (модель иногда оборачивает "goal"/"obstacle"
+    // в объект вроде {text:"…"} при усложнённом рассуждении) отбрасывалось в ''
+    // без попытки достать текст — toStr пробует типичные поля, как и для
+    // элементов массивов выше, вместо немедленной потери содержимого.
+    goal: toStr(j.goal),
+    obstacle: toStr(j.obstacle),
+    historicalDetail: toStr(j.historicalDetail),
   };
+}
+// Элемент схемы, который модель иногда сворачивает в одиночную строку вместо
+// массива (когда пункт всего один) — см. комментарий у parseArchitect выше.
+// Возвращает [] только если поле реально пусто/отсутствует, а не потому что
+// оно не является формально массивом.
+function toArr(x){
+  if(Array.isArray(x)) return x.map(toStr);
+  if(typeof x === 'string' && x.trim()) return [x.trim()];
+  return [];
 }
 export function architectToText(plan, scene){
   if(!plan) return '';
@@ -300,6 +320,17 @@ export function parseEvaluator(text, threshold, opts={}){
   // в вызывающем коде: судим по полной рубрике, как раньше.
   const активные = судимые.length ? судимые : RUBRIC_AXES;
   const axes = активные.map(a=>a.key);
+  // Живой класс бага: JSON валиден и j.scores существует как объект, но модель
+  // пропустила ОДИН ключ из шести (обычный сбой на длинном списке полей) —
+  // ниже `Number(scores[k])||0` тихо превращал отсутствующий балл в 0, а 0 у
+  // ЛЮБОЙ оси всегда проваливает `minAxis>=5`. Сцена уходила на бесконечную
+  // переработку по причине, которую автору никто не показал — в логе это
+  // выглядело как «текст плохой», хотя на деле Оценщик просто не выставил
+  // один балл. Тот же случай, что !j.scores выше: считаем ответ непригодным и
+  // отдаём его по тому же пути ретрая с увеличенным лимитом токенов
+  // (см. вызывающий код в pipeline.js/ondemand.js — он уже умеет отличать
+  // «похоже на обрыв лимитом» от «сломан формат» по факту verdict.ok===false).
+  if(axes.some(k=>scores[k]==null || Number.isNaN(Number(scores[k])))) return { ok:false, raw:text };
   const weights = активные.map(a=>a.weight||1);
   // Округляем до целого — промпт просит целые баллы 1-10, но модель иногда
   // возвращает дробные; без округления погранично-дробный балл мог давать
@@ -317,14 +348,29 @@ export function parseEvaluator(text, threshold, opts={}){
     weighted: Math.round(weighted*10)/10,
     minAxis,
     pass,
-    notes: Array.isArray(j.notes) ? j.notes.map(toStr) : [],
-    abstractions: Array.isArray(j.abstractions) ? j.abstractions.map(toStr) : [],
-    padding: Array.isArray(j.padding) ? j.padding.map(toStr) : [],
-    repetition: Array.isArray(j.repetition) ? j.repetition.map(toStr) : [],
-    cliches: Array.isArray(j.cliches) ? j.cliches.map(toStr) : [],
-    clicheCategory: typeof j.clicheCategory === 'string' ? j.clicheCategory.trim() : '',
-    anchors: Array.isArray(j.anchors) ? j.anchors.map(toStr) : [],
-    questions: Array.isArray(j.questions) ? j.questions.map(toStr) : [],
+    // toArr (см. parseArchitect выше) — та же защита от одиночной строки вместо
+    // массива. Живой риск именно здесь: если единственное замечание в notes
+    // приходит строкой, а не массивом из одного элемента, Array.isArray-проверка
+    // тихо превращала его в [] — buildUnifiedDirective (pipeline.js) получал
+    // ПУСТОЙ список замечаний Оценщика, хотя вердикт reject (pass:false), и
+    // Прозаик переписывал сцену следующей итерацией вообще без указаний, что
+    // именно исправлять — правка шла по кругу без единой подсказки, а лог
+    // выглядел так, будто замечания были и учтены.
+    notes: toArr(j.notes),
+    abstractions: toArr(j.abstractions),
+    padding: toArr(j.padding),
+    repetition: toArr(j.repetition),
+    cliches: toArr(j.cliches),
+    // clicheCategory — не массив по схеме, а одна строка-приём; если модель всё
+    // же вернула его массивом (например, перечислила несколько приёмов), старый
+    // код (только typeof==='string') отбрасывал его в '' целиком — то самое
+    // «clicheCategory важна не меньше самих цитат» (см. промпт выше) переставало
+    // работать именно тогда, когда приёмов оказалось больше одного.
+    clicheCategory: typeof j.clicheCategory === 'string' ? j.clicheCategory.trim()
+      : Array.isArray(j.clicheCategory) ? j.clicheCategory.map(toStr).filter(Boolean).join('; ')
+      : toStr(j.clicheCategory),
+    anchors: toArr(j.anchors),
+    questions: toArr(j.questions),
   };
 }
 function clamp(n){ return Math.max(0, Math.min(10, n)); }
