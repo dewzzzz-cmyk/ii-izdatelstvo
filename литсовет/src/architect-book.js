@@ -360,7 +360,7 @@ export async function runBookArchitect(state, opts={}){
   // должен иметь ручку «дать ещё больше места», не дожидаясь очередного
   // ручного бампа константы в коде при каждой новой длинной книге.
   const archMult = state.global.architectTokenMultiplier || 1;
-  const archMaxTokens = Math.round(Math.max(4000, Math.min(40000, effectiveScenes * perSceneTokens + 1500)) * 1.2 * archMult);
+  const archMaxTokens = Math.round(Math.max(4000, Math.min(200000, effectiveScenes * perSceneTokens + 1500)) * 1.2 * archMult);
   // Лимит РАСТЁТ между попытками, если ответ обрубило. Раньше повтор уходил с
   // тем же самым archMaxTokens и лишь просил модель «верни полный JSON» — но
   // упирается-то не модель, а потолок: живой прогон дал две попытки подряд,
@@ -423,7 +423,7 @@ export async function runBookArchitect(state, opts={}){
       // Обрыв — значит следующей попытке нужно БОЛЬШЕ места, а не просто просьба
       // «будь полнее»: при неизменном лимите она упрётся в тот же потолок (живой
       // прогон: две попытки, обрубленные на 17 130 и 17 115 символах).
-      currentMaxTokens = Math.min(40000, Math.round(currentMaxTokens * 1.6));
+      currentMaxTokens = Math.min(200000, Math.round(currentMaxTokens * 1.6));
       msgs.push({ role:'user', content:`JSON обрезан (ответ не закончен). Повтори запрос: верни ТОЛЬКО полный JSON-объект с chapters, без пояснений. Пример начала: {"chapters":[{"title":"...` });
     } else {
       msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[...]} без лишнего текста.` });

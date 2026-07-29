@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider, MODEL_PRICES } from './providers.js'
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.66.0';
+export const APP_VERSION = '1.67.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Единый источник —
 // providers.js (та же таблица кормит подсказку цены прямо в селекте модели,
@@ -158,7 +158,7 @@ export function defaultState(){
 // Реестр агентов с дефолтами. Каждый включаем/отключаем (диагностический режим).
 export function defaultAgents(){
   return [
-    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:3240, enabled:true, role:'architect',
+    { id:'architect', name:'Архитектор сцены', icon:'🏗', temp:0.4, maxTokens:16200, enabled:true, role:'architect',
       desc:'Планирует сцену: ключевые детали, шаги, запрещённые слова. Не пишет прозу — готовит каркас для Прозаика.' },
     // Единственная роль с дефолтным переопределением модели. Замер на живой
     // сцене (один и тот же контекст, один и тот же Оценщик, менялась только
@@ -170,34 +170,34 @@ export function defaultAgents(){
     // качество reasoner при вдвое меньшей цене выхода ($0.87 против $2.19).
     // Остальные роли остаются на глобальной модели намеренно — см. CHANGELOG
     // 1.57.0 про замер v4-flash на Стражах.
-    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:12960, enabled:true, role:'prose', loop:true,
+    { id:'prose',     name:'Прозаик',          icon:'✍️', temp:0.85, maxTokens:64800, enabled:true, role:'prose', loop:true,
       provider:'deepseek', model:'deepseek-v4-pro',
       desc:'Пишет прозу сцены по брифу и контексту. В петле с Оценщиком дорабатывает черновик, пока тот не примет.' },
-    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:11520, enabled:true, role:'evaluator',
+    { id:'evaluator', name:'Оценщик',          icon:'⚖️', temp:0.2, maxTokens:57600, enabled:true, role:'evaluator',
       desc:'Независимо оценивает черновик по 5 осям (свежесть, ритм, конкретность, голос, бриф). Не пишет — судит и возвращает замечания. Образует петлю с Прозаиком.' },
-    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:7560, strictness:2, enabled:false, role:'voiceguard',
+    { id:'voiceguard',name:'Страж голоса',     icon:'👁', temp:0.2, maxTokens:37800, strictness:2, enabled:false, role:'voiceguard',
       desc:'Сверяет стиль и ритм с образцом вашего голоса, цитируя образец. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
-    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:7560, strictness:2, enabled:true, role:'logic',
+    { id:'logic',     name:'Страж логики',     icon:'⚖️', temp:0.2, maxTokens:37800, strictness:2, enabled:true, role:'logic',
       desc:'Проверяет физику, время и причинность: возможно ли это в мире сцены. Видит только факты, не стиль. Параллельно.' },
-    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:7560, strictness:2, enabled:true, role:'events',
+    { id:'events',    name:'Страж событий',    icon:'🗓', temp:0.2, maxTokens:37800, strictness:2, enabled:true, role:'events',
       desc:'Проверяет, что персонаж знает/чувствует то, что должен по прошлым событиям. Видит только факты. Параллельно.' },
-    { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:7560, strictness:2, enabled:true, role:'styleguard',
+    { id:'styleguard',name:'Страж стиля',      icon:'🚦', temp:0.2, maxTokens:37800, strictness:2, enabled:true, role:'styleguard',
       desc:'Ловит нарушения ваших «Правил автора» (do/don\'t) и показывает цитату. Только флагует. Параллельно с другими стражами.' },
-    { id:'imagery',   name:'Страж образов',    icon:'🎨', temp:0.2, maxTokens:7560, strictness:2, enabled:true, role:'imagery',
+    { id:'imagery',   name:'Страж образов',    icon:'🎨', temp:0.2, maxTokens:37800, strictness:2, enabled:true, role:'imagery',
       desc:'Ловит смешанные, абсурдные или физически невозможные метафоры и сравнения, разъехавшийся регистр образа. Не клише — за это отвечает другой страж. Только флагует. Параллельно с другими стражами.' },
-    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:12960, enabled:true, role:'lineedit',
+    { id:'lineedit',  name:'Линейный редактор',icon:'✂️', temp:0.3, maxTokens:64800, enabled:true, role:'lineedit',
       desc:'Лёгкая правка: убирает эмоциональные ярлыки, варьирует ритм, чистит клише. Единственный, кто меняет текст после Прозаика.' },
-    { id:'reader',    name:'Читатель',          icon:'📖', temp:0.3, maxTokens:7560, strictness:2, enabled:true, role:'reader',
+    { id:'reader',    name:'Читатель',          icon:'📖', temp:0.3, maxTokens:37800, strictness:2, enabled:true, role:'reader',
       desc:'Смотрит на сцену глазами читателя: не теряется ли интерес, ясна ли ставка, совпадает ли финальная эмоция с задуманной. Только флагует, не переписывает. Идёт параллельно с другими стражами.' },
-    { id:'pov',       name:'Страж точки зрения',icon:'👀', temp:0.2, maxTokens:7560, strictness:2, enabled:true, role:'pov',
+    { id:'pov',       name:'Страж точки зрения',icon:'👀', temp:0.2, maxTokens:37800, strictness:2, enabled:true, role:'pov',
       desc:'Ловит head-hopping: незаметные скачки к мыслям/ощущениям другого персонажа внутри сцены без разметки. Только флагует. Параллельно с другими стражами.' },
-    { id:'dialogue',  name:'Страж диалога',     icon:'💬', temp:0.3, maxTokens:7560, strictness:2, enabled:true, role:'dialogue',
+    { id:'dialogue',  name:'Страж диалога',     icon:'💬', temp:0.3, maxTokens:37800, strictness:2, enabled:true, role:'dialogue',
       desc:'Ловит реплики «в лоб» (без подтекста), избыточные теги вместо экшн-бит, неразличимые голоса персонажей. Только флагует. Параллельно с другими стражами.' },
-    { id:'resolution',name:'Страж развязки',     icon:'⏳', temp:0.2, maxTokens:7560, strictness:2, enabled:true, role:'resolution',
+    { id:'resolution',name:'Страж развязки',     icon:'⏳', temp:0.2, maxTokens:37800, strictness:2, enabled:true, role:'resolution',
       desc:'Ловит преждевременную развязку: герой мгновенно принимает невероятное, конфликт гаснет без эскалации, тайна получает ответ без паузы. Только флагует. Параллельно с другими стражами.' },
-    { id:'atmosphere',name:'Страж атмосферы',    icon:'🌲', temp:0.3, maxTokens:7560, strictness:2, enabled:true, role:'atmosphere',
+    { id:'atmosphere',name:'Страж атмосферы',    icon:'🌲', temp:0.3, maxTokens:37800, strictness:2, enabled:true, role:'atmosphere',
       desc:'Ловит недостаток сенсорных деталей (природа, существа, погода) там, где сцена вводит новое или важное место мира — обратный полюс оси «Темп» Оценщика. Только флагует. Параллельно с другими стражами.' },
-    { id:'humor',     name:'Страж жанра',        icon:'🎭', temp:0.3, maxTokens:7560, strictness:2, enabled:true, role:'humor',
+    { id:'humor',     name:'Страж жанра',        icon:'🎭', temp:0.3, maxTokens:37800, strictness:2, enabled:true, role:'humor',
       desc:'Только для иронических жанров (ироничный детектив/фэнтези, юмористическая проза) — ловит упущенные моменты, где жанр явно требует иронии/шутки, а сцена сыграна полностью прямо. На остальных жанрах не запускается. Только флагует. Параллельно с другими стражами.' },
     { id:'bookArchitect', name:'Книжный архитектор', icon:'🏛️', temp:0.6, enabled:true, role:'bookArchitect',
       desc:'Строит скелет книги (главы→сцены) на стадии Структуры. Один запуск на книгу, не часть цикла сцены — maxTokens считается автоматически по объёму книги, не настраивается.' },
@@ -207,13 +207,13 @@ export function defaultAgents(){
     // существуют. Тумблер «включён» им не нужен — они запускаются кнопкой, а
     // не пайплайном, поэтому enabled стоит всегда true и в UI не показывается
     // (см. offPipeline ниже).
-    { id:'critic', name:'Критик книги', icon:'🎭', temp:0.4, maxTokens:7680, enabled:true, role:'critic', offPipeline:true,
+    { id:'critic', name:'Критик книги', icon:'🎭', temp:0.4, maxTokens:38400, enabled:true, role:'critic', offPipeline:true,
       desc:'Рецензия на всю рукопись, бета-ридер, ружья Чехова, глубина мира, картонность персонажей. Запускается кнопками на вкладке «Редактура».' },
-    { id:'worldbuilder', name:'Мироустроитель', icon:'🌍', temp:0.6, maxTokens:5280, enabled:true, role:'worldbuilder', offPipeline:true,
+    { id:'worldbuilder', name:'Мироустроитель', icon:'🌍', temp:0.6, maxTokens:26400, enabled:true, role:'worldbuilder', offPipeline:true,
       desc:'Предлагает факты мира по категориям, ищет нестыковки канона, строит карту. Запускается кнопками на вкладке «Мир».' },
-    { id:'historian', name:'Историк', icon:'📜', temp:0.4, maxTokens:6000, enabled:true, role:'historian', offPipeline:true,
+    { id:'historian', name:'Историк', icon:'📜', temp:0.4, maxTokens:30000, enabled:true, role:'historian', offPipeline:true,
       desc:'Историческая справка по эпохе и проверка анахронизмов. Запускается на вкладке «Мир».' },
-    { id:'artdirector', name:'Арт-директор', icon:'🖼️', temp:0.6, maxTokens:3600, enabled:true, role:'artdirector', offPipeline:true,
+    { id:'artdirector', name:'Арт-директор', icon:'🖼️', temp:0.6, maxTokens:18000, enabled:true, role:'artdirector', offPipeline:true,
       desc:'Предлагает, что иллюстрировать, и пишет промпты для картинок. Сами картинки рисует отдельный провайдер (вкладка «Иллюстрации»).' },
   ];
 }
@@ -434,7 +434,7 @@ let _agc = 0;
 // Добавить кастомного агента-стража (флагует по своему промпту, безопасно).
 export function addCustomAgent(state, name, prompt){
   const a = { id:'custom_'+(Date.now().toString(36))+(_agc++), name:name||'Свой страж', icon:'🛡',
-    temp:0.2, maxTokens:5040, strictness:2, enabled:true, role:'custom', custom:true,
+    temp:0.2, maxTokens:25200, strictness:2, enabled:true, role:'custom', custom:true,
     prompt: prompt||'Проверь сцену и отметь проблемы.', desc:'Кастомный страж: '+(prompt||'').slice(0,80) };
   state.agents.push(a); return a;
 }
@@ -858,6 +858,11 @@ export function migrate(s){
     // не из-за длины прозы, а из-за невидимой части ответа. Та же логика: кто
     // ещё сидит на прошлом дефолте — подтягиваем, ручные значения не трогаем.
     const OLD_MAXTOKENS_DEFAULT_V6 = { architect:1620, prose:6480, evaluator:5760, voiceguard:3780, logic:3780, events:3780, styleguard:3780, imagery:3780, lineedit:6480, reader:3780, pov:3780, dialogue:3780, resolution:3780, atmosphere:3780, humor:3780 };
+    // V7 — значения до подъёма x5. Без этой строки проекты, стоящие на прежних
+    // дефолтах, остались бы на них навсегда: миграция поднимает лимит только
+    // тому, кто НЕ трогал его руками, а «не трогал» опознаётся ровно по
+    // совпадению с одним из старых дефолтов.
+    const OLD_MAXTOKENS_DEFAULT_V7 = { architect:3240, prose:12960, evaluator:11520, voiceguard:7560, logic:7560, events:7560, styleguard:7560, imagery:7560, lineedit:12960, reader:7560, pov:7560, dialogue:7560, resolution:7560, atmosphere:7560, humor:7560, critic:7680, worldbuilder:5280, historian:6000, artdirector:3600 };
     const defById = Object.fromEntries(d.agents.map(a=>[a.id, a]));
     // Идём по СОХРАНЁННОМУ порядку — пользовательская перестановка сохраняется.
     const storedIds = new Set(s.agents.map(a=>a.id));
@@ -866,7 +871,7 @@ export function migrate(s){
       const merged = Object.assign({}, da);
       KEEP.forEach(k=>{
         if(a[k]===undefined) return;
-        if(k==='maxTokens' && (OLD_MAXTOKENS_DEFAULT[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V2[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V3[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V4[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V5[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V6[a.role]===a.maxTokens)) return; // всё ещё старый дефолт — берём новый
+        if(k==='maxTokens' && (OLD_MAXTOKENS_DEFAULT[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V2[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V3[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V4[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V5[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V6[a.role]===a.maxTokens || OLD_MAXTOKENS_DEFAULT_V7[a.role]===a.maxTokens)) return; // всё ещё старый дефолт — берём новый
         merged[k]=a[k];
       });
       return merged;
@@ -878,7 +883,7 @@ export function migrate(s){
       if(a.maxTokens===1400) return {...a, maxTokens:2100};
       if(a.maxTokens===2100) return {...a, maxTokens:2520};
       if(a.maxTokens===2520) return {...a, maxTokens:3780};
-      if(a.maxTokens===3780) return {...a, maxTokens:7560};   // ×2, шестой раунд
+      if(a.maxTokens===3780) return {...a, maxTokens:37800};   // ×2, шестой раунд
       return a;
     });
     s.agents = [...updated, ...newBuiltins, ...customs];

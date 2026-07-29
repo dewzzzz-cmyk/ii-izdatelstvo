@@ -2,7 +2,7 @@
 // ПП2-цепочка: [Архитектор] → Прозаик ⇄ Оценщик (петля).
 // Каждый агент включаем/отключаем; всё пишется в диагностический трейс.
 
-import { callLLM, extractJSON, findForeignScript } from './llm.js';
+import { callLLM, extractJSON, findForeignScript, MAX_OUTPUT_TOKENS } from './llm.js';
 import { buildSceneContext, bookContextBlock, LAYER_LABELS } from './context.js';
 import { architectMessages, parseArchitect, architectToText,
          evaluatorMessages, parseEvaluator, RUBRIC_AXES, axisOfNote } from './agents.js';
@@ -304,7 +304,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // успеха. Тот же принцип повтора с увеличенным лимитом, что уже стоит
         // у Прозаика/Оценщика/Стражей.
         if(!plan && aRes.text && aRes.text.trim()){
-          const retryMaxTk = Math.max(architectMaxTk+1, Math.min(3000, architectMaxTk*2));
+          const retryMaxTk = Math.max(architectMaxTk+1, Math.min(MAX_OUTPUT_TOKENS, architectMaxTk*2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Архитектор: ответ не распарсился (похоже на обрыв токенами, лимит был ${architectMaxTk}) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           aRes = await callLLM({ ...llmFor(state,ac), temperature:ac.temp??0.4, messages:aMsgs, maxTokens: retryMaxTk });
           plan = parseArchitect(aRes.text);
@@ -457,7 +457,7 @@ export async function runScene(state, scene, opts={}, onProgress){
         // кир.-эвристика, что и для прозы), а не фиксированной константой.
         const debateAllowance = Math.max(1500, Math.round(directive.length/2) + 500);
         // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
-        const cap = Math.round(Math.min(14000, Math.max(2500, Math.round(prevDraft.length/2) + debateAllowance)) * 1.2);
+        const cap = Math.round(Math.min(70000, Math.max(2500, Math.round(prevDraft.length/2) + debateAllowance)) * 1.2);
         const reviseMsgs = stagnantLastIter
           ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
           : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
@@ -486,7 +486,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // менялся, те же замечания Стражей закономерно возвращались снова и
           // снова (живой репорт «почему 4-я сцена не может улучшиться»). Тот же
           // принцип повтора с удвоенным лимитом, что уже стоит на первом черновике.
-          const retryMaxTk = Math.max(reviseMaxTk + 1, Math.min(24000, reviseMaxTk * 2));
+          const retryMaxTk = Math.max(reviseMaxTk + 1, Math.min(MAX_OUTPUT_TOKENS, reviseMaxTk * 2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: ответ обрезан токенами (лимит был ${reviseMaxTk}) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           pRes = await callLLM({ ...llmFor(state,proseAg), temperature:0.4, messages: reviseMsgs, maxTokens: retryMaxTk }, streamCb, streamRetry);
           parsed = parseDebateRevision(pRes.text);
@@ -545,7 +545,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // длинных целевых сцен (targetWords в тысячах) proseMaxTk сам может
           // превысить 9600, и Math.min(19200, proseMaxTk*2) без Math.max отдал
           // бы ретрай МЕНЬШЕ исходного лимита — тот же обрыв гарантированно.
-          const retryMaxTk = Math.max(proseMaxTk + 1, Math.min(19200, proseMaxTk * 2));
+          const retryMaxTk = Math.max(proseMaxTk + 1, Math.min(MAX_OUTPUT_TOKENS, proseMaxTk * 2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Прозаик: черновик похож на обрыв токенами (${proseMaxTk} ток.) — повтор с лимитом ${retryMaxTk}`, state:'warn'}});
           pRes = await callLLM({ ...llmFor(state,proseAg), temperature: proseAg.temp ?? 0.85, messages:ctx.messages, maxTokens: retryMaxTk }, streamCb, streamRetry);
           // Раньше результат повтора принимался безусловно — если обрыв повторялся
@@ -641,7 +641,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           // повторял с МЕНЬШИМ (7200 < 8000), гарантированно тем же обрывом.
           // Math.max ниже гарантирует, что ретрай никогда не будет уже исходной
           // попытки, независимо от того, что задал автор на слайдере.
-          const evalRetryTk = Math.max(evalMaxTk + 1, Math.min(19200, evalMaxTk * 2));
+          const evalRetryTk = Math.max(evalMaxTk + 1, Math.min(MAX_OUTPUT_TOKENS, evalMaxTk * 2));
           onProgress && onProgress({log:{icon:'⚠️', text:`Оценщик: ответ не распарсился (${nearLimit?`похоже на обрыв токенами, лимит был ${evalMaxTk}`:`НЕ похоже на обрыв лимита — ответ ${eRes.tokensOut||0} из ${evalMaxTk} ток., скорее всего сломан формат JSON`}) — повтор с лимитом ${evalRetryTk}`, state:'warn'}});
           // Раньше сырой ответ ПЕРВОЙ (неудачной) попытки нигде не сохранялся —
           // logStep ниже логирует только финальный eRes (после ретрая), и если

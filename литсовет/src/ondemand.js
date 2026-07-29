@@ -3,7 +3,7 @@
 // предложениями правок. Не меняет текст сам (кроме предложения Линейного
 // редактора, которое автор применяет вручную).
 
-import { callLLM, extractJSON, findForeignScript } from './llm.js';
+import { callLLM, extractJSON, findForeignScript, MAX_OUTPUT_TOKENS } from './llm.js';
 import { evaluatorMessages, parseEvaluator, architectMessages, parseArchitect } from './agents.js';
 import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
@@ -30,7 +30,7 @@ export async function runAgentOnDemand(state, scene, agent){
 
   if(role==='evaluator'){
     const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
-    const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??840 });
+    const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??4200 });
     // Тот же принцип, что в pipeline.js: без образцов голоса ось «Голос»
     // судить не по чему — исключаем её из балла, а не даём модели выдумать
     // число. Разовый прогон Оценщика и прогон в цикле обязаны считать балл
@@ -40,7 +40,7 @@ export async function runAgentOnDemand(state, scene, agent){
   }
   if(role==='architect'){
     const msgs = architectMessages(state, scene, bookContextBlock(state, scene));
-    const res = await callLLM({ ...base, temperature:agent.temp??0.4, messages:msgs, maxTokens:agent.maxTokens??720 });
+    const res = await callLLM({ ...base, temperature:agent.temp??0.4, messages:msgs, maxTokens:agent.maxTokens??3600 });
     return { kind:'architect', plan: parseArchitect(res.text) };
   }
   if(role==='lineedit'){
@@ -51,7 +51,7 @@ export async function runAgentOnDemand(state, scene, agent){
     const draftWords = (draft.match(/\S+/g)||[]).length;
     // 3.5 ток/слово (не 2.5) — см. тот же расчёт и обоснование в pipeline.js.
     const dynMin = Math.round(Math.max(2500, Math.round(draftWords * 3.5)) * 1.2);
-    const maxTk = Math.max(agent.maxTokens ?? 4320, dynMin);
+    const maxTk = Math.max(agent.maxTokens ?? 21600, dynMin);
     const res = await callLLM({ ...base, temperature:agent.temp??0.3, messages:msgs, maxTokens:maxTk });
     if(!res.text || res.text.length < draft.length*0.5)
       throw new Error(`Ответ короче половины исходного текста (похоже на обрыв лимитом ${maxTk} ток.) — попробуйте ещё раз.`);
@@ -81,7 +81,7 @@ export async function runAgentOnDemand(state, scene, agent){
   else if(role==='atmosphere')msgs = atmosphereGuardMessages(draft, agent.strictness, state.project?.genre);
   else if(role==='humor')     msgs = humorGuardMessages(draft, agent.strictness, state.project?.genre);
   else                        msgs = customGuardMessages(state, scene, draft, agent.prompt, agent.strictness);
-  const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??840 });
+  const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??4200 });
   // Тот же захват passive-флага, что уже есть в guardJob() (pipeline.js) —
   // без него ручной ("по требованию") запуск стража «Читатель» из этой
   // вкладки не обновлял scene.passivityFlag, и книжная сводка пассивности
@@ -101,7 +101,7 @@ export async function askSceneQuestion(state, scene, question){
   if(!draft) throw new Error('Сначала напишите текст сцены — вопрос задавать не к чему.');
   if(!question || !question.trim()) throw new Error('Пустой вопрос.');
   const base = { baseURL:g.baseURL, apiKey:g.apiKey, model:g.model, retries:g.retries };
-  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:1680 });
+  const res = await callLLM({ ...base, temperature:0.2, messages: sceneQuestionMessages(scene, draft, question.trim()), maxTokens:8400 });
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 
@@ -118,7 +118,7 @@ export async function patchScene(state, scene, instruction){
   // Тот же расчёт, что и у Прозаика в pipeline.js (см. обоснование там): реальная
   // плотность ≈2.78 ток/слово на уже написанном тексте книги — старый потолок в
   // 4000 не оставлял запаса под текст [РАЗБОР] перед переписанной прозой.
-  const cap = Math.round(Math.min(9000, Math.max(1800, Math.round(draft.length/2) + 1200)) * 1.2);
+  const cap = Math.round(Math.min(45000, Math.max(1800, Math.round(draft.length/2) + 1200)) * 1.2);
   const msgs = surgicalReviseMessages(draft, instruction, state.style?.rules);
   let res = await callLLM({ ...base, temperature:0.4, messages: msgs, maxTokens:cap });
   // Ответ приходит в формате [РАЗБОР]/[ТЕКСТ] (см. surgicalReviseMessages) — без
@@ -128,7 +128,7 @@ export async function patchScene(state, scene, instruction){
     // Тот же принцип повтора с удвоенным лимитом, что уже стоит у Прозаика на
     // правке в pipeline.js — раньше здесь был только тихий отказ (кидали ошибку
     // и автору приходилось вручную нажимать «Патч текста» ещё раз, теряя вызов).
-    const retryMaxTk = Math.max(cap+1, Math.min(24000, cap*2));
+    const retryMaxTk = Math.max(cap+1, Math.min(MAX_OUTPUT_TOKENS, cap*2));
     res = await callLLM({ ...base, temperature:0.4, messages: msgs, maxTokens: retryMaxTk });
     parsed = parseDebateRevision(res.text||'');
     if(parsed.truncated) throw new Error(`Ответ оборван дважды подряд (лимит был ${retryMaxTk} ток.) — попробуйте ещё раз.`);

@@ -407,16 +407,44 @@ test('buildSceneContext: при крошечном бюджете канон у�
   });
 });
 
-test('дефолты: бюджет контекста 128000, лимиты агентов удвоены', async () => {
+test('дефолты: бюджет контекста 128000, лимиты агентов подняты ×5', async () => {
   const { defaultState } = await import('../src/state.js');
   const d = defaultState();
   assert.equal(d.global.budgetTokens, 128000, 'бюджет сборки контекста ×4 от прежних 32000');
   const по = Object.fromEntries(d.agents.map(a=>[a.role, a.maxTokens]));
-  assert.equal(по.prose, 12960, 'Прозаик ×2 — reasoning-модели тратят часть лимита на рассуждение');
-  assert.equal(по.evaluator, 11520);
-  assert.equal(по.logic, 7560);
-  assert.equal(по.lineedit, 12960);
-  assert.equal(по.architect, 3240);
+  assert.equal(по.prose, 64800, 'Прозаик ×5 от 12960');
+  assert.equal(по.evaluator, 57600);
+  assert.equal(по.logic, 37800);
+  assert.equal(по.lineedit, 64800);
+  assert.equal(по.architect, 16200);
+  assert.equal(по.critic, 38400);
+  // У Книжного архитектора лимита нет НАМЕРЕННО: его бюджет считается формулой
+  // от числа сцен, а слайдер для него скрыт (ui/diagnostics.js). Проверяем, что
+  // это осталось осознанным решением, а не превратилось в забытое поле.
+  assert.equal(по.bookArchitect, undefined, 'у bookArchitect лимит задаётся формулой, а не полем');
+});
+
+// Класс дефекта, который вылез ровно при подъёме ×5: в каждом месте стоял свой
+// потолок на повтор (3000, 19200, 24000), и после роста дефолтов потолок
+// оказывался НИЖЕ базового лимита агента. Math.min отдавал меньше базы, а
+// спасавший Math.max(база+1) превращал «повтор вдвое шире» в «повтор на один
+// токен шире» — молча съеденную повторную попытку.
+test('лимиты: потолок повтора не может оказаться ниже базового лимита агента', async () => {
+  const { MAX_OUTPUT_TOKENS } = await import('../src/llm.js');
+  const { defaultState } = await import('../src/state.js');
+  const макс = Math.max(...defaultState().agents.map(a=>a.maxTokens||0));
+  assert.ok(MAX_OUTPUT_TOKENS > макс,
+    `общий потолок ${MAX_OUTPUT_TOKENS} обязан быть выше самого большого дефолта ${макс}, иначе повтор снова выродится в «база+1»`);
+});
+
+test('лимиты: зашитых потолков повтора не осталось', async () => {
+  const fs = await import('node:fs');
+  ['../src/pipeline.js','../src/ondemand.js'].forEach(f=>{
+    const src = fs.readFileSync(new URL(f, import.meta.url), 'utf8')
+      .split('\n').filter(l=>!l.trim().startsWith('//')).join('\n');
+    assert.ok(!/Math\.min\((?:3000|19200|24000)\s*,/.test(src),
+      f + ': вернулся зашитый потолок повтора — он снова разойдётся с дефолтами при следующем подъёме');
+  });
 });
 
 // ───────────── дефолтная модель по ролям ─────────────
