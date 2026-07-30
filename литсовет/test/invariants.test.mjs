@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { validateSkeleton, findGhostCharacters, clampSceneTargetWords } from '../src/architect-book.js';
-import { lineEditMessages, findBoundaryRepeat } from '../src/guards.js';
+import { lineEditMessages, findBoundaryRepeat, readerGuardMessages } from '../src/guards.js';
 import { charNamesMatch } from '../src/state.js';
 import { typo } from '../src/export.js';
 import { rebuildBibleVecs, factAlreadyInBible, tfvec, tokensOf, cosine, bibleMatches } from '../src/bible.js';
@@ -38,6 +38,21 @@ test('IDF-вес: настоящий парафраз ТОГО ЖЕ факта �
   rebuildBibleVecs(bible);
   const dup = factAlreadyInBible({ keys:'Ричард', text:'Ричард служит королю и живёт в замке на холме — он рыцарь.' }, bible);
   assert.equal(dup, true);
+});
+
+// Живой прогон «Ящик на причале»: у стража «Читатель» severity не была
+// объяснена, и на ОДНОМ И ТОМ ЖЕ структурном факте он выдал «норма» на
+// итерации 1 и «КРИТИЧНО» на итерации 2. Так как criticals собираются от
+// любого стража, а `clean` в draftBeatsBest стоит выше балла, одна такая
+// находка навсегда запретила черновикам 2 и 3 победить — ~30 платных вызовов
+// в мусор. Рубрика severity должна оставаться в промпте, а пассивность —
+// warning-уровнем (её системность ловит passivityIsSystemic по книге).
+test('Читатель: рубрика severity закреплена, пассивность не блокирует сцену', () => {
+  const msgs = readerGuardMessages({ brief: 'бриф сцены', emotion: 'тревога' }, 'текст сцены', 2, 'мистический триллер');
+  const user = msgs[1].content;
+  assert.match(user, /severity: critical/, 'рубрика severity должна быть в промпте, а не только список вариантов в схеме');
+  assert.match(user, /включая пассивность героя/, 'пассивность должна быть явно отнесена к warning');
+  assert.match(user, /стоит на кону/, 'critical должен быть ограничен провалом ставки/финальной эмоции');
 });
 
 test('IDF-вес: bibleMatches находит факт по различающему слову запроса', () => {
