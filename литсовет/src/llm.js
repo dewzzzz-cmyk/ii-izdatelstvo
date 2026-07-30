@@ -20,6 +20,15 @@ const STREAM_TRUNCATED_MARKER = '\n[[LITSOVET:STREAM_TRUNCATED]]';
 // maxTokens по оценке приложения, хотя апстрим честно уложился в лимит —
 // эвристика просто иначе считает баланс кириллицы/пунктуации в JSON).
 const USAGE_MARKER_RE = /\n\[\[LITSOVET:USAGE:(\{[\s\S]*?\})\]\]\s*$/;
+// Должен буквально совпадать с маркером, который server.js пишет в тело ответа
+// на каждый reasoning_content-чанк без видимого delta.content (см. её
+// комментарий) — heartbeat против 90-секундного таймаута простоя ниже.
+// Живой инцидент из CHANGELOG (1.56.0): «один вызов Оценщика занял МИНУТЫ
+// вместо секунд — это reasoning-модель» — reasoning-модели (deepseek-reasoner
+// и т.п.) шлют мысли отдельным полем, которое сервер НЕ форвардит в видимый
+// текст; без heartbeat таймер бездействия видел настоящую тишину дольше 90с
+// и абортил ЗДОРОВЫЙ долгий запрос, неотличимо от мёртвого соединения.
+const HEARTBEAT_MARKER = '[[LITSOVET:HB]]';
 
 // Обрыв по лимиту токенов для агентов ВНЕ пайплайна сцены (Мир, Структура,
 // Критик книги, Иллюстрации, История, Серия). Все они разбирают ответ через
@@ -91,6 +100,9 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
     // мёртвый коннект по-прежнему отваливается за 90с, длинный живой — нет.
     let timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s)')), 90000);
     const armTimeout = ()=>{ clearTimeout(timeoutId); timeoutId = setTimeout(()=>controller.abort(new Error('LLM timeout (90s без данных)')), 90000); };
+    // Объявлено ДО try (не внутри), чтобы catch ниже видел уже накопленный
+    // текст этой попытки — см. учёт частичного расхода при обрыве стрима.
+    let text = '';
     try{
       const res = await fetch('/api/generate', {
         method:'POST',
@@ -116,7 +128,6 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       // стрим text/plain
       const reader = res.body.getReader();
       const dec = new TextDecoder();
-      let text = '';
       // Живой инцидент: маркер [[LITSOVET:USAGE:{...}]], который сервер
       // дописывает в САМ КОНЕЦ потока (см. USAGE_MARKER_RE ниже), утёк в
       // видимый автору текст («Добро пожаловать».\n[[LITSOVET:USAGE:...]]).
@@ -142,6 +153,18 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
         if(done) break;
         armTimeout(); // стрим живой — не даём таймауту убить длинный здоровый ответ
         text += dec.decode(value, {stream:true});
+        // Heartbeat-маркер режем из ЕЩЁ НЕ отданного хвоста (после emitted) —
+        // там же, где flushSafe соблюдает LOOKBACK-задержку, так что маркер,
+        // разбитый TCP-границей ровно пополам между двумя чанками, всё равно
+        // склеится в единую строку до того, как текст покинет эту функцию
+        // (LOOKBACK=400 символов — с огромным запасом длиннее самого маркера).
+        // В отличие от STREAM_TRUNCATED/USAGE (пишутся один раз в конце и
+        // проверяются по всему тексту после цикла), heartbeat пишется МНОГО
+        // раз ПОСРЕДИ потока — резать его нужно на каждой итерации, а не ждать
+        // конца, иначе он останется видимым в прозе/JSON, ушедших дальше.
+        if(text.indexOf(HEARTBEAT_MARKER, emitted.length) !== -1){
+          text = text.slice(0, emitted.length) + text.slice(emitted.length).split(HEARTBEAT_MARKER).join('');
+        }
         flushSafe();
       }
       // Сервер дописывает этот маркер в тело ответа, если апстрим оборвался
@@ -205,6 +228,27 @@ export async function callLLM({ baseURL, apiKey, model, temperature, messages, m
       return { text: text.trim(), tokensIn: finalTokensIn, tokensOut, cost, finishReason, hitLimit };
     }catch(e){
       if(e.nonRetryable) throw e;
+      // Сеть/апстрим оборвались ПОСЛЕ того, как модель уже сгенерировала и
+      // частично прислала текст (text успел что-то накопить в цикле стрима
+      // выше) — эти токены провайдер всё равно выставит в счёт, даже если
+      // клиент получил их не целиком (обрыв — не отмена: генерация уже шла).
+      // Раньше стоимость начислялась ТОЛЬКО на успешной попытке (см. return
+      // выше), и такой частичный расход терялся безвозвратно на каждом
+      // сетевом обрыве посреди генерации — счётчик стоимости книги
+      // систематически недооценивал реальные траты. Не начисляем tokensIn
+      // здесь: 429/5xx (retryable && attempt<retries continue выше) и другие
+      // сбои ДО начала стрима не доходят сюда с непустым text и обычно не
+      // тарифицируются апстримом как несостоявшийся запрос.
+      if(text){
+        const st = getState();
+        if(st){
+          const partialOut = estimateTokens(text);
+          const known = PRICES[model];
+          const p = known || {in:0.14, out:0.28};
+          st.spend = st.spend || {text:0, images:0};
+          st.spend.text += partialOut/1e6*p.out;
+        }
+      }
       lastErr = e.message;
       if(attempt>=retries) throw new Error(lastErr);
       await sleep(500 * Math.pow(2, attempt));

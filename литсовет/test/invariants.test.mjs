@@ -8,6 +8,49 @@ import { validateSkeleton, findGhostCharacters, clampSceneTargetWords } from '..
 import { lineEditMessages, findBoundaryRepeat } from '../src/guards.js';
 import { charNamesMatch } from '../src/state.js';
 import { typo } from '../src/export.js';
+import { rebuildBibleVecs, factAlreadyInBible, tfvec, tokensOf, cosine, bibleMatches } from '../src/bible.js';
+
+// factAlreadyInBible/bibleMatches без IDF-веса (плоский tfvec+cosine) считали
+// общие слова между РАЗНЫМИ фактами наравне с единственным различающим словом
+// (именем) — два факта о разных персонажах с одинаковым шаблоном описания
+// («X — рыцарь, живёт в старом замке на холме, служит королю») давали
+// cosine=0.875, ВЫШЕ порога дедупа 0.75: второй факт молча считался бы
+// «уже есть в каноне» и не добавлялся, хотя описывает другого человека.
+test('IDF-вес: два разных факта с общим шаблоном описания — не дубли', () => {
+  const bible = [
+    { keys:'Ричард', text:'Ричард — рыцарь, живёт в старом замке на холме, служит королю.' },
+    { keys:'Эдмунд', text:'Эдмунд — рыцарь, живёт в старом замке на холме, служит королю.' },
+  ];
+  rebuildBibleVecs(bible);
+  const rawSim = cosine(
+    tfvec(tokensOf('Ричард — рыцарь, живёт в старом замке на холме, служит королю.')),
+    tfvec(tokensOf('Освальд — рыцарь, живёт в старом замке на холме, служит королю.')),
+  );
+  assert.ok(rawSim >= 0.75, 'контроль: без IDF плоский cosine выше порога дедупа (иначе сценарий бага не воспроизведён)');
+  const dup = factAlreadyInBible({ keys:'Освальд', text:'Освальд — рыцарь, живёт в старом замке на холме, служит королю.' }, bible);
+  assert.equal(dup, false);
+});
+
+test('IDF-вес: настоящий парафраз ТОГО ЖЕ факта всё ещё считается дублем', () => {
+  const bible = [
+    { keys:'Ричард', text:'Ричард — рыцарь, живёт в старом замке на холме, служит королю.' },
+  ];
+  rebuildBibleVecs(bible);
+  const dup = factAlreadyInBible({ keys:'Ричард', text:'Ричард служит королю и живёт в замке на холме — он рыцарь.' }, bible);
+  assert.equal(dup, true);
+});
+
+test('IDF-вес: bibleMatches находит факт по различающему слову запроса', () => {
+  const bible = [
+    { keys:'Ричард', text:'Ричард — рыцарь, живёт в старом замке на холме, служит королю.' },
+    { keys:'Эдмунд', text:'Эдмунд — рыцарь, живёт в старом замке на холме, служит королю.' },
+    { keys:'погода', text:'В городе почти всегда идёт дождь, а зимой на улицах лежит снег.' },
+  ];
+  rebuildBibleVecs(bible);
+  const hits = bibleMatches(bible, 'Ричард готовится к турниру', 5);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].keys, 'Ричард');
+});
 
 // validateSkeleton принимает СЫРОЙ ответ модели (строку), а не готовый объект —
 // внутри он сам зовёт extractJSON. Это и проверяем.

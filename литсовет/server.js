@@ -197,12 +197,23 @@ async function handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStrea
   res.writeHead(200, { 'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'no-cache' });
   const reader=up.body.getReader(), dec=new TextDecoder(); let buf='';
   let inTokens = 0, outTokens = 0, finishReason = '';
+  // Extended thinking у Anthropic стримит content_block_delta с
+  // delta.type==='thinking_delta' — тот же класс молчания, что и
+  // reasoning_content у OpenAI-совместимых reasoning-моделей (см. комментарий
+  // в handleGenerate выше): мы не форвардим само рассуждение, но без
+  // heartbeat клиентский таймер бездействия (90с) может абортить здоровый
+  // долгий запрос, пока модель думает.
+  const HEARTBEAT_INTERVAL_MS = 20000;
+  let lastHeartbeat = 0;
   const emitLine=(line)=>{
     const s=line.trim(); if(!s.startsWith('data:')) return;
     const data=s.slice(5).trim(); if(!data) return;
     try{
       const parsed = JSON.parse(data);
       if(parsed.type==='content_block_delta' && parsed.delta?.type==='text_delta') res.write(parsed.delta.text);
+      else if(parsed.type==='content_block_delta' && parsed.delta?.type==='thinking_delta' && Date.now()-lastHeartbeat > HEARTBEAT_INTERVAL_MS){
+        res.write('[[LITSOVET:HB]]'); lastHeartbeat = Date.now();
+      }
       if(parsed.type==='message_start' && parsed.message?.usage?.input_tokens) inTokens = parsed.message.usage.input_tokens;
       if(parsed.type==='message_delta' && parsed.usage?.output_tokens) outTokens = parsed.usage.output_tokens;
       if(parsed.type==='message_delta' && parsed.delta?.stop_reason) finishReason = parsed.delta.stop_reason;
@@ -275,13 +286,27 @@ async function handleGenerate(req, res){
     // С stream_options.include_usage апстрим шлёт финальный чанк вида
     // {choices:[], usage:{...}} — без delta.content, но с реальными токенами.
     let capturedUsage = null, capturedFinish = '';
+    // Reasoning-модели (deepseek-reasoner и т.п.) шлют мысли отдельным полем
+    // delta.reasoning_content, которое мы намеренно НЕ форвардим в видимый
+    // текст (см. HEARTBEAT_MARKER в llm.js) — но если НИ ОДНОГО delta.content
+    // не будет дольше клиентского таймера бездействия (90с), клиент сочтёт это
+    // мёртвым соединением и оборвёт ЗДОРОВЫЙ долгий запрос. Живой инцидент из
+    // CHANGELOG: «вызов Оценщика занял минуты вместо секунд — это
+    // reasoning-модель». Раз в HEARTBEAT_INTERVAL_MS шлём невидимый маркер,
+    // пока идёт рассуждение без ответа — клиент его вырезает и не показывает.
+    const HEARTBEAT_INTERVAL_MS = 20000;
+    let lastHeartbeat = 0;
     const emitLine=(line)=>{
       const s=line.trim(); if(!s.startsWith('data:')) return;
       const data=s.slice(5).trim(); if(data==='[DONE]') return;
       try{
         const parsed = JSON.parse(data);
-        const d = parsed.choices?.[0]?.delta?.content;
+        const delta = parsed.choices?.[0]?.delta || {};
+        const d = delta.content;
         if(d) res.write(d);
+        else if(delta.reasoning_content && Date.now()-lastHeartbeat > HEARTBEAT_INTERVAL_MS){
+          res.write('[[LITSOVET:HB]]'); lastHeartbeat = Date.now();
+        }
         if(parsed.usage) capturedUsage = parsed.usage;
         const fr = parsed.choices?.[0]?.finish_reason; if(fr) capturedFinish = fr;
       }catch{}

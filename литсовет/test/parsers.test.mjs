@@ -154,6 +154,14 @@ test('parseDebateRevision: маркер без цитаты не роняет р
   assert.equal(r.prose, 'Даня вошёл в зал и остановился у стойки, разглядывая очередь, которая тянулась до самых дверей.');
 });
 
+test('parseDebateRevision: теги в обратном порядке — РАЗБОР не утекает в прозу', () => {
+  const r = parseDebateRevision('[ТЕКСТ]\nДаня вошёл в зал и остановился у стойки, разглядывая очередь, которая тянулась до самых дверей.\n[РАЗБОР]\n«реплика в лоб» → ОТКЛОНЕНО: приём');
+  assert.equal(r.prose, 'Даня вошёл в зал и остановился у стойки, разглядывая очередь, которая тянулась до самых дверей.');
+  assert.ok(!r.prose.includes('РАЗБОР'));
+  assert.ok(!r.prose.includes('ОТКЛОНЕНО'));
+  assert.equal(r.rejected.length, 1);
+});
+
 // ─────────────────────── parseSceneSummary ───────────────────────
 test('parseSceneSummary: полный ответ', () => {
   const s = parseSceneSummary('{"summary":"Даня пришёл в Гильдию.","characters":[{"name":"Даня"}],"facts":[{"text":"Гильдия работает по формам"}]}');

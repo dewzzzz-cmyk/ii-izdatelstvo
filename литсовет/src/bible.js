@@ -113,6 +113,44 @@ export function cosine(a,b){ let dot=0,na=0,nb=0; for(const k in a){ dot+=(a[k]|
 
 export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensOf((b.keys||'')+' '+(b.text||''))); }); }
 
+// IDF (частота термина в документе, гашенная его редкостью по всему корпусу
+// Библии) — раньше сравнение фактов канона (tfvec+cosine выше) взвешивало
+// слова ТОЛЬКО по частоте внутри одного факта, без поправки на то, что слово
+// встречается ПОЧТИ В КАЖДОМ факте корпуса и потому НЕ отличает факты друг от
+// друга. Общие слова между РАЗНЫМИ фактами («рыцарь… живёт в замке» у двух
+// разных персонажей) получали тот же вес, что и единственное различающее
+// слово (имя) — косинус между явно разными фактами мог оказаться завышен.
+// Сглаженная формула (как в scikit-learn): idf = ln((N+1)/(df+1))+1 — всегда
+// положительна, слово, встречающееся в КАЖДОМ факте корпуса, не обнуляется
+// (idf=1), редкое/уникальное — усилено.
+function idfTable(bible){
+  const N = (bible||[]).length;
+  const df = {};
+  (bible||[]).forEach(b=>{
+    Object.keys(b._vec||{}).forEach(k=>{ df[k] = (df[k]||0)+1; });
+  });
+  const idf = {};
+  Object.keys(df).forEach(k=>{ idf[k] = Math.log((N+1)/(df[k]+1)) + 1; });
+  return idf;
+}
+
+// Косинус между term-frequency векторами, взвешенными по IDF корпуса Библии.
+// Сам tfvec()/cosine() выше — общий экспорт, используется и ВНЕ канона книги
+// (напр. похожесть отклонённых замечаний в pipeline.js), где IDF корпуса
+// канона неприменим в принципе — поэтому взвешивание намеренно НЕ встроено в
+// tfvec()/cosine(), а живёт отдельной функцией здесь и применяется только там,
+// где сравнение идёт ВНУТРИ одного корпуса Библии (bibleMatches/factAlreadyInBible).
+function weightedCosine(a, b, idf){
+  let dot=0, na=0, nb=0;
+  const keys = new Set([...Object.keys(a||{}), ...Object.keys(b||{})]);
+  keys.forEach(k=>{
+    const w = idf[k] || 1;
+    const wa = (a[k]||0)*w, wb = (b[k]||0)*w;
+    dot += wa*wb; na += wa*wa; nb += wb*wb;
+  });
+  return na && nb ? dot/Math.sqrt(na*nb) : 0;
+}
+
 // Смысловое сходство (не побайтовое ===) факта с уже существующим каноном —
 // тот же порог, что pipeline.js использует для похожих решений «это по сути
 // то же самое». Раньше это жило только внутри ui/stages.js (историческая
@@ -122,9 +160,10 @@ export function rebuildBibleVecs(bible){ bible.forEach(b=>{ b._vec=tfvec(tokensO
 const FACT_SIM_THRESHOLD = 0.75;
 export function factAlreadyInBible(fact, bible){
   const factVec = tfvec(tokensOf((fact.keys||'') + ' ' + (fact.text||'')));
+  const idf = idfTable(bible||[]);
   return (bible||[]).some(b => {
     const bVec = b._vec || tfvec(tokensOf((b.keys||'') + ' ' + (b.text||'')));
-    return cosine(factVec, bVec) >= FACT_SIM_THRESHOLD;
+    return weightedCosine(factVec, bVec, idf) >= FACT_SIM_THRESHOLD;
   });
 }
 
@@ -147,7 +186,8 @@ export function bibleMatches(bible, query, k=5){
   const hasVecs=rest.some(b=>b._vec&&Object.keys(b._vec).length>0);
   let hits;
   if(hasVecs && Object.keys(qvec).length>=2){
-    hits=rest.map(b=>({b,score:cosine(qvec,b._vec||{})}))
+    const idf = idfTable(rest);
+    hits=rest.map(b=>({b,score:weightedCosine(qvec,b._vec||{},idf)}))
       .filter(x=>x.score>0.08).sort((a,c)=>c.score-a.score).slice(0,k).map(x=>x.b);
     if(!hits.length) hits=keywordFallback(rest, low, sset);
   } else {
@@ -155,11 +195,23 @@ export function bibleMatches(bible, query, k=5){
   }
   return [...pinned, ...hits.slice(0,k)];
 }
+// Раньше просто фильтровали и возвращали в порядке следования в Библии — а
+// вызывающий (bibleMatches) берёт первые k из этого списка. Факт, совпавший
+// ОДНИМ ключом из трёх, и факт, совпавший ВСЕМИ тремя, ранжировались
+// одинаково: более специфичный/релевантный факт мог не попасть в top-K
+// только потому, что менее релевантный оказался раньше в списке автора.
+// Теперь сортируем по числу совпавших ключей (устойчивая сортировка —
+// внутри одного числа совпадений порядок автора сохраняется).
 function keywordFallback(bible, low, sset){
-  return bible.filter(b=>{
-    const keys=(b.keys||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
-    return !keys.length||keys.some(k=>keyMatches(k,low,sset));
-  });
+  return bible
+    .map(b=>{
+      const keys=(b.keys||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+      if(!keys.length) return { b, matched:0, hasKeys:false };
+      return { b, matched: keys.filter(k=>keyMatches(k,low,sset)).length, hasKeys:true };
+    })
+    .filter(x=>!x.hasKeys || x.matched>0)
+    .sort((a,c)=>c.matched-a.matched)
+    .map(x=>x.b);
 }
 
 // Формат для промпта. Вынесено отдельно (не только внутри bibleForPrompt),

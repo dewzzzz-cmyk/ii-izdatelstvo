@@ -11,7 +11,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          radicalReviseMessages, parseDebateRevision, styleGuardMessages, readerGuardMessages,
          imageryGuardMessages, povGuardMessages, dialogueGuardMessages, resolutionGuardMessages,
          atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases, findBoundaryRepeat,
-         looksTokenTruncated } from './guards.js';
+         looksTokenTruncated, coercePassive } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag, effectiveRules, llmFor } from './state.js';
@@ -1537,7 +1537,7 @@ async function guardJob(state, role, messages, flagsOut, onProgress, scene){
     // без дополнительного LLM-вызова, и копим на самой сцене для накопительной
     // проверки по книге (см. bookreview.js/passivityIsSystemic). Жанронезависимо —
     // работает для любого протагониста в любом типе прозы.
-    if(role==='reader' && scene && j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
+    if(role==='reader' && scene && j){ const p = coercePassive(j.passive); if(p!=null) scene.passivityFlag = p; }
     logStep({ agent:role, input:'(черновик)', output:res.text, flags, tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost });
   }catch(e){
     flagsOut[role] = [];

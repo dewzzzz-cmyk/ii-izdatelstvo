@@ -9,7 +9,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          customGuardMessages, lineEditMessages, runGuardParse, surgicalReviseMessages,
          styleGuardMessages, sceneQuestionMessages, readerGuardMessages, imageryGuardMessages,
          povGuardMessages, dialogueGuardMessages, resolutionGuardMessages, atmosphereGuardMessages,
-         humorGuardMessages, parseDebateRevision, looksTokenTruncated } from './guards.js';
+         humorGuardMessages, parseDebateRevision, looksTokenTruncated, coercePassive } from './guards.js';
 import { bookContextBlock } from './context.js';
 import { effectiveRules, ag, llmFor } from './state.js';
 import { rememberRejected } from './pipeline.js';
@@ -114,7 +114,7 @@ export async function runAgentOnDemand(state, scene, agent){
   // без него ручной ("по требованию") запуск стража «Читатель» из этой
   // вкладки не обновлял scene.passivityFlag, и книжная сводка пассивности
   // (passivityIsSystemic()) видела только автопрогоны из основного пайплайна.
-  if(role==='reader' && j && typeof j.passive === 'boolean') scene.passivityFlag = j.passive;
+  if(role==='reader' && j){ const p = coercePassive(j.passive); if(p!=null) scene.passivityFlag = p; }
   return { kind:'guard', flags: runGuardParse(res.text) };
 }
 
