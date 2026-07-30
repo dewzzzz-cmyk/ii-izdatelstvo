@@ -266,6 +266,17 @@ export function buildUnifiedDirective(verdict, allBanned, criticalFlags, factual
     ? 'ГЛАВНОЕ НА ЭТОЙ ИТЕРАЦИИ — КАЧЕСТВО ПРОЗЫ (по этим осям тебя и оценивают, они идут от самой провальной):\n'
     : 'Оси с самым низким баллом — не дай им просесть ещё сильнее:\n') + chosenNotes.join('\n'));
   if(criticalFlags.length) parts.push('КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ СТРАЖЕЙ:\n' + criticalFlags.join('\n'));
+  // Нарушенные ПРАВИЛА АВТОРА идут в ОБЕИХ фазах и вне общего бюджета — как
+  // критические. Это не мнение критика, а явное распоряжение автора: он сам
+  // записал правило, и «отложить на следующую итерацию» здесь значит «ещё круг
+  // писать вопреки прямому указанию». Свой потолок (4) всё же есть — чтобы
+  // длинный список правил не вытеснил всё остальное из внимания Прозаика.
+  const styleNotes = opts.styleNotes || [];
+  if(styleNotes.length){
+    const показать = styleNotes.slice(0, 4);
+    if(styleNotes.length > показать.length) deferred.push(`${styleNotes.length - показать.length} наруш. правил`);
+    parts.push('НАРУШЕНЫ ПРАВИЛА АВТОРА (обязательны к исправлению — это его прямое указание, не вопрос вкуса):\n' + показать.join('\n'));
+  }
   // Отдельно от критических: вопросы фактических стражей (логика/события) с severity
   // "warning" — их собственный промпт называет их пробелом, на который не нужно
   // выдумывать ответ, а не командой исправить. Раньше они попадали в criticalFlags
@@ -451,6 +462,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     const directiveOpts = (v)=>({
       phase: directivePhase(iter),
       scores: v?.scores,
+      styleNotes,   // нарушенные правила автора — идут в обеих фазах, см. buildUnifiedDirective
       onDefer: (list)=> onProgress && onProgress({log:{icon:'📋',
         text:`Директива сжата до ${DIRECTIVE_BUDGET} пунктов (${directivePhase(iter)==='prose'?'фаза прозы — оси Оценщика':'фаза стражей — логика и приёмы'}). Отложено на следующую итерацию: ${list.join(', ')}`}}),
     });
@@ -807,6 +819,9 @@ export async function runScene(state, scene, opts={}, onProgress){
       let criticalsFactual = 0;
       let factualQuestions = [];
       let literaryNotes = [];
+      // Нарушения ЯВНЫХ правил автора (Страж стиля) — отдельно от мнений
+      // остальных литературных стражей, см. обоснование у места заполнения.
+      let styleNotes = [];
       // true, если ЭТА итерация прошла полный набор литературных стражей
       // (голос/стиль/юмор/POV/диалог/развязка/атмосфера/читатель) — по просьбе
       // автора запускаются теперь с первой итерации (см. комментарий у самого
@@ -1051,8 +1066,22 @@ export async function runScene(state, scene, opts={}, onProgress){
         // никуда не шли дальше flagList (видны в логе, но не в директиве Прозаику):
         // с гейтом на iter>=maxIter-1 они теперь успевают появиться ДО последней
         // итерации, так что должны реально доходить до правки, а не только до лога.
+        // Находки Стража стиля вынесены ОТДЕЛЬНО от остальных литературных.
+        // Причина не косметическая: остальные литературные стражи высказывают
+        // профессиональное мнение («тут темп провис», «образ не сработал»), а
+        // Страж стиля проверяет ЯВНОЕ ПРАВИЛО, которое автор сам записал —
+        // это не вопрос вкуса, а нарушенное распоряжение. Раньше они шли одним
+        // списком literaryNotes, а тот получает бюджет только в фазе стражей,
+        // то есть один круг из трёх. Живой замер (прогон с 5 новыми правилами):
+        // Страж стиля точно назвал 4 нарушения по номерам правил, но два из них
+        // (одно имя ПОВ-героя, «водолаз» со стороны) Прозаик так и не исправил —
+        // при 19 замечаниях на 8 слотов они просто не доехали до директивы.
+        const styleRole = 'styleguard';
+        styleNotes = (flags[styleRole]||[])
+          .filter(f=>f.severity==='warning')
+          .map(f=>`[Правило автора] ${f.title}: ${f.detail||''}`);
         literaryNotes = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
-          .filter(f=>f.severity==='warning' && !isFactualGuard(state, role))
+          .filter(f=>f.severity==='warning' && !isFactualGuard(state, role) && role!==styleRole)
           .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
         if(flagList.length || dupFound.length){
           onProgress && onProgress({log:{icon:'🛡',

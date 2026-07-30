@@ -281,6 +281,40 @@ test('buildUnifiedDirective: критические замечания идут 
   }
 });
 
+// Нарушенные ПРАВИЛА АВТОРА — не мнение критика, а его прямое указание. Раньше
+// шли общим списком literaryNotes, который получает бюджет только в фазе стражей
+// (1 круг из 3): живой прогон показал, что Страж стиля точно назвал 4 нарушения
+// по номерам правил, а два из них Прозаик так и не исправил — они не доехали до
+// директивы при 19 замечаниях на 8 слотов.
+test('buildUnifiedDirective: правила автора идут в ОБЕИХ фазах', async () => {
+  const { buildUnifiedDirective } = await import('../src/pipeline.js');
+  const verdict = { anchors: [], scores:{rhythm:5}, notes:['[Ритм] повтор'] };
+  const styleNotes = ['[Правило автора] Правило 3: одно имя ПОВ-героя', '[Правило автора] Правило 4: телесный маркер'];
+  for(const phase of ['prose','guards']){
+    const d = buildUnifiedDirective(verdict, [], [], ['[Логика] вопрос'], ['[Читатель] темп'], false, { phase, styleNotes });
+    assert.match(d, /НАРУШЕНЫ ПРАВИЛА АВТОРА/, `фаза ${phase}: правила должны быть в директиве`);
+    assert.equal((d.match(/\[Правило автора\]/g)||[]).length, 2, `фаза ${phase}: оба правила должны дойти`);
+  }
+});
+
+test('buildUnifiedDirective: у правил автора свой потолок — они не топят директиву', async () => {
+  const { buildUnifiedDirective } = await import('../src/pipeline.js');
+  const verdict = { anchors: [], scores:{}, notes:[] };
+  const many = Array.from({length:7}, (_,i)=>`[Правило автора] Правило ${i}`);
+  const d = buildUnifiedDirective(verdict, [], [], [], [], false, { phase:'prose', styleNotes:many });
+  assert.equal((d.match(/\[Правило автора\]/g)||[]).length, 4);
+});
+
+// Единственная ремесленная ось без калибровки давала идеально плоские 5/5/5 на
+// нашей прозе, Чехове и Бунине — при том что оси С калибровкой различали тексты
+// (Темп 7/6/4, Конкретность 6/7/5). Калибровка обязана остаться в промпте.
+test('evaluatorMessages: у оси «Ритм» есть калибровка шкалы', async () => {
+  const { evaluatorMessages } = await import('../src/agents.js');
+  const sys = evaluatorMessages({title:'t', brief:'b'}, 'текст', [], '', [], {})[0].content;
+  assert.match(sys, /КАЛИБРОВКА «Ритм»/);
+  for(const уровень of ['  3 —','  6 —','  9 —']) assert.ok(sys.includes(уровень), `нет уровня ${уровень}`);
+});
+
 test('buildUnifiedDirective: клише — урезанный список плюс запрет на класс', async () => {
   const { buildUnifiedDirective } = await import('../src/pipeline.js');
   const verdict = { anchors: [], scores:{}, notes:[] };
