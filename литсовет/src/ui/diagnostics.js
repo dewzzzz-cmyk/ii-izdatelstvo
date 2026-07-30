@@ -4,7 +4,7 @@ import { getState, save, addCustomAgent, removeAgent } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
-import { isRunning, rejectNoteByAuthor } from '../pipeline.js';
+import { isRunning, rejectNoteByAuthor, isRejectedNote } from '../pipeline.js';
 import { openRuleModal } from './rule-modal.js';
 import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider, priceLabel } from '../providers.js';
 
@@ -340,9 +340,10 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
     });
     rejBtn.textContent=`✓ погашено: ${n}`;
     rejBtn.disabled=true;
-    // save() тянет за собой render() — отклонённые сразу уходят из списка
-    // флагов и появляются в блоке «Отклонено как приём» ниже. Без перерисовки
-    // автор видел бы старый список и не понимал, применилось ли действие.
+    // save() тянет за собой render(): погашенные помечаются прямо в списке
+    // («✕ погашено как приём», приглушённые) и попадают в блок «Отклонено как
+    // приём» ниже. Из списка они НЕ исчезают — страж их всё-таки нашёл, и
+    // скрывать это от автора нельзя; перестают они уходить только Прозаику.
     save();
   };
 }
@@ -356,13 +357,20 @@ function renderFlags(scene){
   const crit = all.filter(f=>f.severity==='critical').length;
   const warn = all.filter(f=>f.severity==='warning').length;
   const fixable = all.filter(f=>f.severity!=='ok').length;
+  // Погашенные («✕ Это приём») остаются в списке, но помечаются: убирать их
+  // совсем — значит скрывать от автора, что страж это всё-таки нашёл, а список
+  // флагов и есть полная картина сцены. Матчинг — тот же isRejectedNote, что
+  // фильтрует директиву в pipeline.js, чтобы «погашено» в UI и «не пойдёт
+  // Прозаику» всегда означали одно и то же.
+  const погашено = f => f.severity!=='critical' && isRejectedNote(f.title+' '+(f.detail||''), scene.rejectedNotes);
   return `<div class="ph">Флаги сцены <span style="font-weight:400;text-transform:none;letter-spacing:0">${crit?crit+' критич':''}${crit&&warn?', ':''}${warn?warn+' предупр':''}${!crit&&!warn?'норма':''}</span></div>
     ${multiSelectToolbarHTML('flag', fixable, 'Переписать все')}
     <div class="flags-list" id="flagsList">
-      ${all.map((f,i)=>`<div class="flag-item${f.severity!=='ok'?' flag-selectable':''}" data-fi="${i}">
+      ${all.map((f,i)=>`<div class="flag-item${f.severity!=='ok'?' flag-selectable':''}${погашено(f)?' flag-muted':''}" data-fi="${i}"${погашено(f)?' style="opacity:.55" title="Погашено как приём — Прозаику это замечание больше не уйдёт. Снять: «↺ показывать снова» в блоке отклонённых ниже."':''}>
         ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+(f.detail||''))}" data-sev="${f.severity}" data-fi="${i}"></label>`:''}
         <div class="flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span>
-          <span class="flag-role">${GUARD_LABELS[f.role] || (getState().agents.find(a=>a.id===f.role)?.name) || f.role}</span></div>
+          <span class="flag-role">${GUARD_LABELS[f.role] || (getState().agents.find(a=>a.id===f.role)?.name) || f.role}</span>
+          ${погашено(f)?`<span class="flag-role" style="color:var(--ok,#2a7a2a)">✕ погашено как приём</span>`:''}</div>
         <div class="flag-title">${esc(f.title)}</div>
         ${f.detail?`<div class="flag-detail">${esc(f.detail)}</div>`:''}
         ${f.quote?`<div class="flag-quote">${esc(f.quote)}</div>`:''}

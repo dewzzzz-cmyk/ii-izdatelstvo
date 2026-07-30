@@ -137,7 +137,11 @@ function rejectedCount(text, rejectedNotes){
 // итерации. Порог тот же по смыслу, что FACTUAL_ESCALATE_ITERS у фактических
 // стражей, просто применён ко всем замечаниям.
 const REJECT_STUBBORN_TIMES = 3;
-function isRejectedNote(text, rejectedNotes){
+// Экспортирована для UI: панель «Анализ сцены» помечает погашенные замечания
+// прямо в списке флагов. Матчинг по сходству живёт ТОЛЬКО здесь — иначе UI и
+// пайплайн разошлись бы в том, что считается «тем же замечанием», и автор видел
+// бы «погашено», а Прозаик всё равно получал бы это в директиве.
+export function isRejectedNote(text, rejectedNotes){
   const rn = findRejectedNote(text, rejectedNotes);
   if(!rn) return false;
   // Отклонение АВТОРА (кнопка «✕ Это приём» в панели «Анализ сцены») не
