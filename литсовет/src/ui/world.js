@@ -7,6 +7,7 @@ import { getState, save, saveNow } from '../state.js';
 import { rebuildBibleVecs, applyFactEdit, deleteBibleFactAt, toggleFactPinned, factAlreadyInBible } from '../bible.js';
 import { capBibleSize } from '../memory.js';
 import { suggestWorldFacts, missingPOD, generateWorldMap, mapPromptFor, rerollWorldFact, categoriesFor, CATEGORY_HINTS, MAP_LANGUAGES, runWorldOverview, findWorldDuplicates, worldFactsFingerprint, proposeConflictFix, proposeMergeFix, estimateOverviewTokens, detectMapMarkers } from '../world.js';
+import { genresOf } from '../genres.js';
 import { saveMapItem, addMapLabel, removeMapLabel, updateMapLabelText, applyMapLabels, MAX_MAP_LABELS as MAX_MAP_LABELS_UI } from '../illustrations.js';
 import { estimateImageCost } from '../imagegen.js';
 import { esc } from './stages.js';
@@ -609,7 +610,7 @@ function confirmOverviewCost(s, category){
 async function fillThinCategories(els, s, r){
   if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
   if(_busyCategory || _bulkBusy) return;
-  const validCats = categoriesFor(s.project.genre);
+  const validCats = categoriesFor(genresOf(s.project||{}));
   const targets = r.thinCategories.length ? r.thinCategories.filter(c=>validCats.includes(c)) : validCats;
   if(!targets.length){
     // Кнопка показывалась по r.thinCategories.length>0, но после фильтра по
@@ -720,7 +721,7 @@ export function renderWorld(els){
   if(s.ui?.stage && s.ui.stage !== 'world') return;
   const p = s.project;
   const worldFacts = (s.bible||[]).filter(b=>b.source==='world');
-  const cats = categoriesFor(p.genre);
+  const cats = categoriesFor(genresOf(p));
   const geoCount = worldFacts.filter(b=>b.category==='география').length;
   const podWarning = missingPOD(s);
   const busyAny = _bulkBusy || !!_busyCategory;
@@ -861,7 +862,7 @@ function bindHandlers(els, s){
   if(sa) sa.onclick = async ()=>{
     if(!s.global.apiKey){ alert('Задайте API-ключ текстовой модели в настройках (⚙).'); return; }
     if(_busyCategory || _bulkBusy) return;
-    const cats = categoriesFor(s.project.genre);
+    const cats = categoriesFor(genresOf(s.project||{}));
     _bulkBusy = true;
     for(let i=0;i<cats.length;i++){
       const cat = cats[i];

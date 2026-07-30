@@ -5,7 +5,7 @@
 
 import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
 import { genreBeatsNote, genreWantsHumor, ageProseNote, ageContentNote, ageSceneWords,
-         genresOf, multiGenreNote } from './genres.js';
+         genresOf, multiGenreNote, genreStructureNote } from './genres.js';
 import { bibleForPrompt } from './bible.js';
 import { ag, llmFor } from './state.js';
 import { startRun, logStep, endRun } from './diagnostics.js';
@@ -170,6 +170,9 @@ export function bookArchitectMessages(state, opts={}){
     `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
     `Раздели на ${targetChapters} глав (~${scenesPerCh} сцен на главу).`,
     multiGenreNote(genresOf(p), genreBeatsNote, ''),
+    // Собственная морфология жанра (пока — сказка): чем наполняются дуги.
+    // Идёт ПОСЛЕ общей ARC_DISTRIBUTION_NOTE и уточняет её, а не заменяет.
+    genreStructureNote(genresOf(p)),
     // Живой пример на «Разломе»: примеры в genreBeatsNote завязаны на магию
     // (профсоюзы драконов, волокита в гильдии) — Архитектор применял иронию
     // ТОЛЬКО к сценам, где на сцене буквально есть магия/гильдия, и полностью
@@ -496,6 +499,10 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
     // «кульминация смещена»/«финал не подготовлен» как affectedChapters. Формулировка
     // фрагмент-осознанная: модель видит не всю книгу, поэтому даём ей номера явно.
     `ДУГИ (arc): в книге всего ${chapterNodes.length} глав. Глава 1 — «завязка», глава ${chapterNodes.length} — «развязка», одна глава ближе к концу — «кульминация», остальные — «развитие». Ставь arc правимым главам по их номеру в этой схеме, а не «развитие» по умолчанию.`,
+    // Морфология жанра нужна и точечной правке: без неё перегенерация главы
+    // сказки возвращала главу маленького психологического романа — общая
+    // четырёхактная схема выше сама по себе этого не запрещает.
+    genreStructureNote(genresOf(p)),
     // Актуально только когда среди патчимых глав есть глава 1 — эта правка
     // не «изредка полезна», а обязательна: Оценщик структуры может явно
     // прислать «Ставки первой главы»/структурный провал именно в главе 1
