@@ -25,7 +25,11 @@ function escProse(s){
   return norm.split('\n\n').map(p=>esc(p.trim())).filter(Boolean).join('<br><br>');
 }
 
-const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы' };
+// Кодовые (без LLM) проверки — repeat/freshness/boundary/script/rhythm — здесь
+// раньше отсутствовали, и автор видел в списке находок голый ключ роли
+// («boundary», «script») вместо названия. Держать в синхроне с GUARD_LABELS в
+// pipeline.js: там тот же словарь для текста директивы Прозаику.
+const GUARD_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность', rhythm:'Однообразие входов' };
 const _openAgents = new Set();
 
 // Параметры агента (реально влияют на прогон). target:'agent' пишет в агента, 'global' — в state.global.

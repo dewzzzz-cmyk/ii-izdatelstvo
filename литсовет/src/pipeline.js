@@ -11,7 +11,8 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          radicalReviseMessages, parseDebateRevision, styleGuardMessages, readerGuardMessages,
          imageryGuardMessages, povGuardMessages, dialogueGuardMessages, resolutionGuardMessages,
          atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases, findBoundaryRepeat,
-         looksTokenTruncated, coercePassive } from './guards.js';
+         looksTokenTruncated, coercePassive,
+         findMonotonousOpenings, MONOTONY_THRESHOLD } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag, effectiveRules, llmFor } from './state.js';
@@ -48,7 +49,7 @@ function isFactualGuard(state, role){
   return !!(a.custom && a.factual);
 }
 
-const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность'};
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность', rhythm:'Однообразие входов'};
 function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
@@ -875,6 +876,33 @@ export async function runScene(state, scene, opts={}, onProgress){
         flags.boundary = boundaryFound.map(d=>({ severity:'critical', title:'Повтор конца предыдущей сцены',
           detail:'Начало этой сцены почти дословно повторяет конец предыдущей — герой уже сделал это действие, сцена должна продолжить ДАЛЬШЕ, а не пересказывать тот же момент заново.',
           quote:d.quote }));
+      }
+
+      // Однообразный вход в предложение («Он шагнул… Гурьев кивнул… Она
+      // обернулась…»). Тот же класс, что повторы и чужая письменность выше:
+      // считаем сами, без вызова модели. Правило автора об этом существует, но
+      // три прогона подряд не исполнялось — а измеренная находка с номерами
+      // предложений попадает в директиву наравне с критическими, и Прозаику
+      // нечего трактовать: сказано, какие именно фразы перестроить.
+      // Имена — из состояния книги, а не угаданные по тексту: угадывание ломают
+      // падежи, а компенсация падежей даёт ложные срабатывания (см. guards.js).
+      // presentChars сцены + общий список персонажей книги: первый точнее,
+      // второй нужен, когда Архитектор не заполнил presentChars.
+      const имена = [...new Set([...(scene.presentChars||[]),
+                                 ...(state.characters||[]).map(c=>c.name)].filter(Boolean))];
+      const однообразие = findMonotonousOpenings(pRes.text, имена);
+      if(однообразие && однообразие.доля > MONOTONY_THRESHOLD){
+        const показать = однообразие.примеры.slice(0, 12);
+        flags.rhythm = [{
+          severity:'critical',
+          title:`Однообразный вход в предложение: ${однообразие.доля}% фраз`,
+          detail:`${однообразие.однотипных} из ${однообразие.предложений} предложений начинаются с «герой + глагол» (местоимение или имя). У Чехова, Бунина, Куприна на тех же объёмах — 0–1%. Перестрой перечисленные фразы: начни с действия без субъекта, с детали обстановки, с придаточного, с реплики. Не меняй смысл и события — только вход в предложение. Фразы: `
+            + показать.map(p=>`№${p.n} «${p.начало}…»`).join('; ')
+            + (однообразие.примеры.length > показать.length ? ` и ещё ${однообразие.примеры.length - показать.length}` : ''),
+          quote: показать[0]?.начало || '',
+        }];
+        onProgress && onProgress({log:{icon:'🎼',
+          text:`Однообразный вход в предложение: ${однообразие.однотипных} из ${однообразие.предложений} (${однообразие.доля}%, порог ${MONOTONY_THRESHOLD}%) — отправлено Прозаику как обязательная правка`}});
       }
 
       // Клише этого черновика (verdict.cliches) против clichés из ДРУГИХ сцен книги
