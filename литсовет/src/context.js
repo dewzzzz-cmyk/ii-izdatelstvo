@@ -8,7 +8,8 @@ import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
 import { charNamesMatch, effectiveRules } from './state.js';
 import { genreToneNote, genreJudgeNote, humorLevelNote,
-         ageProseNote, ageContentNote, ageJudgeNote } from './genres.js';
+         ageProseNote, ageContentNote, ageJudgeNote,
+         genresOf, multiGenreNote } from './genres.js';
 
 const SEP = '\n\n';
 
@@ -34,9 +35,9 @@ export function serializeCharacterStates(characters, presentNames){
 export function bookContextBlock(state, scene){
   const proj = state.project || {};
   const parts = [];
-  const head = [proj.genre && `Жанр: ${proj.genre}.`, proj.era && `Эпоха: ${proj.era}.`].filter(Boolean).join(' ');
+  const head = [proj.genre && `Жанр: ${genresOf(proj).join(' + ')}.`, proj.era && `Эпоха: ${proj.era}.`].filter(Boolean).join(' ');
   if(head) parts.push(head);
-  const judgeNote = genreJudgeNote(proj.genre);
+  const judgeNote = multiGenreNote(genresOf(proj), genreJudgeNote, '');
   if(judgeNote) parts.push(judgeNote);
   // Возрастная поправка судье: без неё короткая фраза детской книги штрафуется
   // как «бедный язык», а повтор-припев — как повтор-ошибка. Тот же класс
@@ -104,7 +105,7 @@ export function buildSceneContext(state, scene, opts={}){
   // 2. Параметры проекта (жанр/тон) — короткий фикс
   const proj = state.project;
   const projBlock = [
-    proj.genre && `Жанр: ${proj.genre}${proj.subgenre?', '+proj.subgenre:''}.`,
+    proj.genre && `Жанр: ${genresOf(proj).join(' + ')}${proj.subgenre?', '+proj.subgenre:''}.`,
     proj.era && `Эпоха: ${proj.era}.`,
     style.refs && style.refs.length && `Ориентиры стиля: ${style.refs.join(', ')}.`,
   ].filter(Boolean).join(' ');
@@ -302,7 +303,7 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style, chapte
   lines.push('Пример разницы: плохо — «Она испугалась и почувствовала, как её сердце наполнилось ужасом»; хорошо — «Она попятилась, наткнулась на стул и замерла, вцепившись в его спинку». Пиши во втором ключе.');
   // Жанровый тон (не только структура у Архитектора) — что уместно/неуместно
   // на уровне конкретной сцены для жанров со своими конвенциями письма.
-  const toneNote = genreToneNote(proj.genre);
+  const toneNote = multiGenreNote(genresOf(proj), genreToneNote, '');
   if(toneNote) lines.push(toneNote);
   // Явная авторская настройка иронии/юмора поверх жанрового умолчания — см.
   // её комментарий в genres.js. 'auto' ничего не добавляет (тон решает жанр).

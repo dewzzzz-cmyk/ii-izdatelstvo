@@ -28,7 +28,7 @@ import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, sugges
          hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck,
          passivityIsSystemic } from '../bookreview.js';
 import { extractCraftSignature, detectRepeatingHumorPattern, dominantExpositionChannel } from '../craftsignals.js';
-import { GENRES, ERAS, AGE_GROUPS, ageSceneWords } from '../genres.js';
+import { GENRES, ERAS, AGE_GROUPS, ageSceneWords, genresOf, MAX_GENRES } from '../genres.js';
 import { suggestMissingWorldFacts, suggestWorldFacts } from '../world.js';
 import { saveUploadedItem, removeCover, coverHasBakedAuthor } from '../illustrations.js';
 
@@ -265,6 +265,15 @@ export function renderConcept(els){
         <input type="text" id="genreCustom" value="${_showCustom?esc(p.genre):''}" placeholder="Свой жанр…" style="${_showCustom?'':'display:none'}">
       </div>
 
+      <div class="field"><label>Ещё жанры <span class="hint">книга редко бывает ровно одного жанра — можно добавить до двух дополнительных, ведущим остаётся выбранный выше</span></label>
+        <div class="row" style="gap:8px">
+          ${[1,2].map(i=>`<select id="genre${i}" style="flex:1">
+            <option value="">— нет —</option>
+            ${GENRES.filter(g=>g.v && g.v!=='другой').map(g=>`<option value="${esc(g.v)}"${(genresOf(p)[i]||'')===g.v?' selected':''}>${esc(g.label)}</option>`).join('')}
+          </select>`).join('')}
+        </div>
+      </div>
+
       <div class="field"><label>Возраст читателя <span class="hint">задаёт длину фразы, лексику и границы содержания для Прозаика, а Оценщику запрещает штрафовать простой язык как «бедный»</span></label>
         <select id="ageGroup">
           ${AGE_GROUPS.map(a=>`<option value="${esc(a.v)}"${String(p.ageGroup||'')===a.v?' selected':''}>${esc(a.label)}</option>`).join('')}
@@ -449,15 +458,28 @@ export function renderConcept(els){
       } else {
         genreCustom.style.display='none';
         p.genre = v;
+        собратьЖанры();
         if(gd && gd.words){ p.targetWords=gd.words; const tw=document.getElementById('tw'); if(tw) tw.value=gd.words; const h=document.getElementById('twHint'); if(h) h.textContent=sceneCountHint(gd.words, p.sceneWords); }
         save();
       }
     };
   }
-  if(genreCustom) genreCustom.addEventListener('input', e=>{ p.genre=e.target.value; });
+  if(genreCustom) genreCustom.addEventListener('input', e=>{ p.genre=e.target.value; собратьЖанры(); });
   // Возраст читателя. render() после сохранения нужен, чтобы обновилась подсказка
   // о рекомендуемом объёме сцены под селектом — и чтобы автор сразу видел, что
   // выбор что-то меняет, а не просто записался в невидимое поле.
+  // Дополнительные жанры. genres[0] всегда равен ведущему p.genre — весь
+  // остальной код (объём книги, FB2-жанр экспорта, Страж жанра, genreWantsWorld)
+  // читает p.genre напрямую и должен продолжать работать как раньше.
+  const собратьЖанры = ()=>{
+    const доп = [1,2].map(i=>{ const el=document.getElementById('genre'+i); return el?el.value:''; });
+    const все = [p.genre, ...доп].filter(Boolean);
+    p.genres = [...new Set(все)].slice(0, MAX_GENRES);
+  };
+  [1,2].forEach(i=>{
+    const el = document.getElementById('genre'+i);
+    if(el) el.onchange = ()=>{ собратьЖанры(); save(); };
+  });
   const ageSel = document.getElementById('ageGroup');
   if(ageSel) ageSel.onchange = ()=>{ p.ageGroup = ageSel.value; save(); renderConcept(els); };
   bind('seriesTitle', e=>{ p.seriesTitle=e.target.value; });

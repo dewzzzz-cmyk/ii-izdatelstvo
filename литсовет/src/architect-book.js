@@ -4,7 +4,8 @@
 // + Оценщик структуры: после генерации оценивает скелет и даёт рекомендации.
 
 import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
-import { genreBeatsNote, genreWantsHumor, ageProseNote, ageContentNote, ageSceneWords } from './genres.js';
+import { genreBeatsNote, genreWantsHumor, ageProseNote, ageContentNote, ageSceneWords,
+         genresOf, multiGenreNote } from './genres.js';
 import { bibleForPrompt } from './bible.js';
 import { ag, llmFor } from './state.js';
 import { startRun, logStep, endRun } from './diagnostics.js';
@@ -151,7 +152,7 @@ export function bookArchitectMessages(state, opts={}){
   }
 
   const user = [
-    `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
+    `Жанр: ${genresOf(p).join(' + ')||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
     p.era ? `Эпоха: ${p.era}.` : '',
     p.audience ? `Аудитория: ${p.audience}.` : '',
     // Возраст читателя доходит и до СТРУКТУРЫ, а не только до прозы: у детской
@@ -168,7 +169,7 @@ export function bookArchitectMessages(state, opts={}){
     p.seriesSummary ? `Содержание предыдущих книг:\n${p.seriesSummary}` : '',
     `Целевой объём: ${totalWords} слов (~${targetScenes} сцен × ~${wPerScene} слов каждая).`,
     `Раздели на ${targetChapters} глав (~${scenesPerCh} сцен на главу).`,
-    genreBeatsNote(p.genre),
+    multiGenreNote(genresOf(p), genreBeatsNote, ''),
     // Живой пример на «Разломе»: примеры в genreBeatsNote завязаны на магию
     // (профсоюзы драконов, волокита в гильдии) — Архитектор применял иронию
     // ТОЛЬКО к сценам, где на сцене буквально есть магия/гильдия, и полностью
@@ -518,7 +519,7 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
   }).join('\n\n');
 
   const user = [
-    `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
+    `Жанр: ${genresOf(p).join(' + ')||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
     worldBlockPatch ? `МИР КНИГИ (уже зафиксированные факты — не противоречь им):\n${worldBlockPatch}` : '',
     'ФРАГМЕНТ СКЕЛЕТА:',
     chText,

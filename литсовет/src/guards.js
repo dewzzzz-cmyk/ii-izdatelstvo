@@ -22,7 +22,15 @@ export function looksTokenTruncated(text){
   if(!t) return false;
   return !/[.!?…»"”\)]\s*$/.test(t);
 }
-import { genreJudgeNote, genreToneNote } from './genres.js';
+import { genreJudgeNote, genreToneNote, genresOf, multiGenreNote } from './genres.js';
+
+// Стражи исторически принимали genre строкой. Теперь книга может иметь до трёх
+// жанров, и pipeline передаёт массив — хелпер принимает оба вида, чтобы не
+// ломать вызовы из ondemand.js и тестов.
+function genreList(genre){
+  if(Array.isArray(genre)) return genre.filter(Boolean);
+  return genresOf({ genre });
+}
 
 // Строгость 1-3 → инструкция для Стража (реально влияет на число и порог флагов).
 function strictnessLine(strictness){
@@ -280,7 +288,7 @@ function factsBlock(state, scene){
   // установленным фактом/конвенцией в этом жанре, а не логической дырой —
   // без этого Страж флагует жанровую условность как ошибку, которую сам
   // Прозаик получил явное разрешение писать (см. genreToneNote).
-  const judgeNote = genreJudgeNote(state.project?.genre);
+  const judgeNote = multiGenreNote(genresOf(state.project||{}), genreJudgeNote, '');
   if(judgeNote) parts.push(judgeNote);
   const syn = (mem.books&&mem.books.__running__)?mem.books.__running__.current:'';
   if(syn) parts.push('Ранее в книге: '+syn);
@@ -442,7 +450,7 @@ export function readerGuardMessages(scene, draft, strictness, genre){
     // а её поправки для cozy/дамского детектива («не требуй остроты триллера —
     // это не провал ставки») бьют прямо в вопрос 2 ниже про ясность ставки.
     // Без неё Читатель ложно флагал жанрово уместную мягкую ставку как провал.
-    genreJudgeNote(genre),
+    multiGenreNote(genreList(genre), genreJudgeNote, ''),
     strictnessLine(strictness),
   ].filter(Boolean).join('\n');
   const emo = scene.emotion ? `Целевая эмоция читателя в финале: ${scene.emotion}.` : '';
@@ -504,7 +512,7 @@ export function imageryGuardMessages(draft, strictness, genre){
     '3) РАЗЪЕХАВШИЙСЯ РЕГИСТР — образ выбивается тоном или лексикой из сцены (бытовая сцена — и вдруг эпический/наукообразный образ, или наоборот).',
     'Образы в РЕЧИ ПЕРСОНАЖЕЙ (в кавычках, после тире) — голос персонажа, не автора: гипербола, абсурд или скачок регистра там часто нормальны и характерны («да я его сейчас убью», «я тебе тыщу раз говорил»). В диалоге флагуй образ, только если он ломает физику мира самой сцены, а не просто звучит утрированно.',
     'Ты НЕ переписываешь текст и НЕ трогаешь клише (штампы — забота другого стража) — только образы, которые не работают логически или тонально. Явные, осознанные приёмы (гротеск, ирония, сюрреализм сцены) не флагуй.',
-    genreJudgeNote(genre),
+    multiGenreNote(genreList(genre), genreJudgeNote, ''),
     strictnessLine(strictness),
   ].filter(Boolean).join('\n');
   const user = ['ЧЕРНОВИК:', draft, '',
@@ -576,7 +584,7 @@ export function resolutionGuardMessages(draft, strictness, genre){
     // жанрово уместен») бьют прямо в пункт 3 выше («ответ без паузы»), а поправка
     // для юмористической прозы («не штрафуй комическое недопонимание как слабый
     // конфликт») — в пункт 2. Без неё страж ложно флагал жанровый приём.
-    genreJudgeNote(genre),
+    multiGenreNote(genreList(genre), genreJudgeNote, ''),
     strictnessLine(strictness),
   ].filter(Boolean).join('\n');
   const user = ['ЧЕРНОВИК:', draft, '',
@@ -594,7 +602,7 @@ export function atmosphereGuardMessages(draft, strictness, genre){
     'Ты — страж атмосферы мира. Проверяешь, достаточно ли живо и конкретно показано окружение сцены — природа, существа, погода, звуки, запахи — там, где сцена вводит новое или значимое для сюжета место или явление мира книги.',
     'Ты ловишь: место действия или существо, важное для сюжета или новое для читателя (незнакомый ландшафт, чужой мир, необычное создание, погодное явление), упомянуто функционально-абстрактно — одним словом или общей фразой — без сенсорной конкретики, притом что жанр и момент сцены явно располагают к атмосфере.',
     'НЕ флагуй проходные бытовые локации (комната, коридор, кухня), где детальность не нужна и не ожидается — это не твоя забота, у избытка бытовых деталей есть свой страж (ось «Темп» Оценщика). Ты ловишь обратное: недостаток атмосферных, специфичных для МИРА КНИГИ деталей, не бытовых.',
-    genreJudgeNote(genre),
+    multiGenreNote(genreList(genre), genreJudgeNote, ''),
     strictnessLine(strictness),
   ].filter(Boolean).join('\n');
   const user = ['ЧЕРНОВИК:', draft, '',
@@ -613,7 +621,7 @@ export function atmosphereGuardMessages(draft, strictness, genre){
 // реально попадает в HUMOR_GENRES — на остальных жанрах эта проверка либо шум,
 // либо бессмысленная трата токенов (см. genreWantsHumor).
 export function humorGuardMessages(draft, strictness, genre){
-  const tone = genreToneNote(genre) || '';
+  const tone = multiGenreNote(genreList(genre), genreToneNote, '') || '';
   const sys = [
     'Ты — страж тона. Жанр этой книги обещает читателю иронию/юмор как часть контракта — твоя задача не искать ошибки, а проверять, выполнено ли это обещание в конкретной сцене.',
     tone ? 'Жанровый приём, которым Прозаик может пользоваться (справочно, не хвали за сам факт применения — проверяй, применён ли он там, где сцена явно позволяла): ' + tone : '',
@@ -629,7 +637,7 @@ export function humorGuardMessages(draft, strictness, genre){
     // (см. pipeline.js criticals/literaryNotes) — то есть нарушение самого
     // жанрового контракта проходило насквозь. Явно развели порог.
     'severity: critical — если ВСЯ сцена (или её большая часть) сыграна прямо без единой жанровой разрядки, то есть нарушено само обещание жанра, а не отдельный нюанс. warning — если разрядка в сцене где-то есть, но отдельный конкретный момент её упустил.',
-    genreJudgeNote(genre),
+    multiGenreNote(genreList(genre), genreJudgeNote, ''),
     strictnessLine(strictness),
   ].filter(Boolean).join('\n');
   const user = ['ЧЕРНОВИК:', draft, '',

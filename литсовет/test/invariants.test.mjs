@@ -1135,3 +1135,50 @@ test('детская проза: проблему решает ребёнок, �
   }
   assert.match(ageProseNote('3-6'), /три попытки/i, 'правило трёх — основа сюжета для дошкольников');
 });
+
+// ── Несколько жанров в одной книге ──
+// Раньше project.genre была одна строка, а жанровые заметки выбирались первым
+// совпадением includes(): у книги «ироничное фэнтези + детектив» детективная
+// честная игра до Архитектора не доходила вовсе — победившая ветка глушила
+// остальные.
+test('мультижанр: ведущий первый, дубли схлопнуты, лимит соблюдён', async () => {
+  const { genresOf, MAX_GENRES } = await import('../src/genres.js');
+  assert.deepEqual(genresOf({ genre:'детектив', genres:['фэнтези','детектив','комедия'] }),
+    ['детектив','фэнтези','комедия'], 'ведущий обязан быть первым, дубль убран');
+  assert.equal(genresOf({ genre:'детектив', genres:['а','б','в','г'] }).length, MAX_GENRES);
+  assert.deepEqual(genresOf({ genre:'сказка' }), ['сказка'], 'книга без genres[] работает как раньше');
+  assert.deepEqual(genresOf({}), []);
+});
+
+test('мультижанр: требования всех жанров доходят, с явной иерархией', async () => {
+  const { genresOf, multiGenreNote, genreBeatsNote } = await import('../src/genres.js');
+  const n = multiGenreNote(genresOf({ genre:'ироничное фэнтези', genres:['ироничное фэнтези','детектив'] }),
+                           genreBeatsNote, '');
+  assert.match(n, /ВЕДУЩИЙ ЖАНР/, 'без иерархии модель выбирает из противоречивых требований произвольно');
+  assert.match(n, /ироничное фэнтези/);
+  assert.match(n, /честн/i, 'детективная честная игра обязана дойти, а не быть заглушена ведущим жанром');
+});
+
+test('мультижанр: столкновение комического и мрачного разбирается явно', async () => {
+  const { genresOf, multiGenreNote, genreToneNote } = await import('../src/genres.js');
+  const смешанный = multiGenreNote(genresOf({ genre:'юмористическая проза', genres:['юмористическая проза','ужасы'] }),
+                                   genreToneNote, '');
+  assert.match(смешанный, /СОВМЕЩЕНИЕ ЖАНРОВ/,
+    'иначе модель либо держит один регистр и роняет второй жанр, либо мечется и роняет оба');
+  const однородный = multiGenreNote(genresOf({ genre:'ироничный детектив', genres:['ироничный детектив','юмористическая проза'] }),
+                                    genreToneNote, '');
+  assert.doesNotMatch(однородный, /СОВМЕЩЕНИЕ ЖАНРОВ/, 'два комических жанра не конфликтуют');
+});
+
+test('мультижанр: жанры доходят до Прозаика и до Оценщика', async () => {
+  const { buildSceneContext, bookContextBlock } = await import('../src/context.js');
+  const st = {
+    project:{ genre:'ироничное фэнтези', genres:['ироничное фэнтези','детектив'], title:'Т' },
+    style:{ forbidden:[], rules:[] }, voice:{ examples:[] }, bible:[], characters:[],
+    structure:[{ type:'scene', id:'s1', title:'Сцена', brief:'бриф' }],
+    memory:{ scenes:{}, chapters:{} }, global:{ budgetTokens: 128000 },
+  };
+  const проза = JSON.stringify(buildSceneContext(st, st.structure[0], {}));
+  assert.match(проза, /ироничное фэнтези \+ детектив/, 'оба жанра должны быть названы в блоке проекта');
+  assert.match(bookContextBlock(st, st.structure[0]), /ироничное фэнтези \+ детектив/);
+});

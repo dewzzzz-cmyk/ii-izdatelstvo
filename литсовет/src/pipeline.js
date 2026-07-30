@@ -16,6 +16,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag, effectiveRules, llmFor } from './state.js';
+import { genresOf } from './genres.js';
 import { genreWantsHumor } from './genres.js';
 
 let _running = false; // защита от конкурентного прогона (переключение сцены и т.п.)
@@ -400,7 +401,7 @@ export async function runScene(state, scene, opts={}, onProgress){
     const humorLevel = state.style?.humorLevel;
     const wantsHumor = humorLevel==='off' ? false
       : (humorLevel==='light' || humorLevel==='strong') ? true
-      : genreWantsHumor(state.project?.genre);
+      : genreWantsHumor(genresOf(state.project||{}));
     const hasGuards = agentEnabled('voiceguard') || agentEnabled('logic') || agentEnabled('events') ||
       agentEnabled('reader') || agentEnabled('imagery') || agentEnabled('pov') || agentEnabled('dialogue') ||
       agentEnabled('resolution') || agentEnabled('atmosphere') || (agentEnabled('humor') && wantsHumor) ||
@@ -960,21 +961,21 @@ export async function runScene(state, scene, opts={}, onProgress){
               onProgress && onProgress({log:{icon:'🚦', text:'Страж стиля: пропущен — добавьте правила автора в настройках «Голос»', state:'warn'}});
           }
           if(agentEnabled('reader'))
-            guardJobs.push(guardJob(state,'reader', readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness, state.project?.genre), flags, onProgress, scene));
+            guardJobs.push(guardJob(state,'reader', readerGuardMessages(scene, pRes.text, ag(state,'reader').strictness, genresOf(state.project||{})), flags, onProgress, scene));
           if(agentEnabled('imagery'))
-            guardJobs.push(guardJob(state,'imagery', imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'imagery', imageryGuardMessages(pRes.text, ag(state,'imagery').strictness, genresOf(state.project||{})), flags, onProgress));
           if(agentEnabled('pov'))
             guardJobs.push(guardJob(state,'pov', povGuardMessages(pRes.text, ag(state,'pov').strictness), flags, onProgress));
           if(agentEnabled('dialogue'))
             guardJobs.push(guardJob(state,'dialogue', dialogueGuardMessages(pRes.text, ag(state,'dialogue').strictness), flags, onProgress));
           if(agentEnabled('resolution'))
-            guardJobs.push(guardJob(state,'resolution', resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'resolution', resolutionGuardMessages(pRes.text, ag(state,'resolution').strictness, genresOf(state.project||{})), flags, onProgress));
           if(agentEnabled('atmosphere'))
-            guardJobs.push(guardJob(state,'atmosphere', atmosphereGuardMessages(pRes.text, ag(state,'atmosphere').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'atmosphere', atmosphereGuardMessages(pRes.text, ag(state,'atmosphere').strictness, genresOf(state.project||{})), flags, onProgress));
           // Только для иронических жанров (см. genreWantsHumor) — на остальных
           // проверка бессмысленна и просто тратила бы токены на пустой критерий.
           if(agentEnabled('humor') && wantsHumor)
-            guardJobs.push(guardJob(state,'humor', humorGuardMessages(pRes.text, ag(state,'humor').strictness, state.project?.genre), flags, onProgress));
+            guardJobs.push(guardJob(state,'humor', humorGuardMessages(pRes.text, ag(state,'humor').strictness, genresOf(state.project||{})), flags, onProgress));
           (state.agents||[]).filter(a=>a.custom && a.enabled!==false && !a.factual).forEach(a=>{
             guardJobs.push(guardJob(state, a.id, customGuardMessages(state, scene, pRes.text, a.prompt, a.strictness), flags, onProgress));
           });
