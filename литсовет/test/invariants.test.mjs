@@ -9,6 +9,7 @@ import { lineEditMessages, findBoundaryRepeat, readerGuardMessages } from '../sr
 import { charNamesMatch } from '../src/state.js';
 import { typo } from '../src/export.js';
 import { rebuildBibleVecs, factAlreadyInBible, tfvec, tokensOf, cosine, bibleMatches } from '../src/bible.js';
+import { draftBeatsBest } from '../src/pipeline.js';
 
 // factAlreadyInBible/bibleMatches без IDF-веса (плоский tfvec+cosine) считали
 // общие слова между РАЗНЫМИ фактами наравне с единственным различающим словом
@@ -38,6 +39,32 @@ test('IDF-вес: настоящий парафраз ТОГО ЖЕ факта �
   rebuildBibleVecs(bible);
   const dup = factAlreadyInBible({ keys:'Ричард', text:'Ричард служит королю и живёт в замке на холме — он рыцарь.' }, bible);
   assert.equal(dup, true);
+});
+
+// Второй живой прогон «Ящик на причале» (уже с пришпиленной severity Читателя)
+// вскрыл уровень глубже: черновик 1 — 6.5 балла и 1 РЕМЕСЛЕННАЯ критическая
+// (Страж развязки), черновик 2 — 5.8 и ноль критических. Так как `clean` стоит
+// выше балла, победил черновик 2 — на 0.7 хуже, то есть заметно выше шума
+// Оценщика (0.5). Сцена в книге стала 5.7 вместо 6.5. Теперь `clean` считает
+// только ФАКТИЧЕСКИЕ критические (логика/события) — ремесленные решают лишь
+// при равном балле.
+test('best-отбор: ремесленная критическая не перебивает балл выше шума', () => {
+  const черновик1 = { literaryChecked: true, clean: true, scored: true, weighted: 6.5, criticals: 1, questions: 4 };
+  const черновик2 = { literaryChecked: true, clean: true, scored: true, weighted: 5.8, criticals: 0, questions: 1 };
+  assert.equal(draftBeatsBest(черновик2, черновик1), false, 'черновик на 0.7 балла хуже не должен побеждать из-за нуля ремесленных критических');
+});
+
+test('best-отбор: при равном балле ремесленные критические по-прежнему решают', () => {
+  const меньшеКрит = { literaryChecked: true, clean: true, scored: true, weighted: 6.2, criticals: 0, questions: 2 };
+  const большеКрит = { literaryChecked: true, clean: true, scored: true, weighted: 6.4, criticals: 3, questions: 2 };
+  // Δ = 0.2 — внутри шума, значит решает счёт критических.
+  assert.equal(draftBeatsBest(меньшеКрит, большеКрит), true);
+});
+
+test('best-отбор: ФАКТИЧЕСКАЯ ошибка остаётся жёстким вето даже при высоком балле', () => {
+  const сОшибкой = { literaryChecked: true, clean: false, scored: true, weighted: 9.0, criticals: 1, questions: 0 };
+  const чистый = { literaryChecked: true, clean: true, scored: true, weighted: 6.5, criticals: 0, questions: 0 };
+  assert.equal(draftBeatsBest(сОшибкой, чистый), false, 'противоречие в фактах нельзя перевесить балльной красотой');
 });
 
 // Живой прогон «Ящик на причале»: у стража «Читатель» severity не была

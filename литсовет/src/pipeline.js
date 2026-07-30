@@ -769,6 +769,10 @@ export async function runScene(state, scene, opts={}, onProgress){
       // оставался пустым в возвращаемом результате).
       flags = {};
       let criticals = [];
+      // Сколько из criticals — от ФАКТИЧЕСКИХ стражей (логика/события/кастомный
+      // factual) плюс эскалированные фактические вопросы. Отделено от общего
+      // счёта ради thisClean ниже: см. подробное обоснование там.
+      let criticalsFactual = 0;
       let factualQuestions = [];
       let literaryNotes = [];
       // true, если ЭТА итерация прошла полный набор литературных стражей
@@ -952,9 +956,11 @@ export async function runScene(state, scene, opts={}, onProgress){
         const flagList = Object.entries(flags).flatMap(([role,arr])=>(arr||[]).filter(f=>f.severity!=='ok').map(f=>({role,severity:f.severity,title:f.title,detail:f.detail||''})));
         // Критично — от любого стража. severity:'critical' — это ошибка, Прозаик обязан
         // её исправить.
-        criticals = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
+        const criticalEntries = Object.entries(flags).flatMap(([role,arr])=>(arr||[])
           .filter(f=>f.severity==='critical')
-          .map(f=>`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}`));
+          .map(f=>({ role, text:`[${GUARD_LABELS[role]||role}] ${f.title}: ${f.detail||''}` })));
+        criticals = criticalEntries.map(c=>c.text);
+        criticalsFactual = criticalEntries.filter(c=>isFactualGuard(state, c.role)).length;
         // warning от ФАКТИЧЕСКИХ стражей (логика/события/кастомный factual) — это,
         // по их собственному промпту, ПРОБЕЛ-ВОПРОС автору («не выдумывай ответ»),
         // а не ошибка. Раньше приравнивался к critical: Прозаик был вынужден
@@ -1001,6 +1007,9 @@ export async function runScene(state, scene, opts={}, onProgress){
         });
         if(escalatedFactual.length){
           criticals.push(...escalatedFactual.map(f=>`[${GUARD_LABELS[f.role]||f.role}] (повторяется ${FACTUAL_ESCALATE_ITERS}+ итерации без изменений — уже не пробел, а ошибка) ${f.title}: ${f.detail}`));
+          // Эскалированный вопрос фактического стража — по определению
+          // фактическая ошибка, а не вопрос степени: идёт в жёсткое вето.
+          criticalsFactual += escalatedFactual.length;
           onProgress && onProgress({log:{icon:'⚡', text:`Вопрос стражей логики/событий повторился ${FACTUAL_ESCALATE_ITERS}+ раз без ответа — эскалирован в обязательную правку: ${escalatedFactual.map(f=>f.title).join(', ')}`, state:'warn'}});
         }
         const escalatedTitles = new Set(escalatedFactual.map(f=>f.title));
@@ -1061,7 +1070,28 @@ export async function runScene(state, scene, opts={}, onProgress){
       // неотличим от «стражи проверили и всё чисто». Теперь проверенный
       // (пусть и с находками) черновик всегда предпочитается непроверенному —
       // «мы знаем, что не так» лучше, чем «никто не смотрел».
-      const thisClean = criticals.length === 0 && !draftTruncated && !lostAnchors.length && (!agentEnabled('evaluator') || verdict.ok);
+      // criticalsFactual, а НЕ criticals.length: живой прогон 1.72.0 на сцене
+      // «Ящик на причале» показал цену бинарного вето от ремесленного стража.
+      // Черновики: 1 — 6.5 балла и 1 критическая от Стража развязки
+      // («мгновенное принятие невероятного»); 2 — 5.8 балла и НОЛЬ критических;
+      // 3 — 6.2 балла и 2 критические. Так как clean стоит выше балла, победил
+      // черновик 2 — на 0.7 балла ХУЖЕ лучшего, то есть заметно выше шума
+      // Оценщика (EVAL_NOISE=0.5). Сцена в книге стала 5.7 вместо 6.5.
+      //
+      // Причина не в конкретном страже, а в том, что бинарный флаг от шумного
+      // LLM-судьи безусловно перебивал измеренную оценку по 6 осям. Разделяю
+      // по природе находки:
+      //   • ФАКТИЧЕСКИЕ (логика/события/кастомный factual + эскалированные
+      //     вопросы) — реальные ошибки: противоречие, ложный факт, потерянная
+      //     судьба персонажа. Их нельзя «перевесить» балльной красотой —
+      //     остаются жёстким вето, как раньше.
+      //   • РЕМЕСЛЕННЫЕ (развязка/жанр/читатель/образы/POV/диалог/атмосфера) —
+      //     вопросы СТЕПЕНИ («слишком быстро разрешилось», «темп провис»).
+      //     Они по-прежнему идут в criticals → в директиву, Прозаик обязан их
+      //     править, и они по-прежнему решают исход при РАВНОМ балле (тай-брейк
+      //     по criticals внутри EVAL_NOISE, см. draftBeatsBest). Но перебить
+      //     разницу балла выше шума они больше не могут.
+      const thisClean = criticalsFactual === 0 && !draftTruncated && !lostAnchors.length && (!agentEnabled('evaluator') || verdict.ok);
       const этот = { literaryChecked, clean:thisClean, noScore:!agentEnabled('evaluator'),
         scored:!!verdict.ok, weighted:verdict.weighted||0,
         criticals:criticals.length, questions:factualQuestions.length };
