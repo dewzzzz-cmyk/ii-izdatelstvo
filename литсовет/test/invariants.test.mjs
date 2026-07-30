@@ -900,3 +900,38 @@ test('Оценщик: anchorVerdict жив для Δ и детектора ст�
   assert.ok(/anchorVerdict\.weighted/.test(src),
     'убрав якорь из промпта, нельзя заодно потерять Δ в логе — иначе автор перестанет видеть движение оценки');
 });
+
+// Живой прогон 1.75.0 упал на 913-м событии с «styleNotes is not defined».
+// Причина: directiveOpts — замыкание, создаваемое ДО цикла итераций, а
+// `let styleNotes` было объявлено ВНУТРИ тела цикла. Синтаксис валиден,
+// node --check молчит, юнит-тесты buildUnifiedDirective зелёные (они передают
+// styleNotes через opts напрямую) — падает только реальный runScene, то есть
+// самый дорогой способ узнать. Проверка ниже ловит весь класс: каждая
+// переменная, которую читает directiveOpts, должна быть объявлена выше него.
+test('directiveOpts: все читаемые им переменные объявлены до самого замыкания', async () => {
+  const fs = await import('node:fs');
+  // Строки-комментарии выброшены: комментарий у самого объявления пересказывает
+  // историю этого бага и содержит слова «let styleNotes» — без фильтра поиск
+  // объявления находил КОММЕНТАРИЙ выше directiveOpts и всегда был зелёным
+  // (проверено мутацией).
+  const весьФайл = fs.readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8')
+    .split('\n').filter(l=>!l.trim().startsWith('//')).join('\n');
+  // Ищем ТОЛЬКО внутри runScene: одноимённые переменные есть и в
+  // buildUnifiedDirective (там `const styleNotes = opts.styleNotes`), а поиск по
+  // всему файлу находил бы их и всегда выдавал зелёный — проверено мутацией.
+  const рун = весьФайл.indexOf('export async function runScene');
+  assert.ok(рун > 0, 'runScene переименован — обновите проверку');
+  const src = весьФайл.slice(рун);
+  const начало = src.indexOf('const directiveOpts');
+  assert.ok(начало > 0, 'directiveOpts переименован — обновите проверку');
+  const тело = src.slice(начало, src.indexOf('});', начало));
+  // Свойства-шорткаты объекта: `styleNotes,` — то есть чтение внешней переменной.
+  const шорткаты = [...тело.matchAll(/^\s{6}([A-Za-zА-Яа-я_$][\w$]*),\s*(?:\/\/.*)?$/gm)].map(m=>m[1]);
+  assert.ok(шорткаты.length, 'в directiveOpts не осталось шорткатов — проверка перестала что-либо ловить');
+  for(const имя of шорткаты){
+    const объявление = src.search(new RegExp(String.raw`(let|const|var)\s+${имя}\b`));
+    assert.ok(объявление > 0, `${имя} читается в directiveOpts, но нигде не объявлен`);
+    assert.ok(объявление < начало,
+      `${имя} объявлен НИЖЕ directiveOpts — замыкание создаётся раньше, и первый же реальный прогон упадёт с «${имя} is not defined»`);
+  }
+});
