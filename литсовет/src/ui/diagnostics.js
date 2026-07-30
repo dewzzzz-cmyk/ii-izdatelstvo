@@ -4,6 +4,7 @@ import { getState, save, addCustomAgent, removeAgent } from '../state.js';
 import { getRuns, toggleAgent } from '../diagnostics.js';
 import { RUBRIC_AXES } from '../agents.js';
 import { runAgentOnDemand, patchScene, askSceneQuestion } from '../ondemand.js';
+import { isRunning, rejectNoteByAuthor } from '../pipeline.js';
 import { openRuleModal } from './rule-modal.js';
 import { TEXT_PROVIDERS, TEXT_MODEL_OPTIONS, matchTextProvider, priceLabel } from '../providers.js';
 
@@ -161,6 +162,18 @@ const SEV_RANK = { critical:0, warning:1, ok:2 };
 // директивой (у флагов Стражей такой батч уже был). `prefix` даёт каждому
 // списку свои DOM id (flagSelAll/noteSelAll и т.д.), чтобы панели не
 // конфликтовали друг с другом на одной странице.
+// Клик по действию во время прогона молча ничего не делал: обработчики ниже
+// сразу ставили кнопке «⏳ Запускаю…» + disabled и диспатчили litsovet:flag-fix,
+// а тот приводил к doRun(), который начинается с `if(_busy) return;` — тихий
+// выход. Итог: кнопка навсегда оставалась в состоянии «⏳ Запускаю…», хотя не
+// запустилось ничего, и автор не получал ни ошибки, ни объяснения. Проверяем
+// ДО изменения вида кнопки.
+function прогонИдёт(){
+  if(!isRunning()) return false;
+  alert('Уже идёт прогон сцены. Дождитесь конца или нажмите «🛑 Стоп» — тогда сохранится лучший из написанных черновиков.');
+  return true;
+}
+
 function multiSelectToolbarHTML(prefix, count, rewriteLabel){
   if(count<2) return '';
   return `<div class="flags-toolbar" id="${prefix}Toolbar">
@@ -173,6 +186,15 @@ function multiSelectToolbarHTML(prefix, count, rewriteLabel){
            замечаний разом хочется чаще всего (все они про один и тот же
            порок текста). Показывается там же, где остальные, — при выборе. */''}
       <button class="btn" id="${prefix}MultiRule" style="display:none" data-tip="Закрепить выбранные замечания как постоянные правила автора — Прозаик впредь не будет это порождать">⊕ В правило</button>
+      ${/* Четвёртое действие — обратное к «В правило»: не закрепить требование, а
+           погасить его. До этого отклонить находку мог ТОЛЬКО Прозаик (в своём
+           [РАЗБОР]), а автор — нет: несогласная находка возвращалась на каждой
+           итерации и каждом перезапуске, занимая место в бюджете директивы
+           (8 слотов на 17-20 находок). Пишет в тот же scene.rejectedNotes, что
+           и отказы Прозаика, но с byAuthor — решение автора не истекает через
+           три повтора (см. isRejectedNote в pipeline.js). Отменяется кнопкой
+           «↺ показывать снова» в блоке отклонённых ниже. */''}
+      <button class="btn" id="${prefix}MultiReject" style="display:none" data-tip="Это осознанный приём, а не ошибка: погасить выбранные замечания — Стражи больше не будут их поднимать, и они не будут занимать место в директиве Прозаику">✕ Это приём</button>
     </div>`;
 }
 
@@ -198,6 +220,7 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
     const countEl=document.getElementById(prefix+'SelCount');
     const rwBtn=document.getElementById(prefix+'MultiRewrite');
     const ruleBtn=document.getElementById(prefix+'MultiRule');
+    const rejBtn=document.getElementById(prefix+'MultiReject');
     const bar=document.getElementById(prefix+'Toolbar');
     if(n>0){
       countEl.textContent=`${n} выбрано`;
@@ -205,9 +228,11 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
       rwBtn.style.display=''; rwBtn.dataset.baseLabel = rwBtn.dataset.baseLabel || rwBtn.textContent;
       rwBtn.textContent=`${rwBtn.dataset.baseLabel} (${n})`;
       if(ruleBtn){ ruleBtn.style.display=''; ruleBtn.textContent=`⊕ В правило (${n})`; }
+      if(rejBtn){ rejBtn.style.display=''; rejBtn.textContent=`✕ Это приём (${n})`; }
     } else {
       countEl.textContent=''; fixBtn.style.display='none'; rwBtn.style.display='none';
       if(ruleBtn) ruleBtn.style.display='none';
+      if(rejBtn) rejBtn.style.display='none';
     }
     // Панель липкая (см. .flags-toolbar в styles.css) и подсвечивается, когда
     // в ней появились действия — иначе при прокрутке длинного списка она
@@ -240,6 +265,7 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
   fixBtn.onclick=()=>{
     const d=combinedDirective(); if(!d) return;
     if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+    if(прогонИдёт()) return;
     fixBtn.textContent='⏳ Запускаю…'; fixBtn.disabled=true;
     document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d}}));
   };
@@ -249,6 +275,7 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
     if(rwBtn.dataset.confirmed==='1'){
       const d=combinedDirective(); if(!d) return;
       if(!getState().global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
+      if(прогонИдёт()) return;
       rwBtn.textContent='⏳ Запускаю…'; rwBtn.disabled=true;
       document.dispatchEvent(new CustomEvent('litsovet:flag-fix', {detail:{directive:d, rewrite:true}}));
       return;
@@ -281,6 +308,43 @@ function bindMultiSelectToolbar(prefix, cbClass, parentClass){
     };
     дальше();
   };
+
+  // «✕ Это приём» — гасит выбранные замечания решением автора. Не требует
+  // подтверждения в два клика (в отличие от «Переписать»): действие
+  // неразрушительное — текст не меняется, а сами записи видны в блоке
+  // «Отклонено как приём» ниже и снимаются кнопкой «↺ показывать снова».
+  // Прогон при этом не запускается, значит проверка прогонИдёт() не нужна:
+  // отклонить находку можно и во время работы петли, к следующей итерации
+  // фильтр её уже учтёт.
+  const rejBtn=document.getElementById(prefix+'MultiReject');
+  if(rejBtn) rejBtn.onclick=()=>{
+    const выбранные=[...document.querySelectorAll('.'+cbClass+':checked')];
+    const тексты=выбранные.map(c=>c.dataset.fix).filter(Boolean);
+    if(!тексты.length) return;
+    // Критические находки НЕ глушатся — так решено в pipeline.js («отказ
+    // возможен для warning: там цена ошибки несопоставима»). Молча
+    // «погасить» их и оставить видимыми было бы тем же тихим no-op, что мы
+    // чиним в этом же коммите: говорим прямо, до того как автор решит, что
+    // вопрос закрыт.
+    const критических=выбранные.filter(c=>c.dataset.sev==='critical').length;
+    if(критических && !confirm(`Из выбранных ${критических} — критические. Они не гасятся: критическую находку видно всегда, иначе ошибка уйдёт в книгу молча. Погасить остальные?`)) return;
+    const s=getState();
+    // Та же адресация текущей сцены, что и во всём UI (s.ui.activeScene) —
+    // панель «Анализ сцены» всегда показывает именно её.
+    const scene=(s.structure||[]).find(n=>n.id===s.ui?.activeScene);
+    if(!scene){ alert('Сцена не выбрана.'); return; }
+    let n=0;
+    выбранные.forEach(c=>{
+      if(c.dataset.sev==='critical') return;      // см. confirm выше
+      if(rejectNoteByAuthor(scene, c.dataset.fix)) n++;
+    });
+    rejBtn.textContent=`✓ погашено: ${n}`;
+    rejBtn.disabled=true;
+    // save() тянет за собой render() — отклонённые сразу уходят из списка
+    // флагов и появляются в блоке «Отклонено как приём» ниже. Без перерисовки
+    // автор видел бы старый список и не понимал, применилось ли действие.
+    save();
+  };
 }
 
 function renderFlags(scene){
@@ -296,7 +360,7 @@ function renderFlags(scene){
     ${multiSelectToolbarHTML('flag', fixable, 'Переписать все')}
     <div class="flags-list" id="flagsList">
       ${all.map((f,i)=>`<div class="flag-item${f.severity!=='ok'?' flag-selectable':''}" data-fi="${i}">
-        ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+(f.detail||''))}" data-fi="${i}"></label>`:''}
+        ${f.severity!=='ok'?`<label class="flag-cb-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="flag-cb" data-fix="${esc(f.title+': '+(f.detail||''))}" data-sev="${f.severity}" data-fi="${i}"></label>`:''}
         <div class="flag-head"><span class="flag-sev sev-${f.severity}">${f.severity==='critical'?'критич':f.severity==='warning'?'предупр':'норма'}</span>
           <span class="flag-role">${GUARD_LABELS[f.role] || (getState().agents.find(a=>a.id===f.role)?.name) || f.role}</span></div>
         <div class="flag-title">${esc(f.title)}</div>
@@ -343,12 +407,17 @@ function renderRejectedNotes(scene){
   // художественный выбор, три подряд — увиливание, и с третьего замечание
   // перестаёт глушиться (REJECT_STUBBORN_TIMES в pipeline.js). Без счётчика
   // «отклонил один раз» и «отклонил трижды» выглядели в панели одинаково.
-  const упрямых = rn.filter(r => (r.count||1) >= 3).length;
-  return `<div class="rn-block" data-tip="Прозаик мотивированно отказался вносить эти правки (посчитал их художественным приёмом) — Стражи больше не подсвечивают их повторно. Замечание, отклонённое три раза подряд, снова становится видимым.">
-    <div class="rn-head"><span>🖋 Отклонено автором как приём (${rn.length})${упрямых?` · ${упрямых} возвращено в работу`:''}</span><button class="btn" id="rnClear" style="font-size:11px;padding:2px 8px">↺ показывать снова</button></div>
+  // Счётчик-до-трёх относится ТОЛЬКО к отказам Прозаика. Отклонения автора
+  // (byAuthor, кнопка «✕ Это приём») постоянны и в «возвращённые в работу» не
+  // попадают — иначе счётчик обещал бы возврат того, что не вернётся.
+  const упрямых = rn.filter(r => !r.byAuthor && (r.count||1) >= 3).length;
+  const авторских = rn.filter(r => r.byAuthor).length;
+  return `<div class="rn-block" data-tip="Отклонённые замечания — Стражи больше не подсвечивают их повторно. Отказ ПРОЗАИКА (он посчитал это художественным приёмом) снимается сам, если повторился три раза подряд: тогда это уже не выбор, а увиливание. Ваше собственное решение («✕ Это приём») постоянно и снимается только кнопкой «↺ показывать снова».">
+    <div class="rn-head"><span>🖋 Отклонено как приём (${rn.length})${авторских?` · ${авторских} вами`:''}${упрямых?` · ${упрямых} возвращено в работу`:''}</span><button class="btn" id="rnClear" style="font-size:11px;padding:2px 8px">↺ показывать снова</button></div>
     <div class="rn-list">${rn.slice(-8).map(r=>{
       const c = r.count||1;
-      const метка = c>=3 ? ` <b style="color:var(--warn,#c9a227)">×${c} — снова видимо</b>` : (c>1?` <span style="opacity:.7">×${c}</span>`:'');
+      const метка = r.byAuthor ? ` <b style="color:var(--ok,#2a7a2a)">— ваше решение</b>`
+        : c>=3 ? ` <b style="color:var(--warn,#c9a227)">×${c} — снова видимо</b>` : (c>1?` <span style="opacity:.7">×${c}</span>`:'');
       return `<div class="rn-item">«${esc(r.quote)}»${r.reason?` — ${esc(r.reason)}`:''}${метка}</div>`;
     }).join('')}</div>
   </div>`;

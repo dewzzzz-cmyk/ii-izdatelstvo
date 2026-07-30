@@ -121,10 +121,14 @@ export function anchorsLostBy(before, after, anchors){
 // может остаться без ответа, прежде чем перестать быть необязательным пробелом и
 // стать обязательной правкой (см. FACTUAL_ESCALATE_ITERS ниже по файлу).
 const FACTUAL_ESCALATE_ITERS = 3;
+// Запись об отклонении, похожая на это замечание (или undefined).
+function findRejectedNote(text, rejectedNotes){
+  if(!rejectedNotes || !rejectedNotes.length || !text) return undefined;
+  return rejectedNotes.find(x => noteSimilarity(text, x.quote + ' ' + (x.reason||'')) >= REJECT_SIM_THRESHOLD);
+}
 // Сколько раз это замечание уже отклоняли (0 — ни разу).
 function rejectedCount(text, rejectedNotes){
-  if(!rejectedNotes || !rejectedNotes.length || !text) return 0;
-  const rn = rejectedNotes.find(x => noteSimilarity(text, x.quote + ' ' + (x.reason||'')) >= REJECT_SIM_THRESHOLD);
+  const rn = findRejectedNote(text, rejectedNotes);
   return rn ? (rn.count||1) : 0;
 }
 // Отклонённое замечание глушится, пока отказ выглядит как художественный
@@ -134,8 +138,32 @@ function rejectedCount(text, rejectedNotes){
 // стражей, просто применён ко всем замечаниям.
 const REJECT_STUBBORN_TIMES = 3;
 function isRejectedNote(text, rejectedNotes){
-  const n = rejectedCount(text, rejectedNotes);
+  const rn = findRejectedNote(text, rejectedNotes);
+  if(!rn) return false;
+  // Отклонение АВТОРА (кнопка «✕ Это приём» в панели «Анализ сцены») не
+  // истекает. Счётчик-до-трёх выше — про отказы ПРОЗАИКА: три отказа подряд от
+  // модели читаются как увиливание от правки, и замечание возвращается в
+  // работу. К решению живого автора это правило неприменимо: он не увиливает,
+  // а распоряжается своим текстом, и возвращать ему одно и то же на каждой
+  // итерации — значит спорить с ним его же деньгами (каждый круг платный).
+  // Отменяется кнопкой «↺ показывать снова» в той же панели.
+  if(rn.byAuthor) return true;
+  const n = rn.count||1;
   return n > 0 && n < REJECT_STUBBORN_TIMES;
+}
+// Отклонение замечания РУКОЙ АВТОРА (кнопка в панели «Анализ сцены»). Отдельно
+// от rememberRejected: у автора нет «счётчика упрямства», его решение
+// постоянно (см. byAuthor в isRejectedNote), а текст замечания приходит из UI
+// как единая строка «заголовок: детали», без разбора на quote/reason.
+export function rejectNoteByAuthor(scene, text){
+  const t = String(text||'').trim();
+  if(!t) return false;
+  scene.rejectedNotes = scene.rejectedNotes || [];
+  const прежний = scene.rejectedNotes.find(rn => noteSimilarity(rn.quote, t) >= REJECT_SIM_THRESHOLD);
+  if(прежний){ прежний.byAuthor = true; прежний.ts = Date.now(); }
+  else scene.rejectedNotes.push({ quote:t, reason:'', ts:Date.now(), count:1, byAuthor:true });
+  if(scene.rejectedNotes.length > 30) scene.rejectedNotes = scene.rejectedNotes.slice(-30);
+  return true;
 }
 // Запоминает вновь отклонённые пункты на сцене (дедуп против уже сохранённых).
 // Экспортирована — переиспользуется из ondemand.js (patchScene), чтобы

@@ -9,7 +9,7 @@ import { lineEditMessages, findBoundaryRepeat, readerGuardMessages } from '../sr
 import { charNamesMatch } from '../src/state.js';
 import { typo } from '../src/export.js';
 import { rebuildBibleVecs, factAlreadyInBible, tfvec, tokensOf, cosine, bibleMatches } from '../src/bible.js';
-import { draftBeatsBest } from '../src/pipeline.js';
+import { draftBeatsBest, rejectNoteByAuthor, rememberRejected } from '../src/pipeline.js';
 
 // factAlreadyInBible/bibleMatches без IDF-веса (плоский tfvec+cosine) считали
 // общие слова между РАЗНЫМИ фактами наравне с единственным различающим словом
@@ -48,6 +48,35 @@ test('IDF-вес: настоящий парафраз ТОГО ЖЕ факта �
 // Оценщика (0.5). Сцена в книге стала 5.7 вместо 6.5. Теперь `clean` считает
 // только ФАКТИЧЕСКИЕ критические (логика/события) — ремесленные решают лишь
 // при равном балле.
+// Кнопка «✕ Это приём»: у автора до этого не было способа погасить находку, с
+// которой он не согласен — она возвращалась на каждой итерации и занимала место
+// в бюджете директивы. Счётчик «три отказа = увиливание» относится к отказам
+// ПРОЗАИКА и к решению автора неприменим: он не увиливает, а распоряжается
+// своим текстом.
+test('отклонение автора помечается byAuthor и не дублируется при повторе', () => {
+  const scene = {};
+  const t = 'Разжёвывание образа луны: текст дважды объясняет, что это значит';
+  rejectNoteByAuthor(scene, t);
+  assert.equal(scene.rejectedNotes.length, 1);
+  assert.equal(scene.rejectedNotes[0].byAuthor, true);
+  rejectNoteByAuthor(scene, t);
+  assert.equal(scene.rejectedNotes.length, 1, 'повторное отклонение того же не создаёт вторую запись');
+});
+
+test('отклонение автора переживает три отказа Прозаика (не истекает)', () => {
+  const scene = {};
+  const t = 'Потеря темпа в середине: описание ночных размышлений затянуто';
+  rejectNoteByAuthor(scene, t);
+  for (let i = 0; i < 3; i++) rememberRejected(scene, [{ quote: t, reason: 'приём' }]);
+  assert.equal(scene.rejectedNotes[0].byAuthor, true, 'флаг автора не должен стираться отказами Прозаика');
+});
+
+test('пустой текст не создаёт запись об отклонении', () => {
+  const scene = {};
+  assert.equal(rejectNoteByAuthor(scene, '   '), false);
+  assert.equal(scene.rejectedNotes, undefined);
+});
+
 test('best-отбор: ремесленная критическая не перебивает балл выше шума', () => {
   const черновик1 = { literaryChecked: true, clean: true, scored: true, weighted: 6.5, criticals: 1, questions: 4 };
   const черновик2 = { literaryChecked: true, clean: true, scored: true, weighted: 5.8, criticals: 0, questions: 1 };
