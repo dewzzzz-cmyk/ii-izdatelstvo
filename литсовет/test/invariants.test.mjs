@@ -1039,3 +1039,60 @@ test('монотонность: падежные формы короткого �
   const r = findMonotonousOpenings(текст, ['Вера']);
   assert.equal(r.однотипных, 3, 'настоящие падежные формы имени обязаны считаться');
 });
+
+// ── Возраст читателя ──
+// Разбор 30.07.2026: поле project.audience подставлялось в Архитектора книги,
+// рецензию и иллюстрации, но (1) в интерфейсе не было поля ввода вообще, (2) в
+// context.js — там, где собирается промпт Прозаика, — не участвовало. Книга для
+// шестилетних писалась взрослым языком, и починить это автор не мог никак.
+function состояниеСВозрастом(ageGroup){
+  return {
+    project:{ genre:'сказка', title:'Т', ageGroup },
+    style:{ forbidden:[], rules:[] }, voice:{ examples:[] }, bible:[], characters:[],
+    structure:[{ type:'scene', id:'s1', title:'Сцена', brief:'бриф' }],
+    memory:{ scenes:{}, chapters:{} }, global:{ budgetTokens: 128000 },
+  };
+}
+
+test('возраст доходит до ПРОЗАИКА и объявлен главнее общих требований', async () => {
+  const { buildSceneContext } = await import('../src/context.js');
+  const st = состояниеСВозрастом('3-6');
+  const весь = JSON.stringify(buildSceneContext(st, st.structure[0], {}));
+  assert.match(весь, /5–9 слов/, 'требование к длине фразы должно дойти до промпта прозы');
+  assert.match(весь, /ГЛАВНЕЕ ОБЩИХ ТРЕБОВАНИЙ/,
+    'общие требования написаны под взрослую прозу и противоречат детской — приоритет должен быть объявлен явно');
+  assert.match(весь, /никакой смерти в кадре/, 'границы содержания должны дойти вместе с языком');
+});
+
+test('без возраста промпт прозы не меняется', async () => {
+  const { buildSceneContext } = await import('../src/context.js');
+  const st = состояниеСВозрастом('');
+  const весь = JSON.stringify(buildSceneContext(st, st.structure[0], {}));
+  assert.doesNotMatch(весь, /ВОЗРАСТ ЧИТАТЕЛЯ/,
+    'взрослая книга не должна получать возрастных ограничений');
+});
+
+test('возрастная поправка доходит до ОЦЕНЩИКА', async () => {
+  const { bookContextBlock } = await import('../src/context.js');
+  const st = состояниеСВозрастом('7-10');
+  const блок = bookContextBlock(st, st.structure[0]);
+  assert.match(блок, /ВОЗРАСТНАЯ ПОПРАВКА/,
+    'без неё судья штрафует короткую фразу детской книги как «бедный язык» — то же трение, что было с жанровыми поправками');
+});
+
+test('объём сцены: возраст задаёт автоформулу, но не перебивает выбор автора', async () => {
+  const { ageSceneWords } = await import('../src/genres.js');
+  assert.equal(ageSceneWords('3-6'), 250);
+  assert.equal(ageSceneWords('18+'), null, 'взрослой книге возрастной объём не навязывается');
+  assert.equal(ageSceneWords(''), null);
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/architect-book.js', import.meta.url), 'utf8');
+  const автоветки = src.match(/ageSceneWords\(p\.ageGroup\)\s*\|\|/g) || [];
+  assert.equal(автоветки.length, 3,
+    'все три места расчёта объёма сцены должны учитывать возраст — иначе перегенерация главы вернёт взрослый объём');
+  // Возраст обязан жить в else-ветке (после «:»), а не в ветке ручного
+  // sceneWords: осознанный выбор автора перебивать нельзя. Проверяем именно
+  // then-ветку — от «?» до «:», — а не соседство слов в тексте.
+  assert.doesNotMatch(src, /\?\s*Math\.max\(300[^:]*ageSceneWords/,
+    'явный sceneWords автора возраст перебивать не должен');
+});

@@ -7,7 +7,8 @@ import { bibleForPrompt, bibleMatches, formatBibleEntries } from './bible.js';
 import { voicePromptBlock } from './voice.js';
 import { activeSceneSummaries, runningSynopsis } from './memory.js';
 import { charNamesMatch, effectiveRules } from './state.js';
-import { genreToneNote, genreJudgeNote, humorLevelNote } from './genres.js';
+import { genreToneNote, genreJudgeNote, humorLevelNote,
+         ageProseNote, ageContentNote, ageJudgeNote } from './genres.js';
 
 const SEP = '\n\n';
 
@@ -37,6 +38,12 @@ export function bookContextBlock(state, scene){
   if(head) parts.push(head);
   const judgeNote = genreJudgeNote(proj.genre);
   if(judgeNote) parts.push(judgeNote);
+  // Возрастная поправка судье: без неё короткая фраза детской книги штрафуется
+  // как «бедный язык», а повтор-припев — как повтор-ошибка. Тот же класс
+  // трения, что genreJudgeNote против genreToneNote: Прозаик получил
+  // требование писать так, судья об этом требовании не знает.
+  const ageJudge = ageJudgeNote(proj.ageGroup);
+  if(ageJudge) parts.push(ageJudge);
   const synopsis = runningSynopsis(state) || proj.synopsis || proj.idea;
   if(synopsis) parts.push('Сюжет: ' + synopsis);
   const chars = serializeCharacterStates(state.characters, scene.presentChars);
@@ -301,6 +308,19 @@ function buildTask(scene, proj, opts, isFirstScene, prevSceneNode, style, chapte
   // её комментарий в genres.js. 'auto' ничего не добавляет (тон решает жанр).
   const humorNote = humorLevelNote(style?.humorLevel);
   if(humorNote) lines.push(humorNote);
+  // Возраст читателя. Идёт ПОСЛЕ общих требований к прозе и жанрового тона и
+  // явно объявлен главнее них: общие требования написаны под взрослую прозу
+  // («варьируй длину предложений», «без прямо названных чувств»), и для книги
+  // шестилетнему они прямо противоречат нужному. До этой правки возраст в
+  // промпт Прозаика не попадал вообще — поля ввода не было в интерфейсе, а
+  // context.js его и не читал, так что детская книга писалась взрослым языком.
+  const ageProse = ageProseNote(proj.ageGroup);
+  const ageContent = ageContentNote(proj.ageGroup);
+  if(ageProse || ageContent){
+    lines.push('ВОЗРАСТ ЧИТАТЕЛЯ — ГЛАВНЕЕ ОБЩИХ ТРЕБОВАНИЙ ВЫШЕ. Там, где требования к прозе или тон жанра противоречат написанному ниже, выполняй написанное ниже.');
+    if(ageProse) lines.push(ageProse);
+    if(ageContent) lines.push(ageContent);
+  }
   lines.push(opts.prevSceneText
     ? 'Финал сцены: посмотри, каким приёмом заканчивается «ПРЕДЫДУЩАЯ СЦЕНА» в контексте — если она уже завершается коротким зеркальным предложением и уходом в тишину/темноту, в этот раз закончи иначе (репликой, действием, конкретной деталью, вопросом без ответа).'
     : 'Финал сцены: не завершай сцену дежурным приёмом «короткое зеркальное предложение + тишина/темнота» — выбери другой способ поставить точку.');

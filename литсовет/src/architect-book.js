@@ -4,7 +4,7 @@
 // + Оценщик структуры: после генерации оценивает скелет и даёт рекомендации.
 
 import {callLLM, extractJSON, assertNotTruncated } from './llm.js';
-import { genreBeatsNote, genreWantsHumor } from './genres.js';
+import { genreBeatsNote, genreWantsHumor, ageProseNote, ageContentNote, ageSceneWords } from './genres.js';
 import { bibleForPrompt } from './bible.js';
 import { ag, llmFor } from './state.js';
 import { startRun, logStep, endRun } from './diagnostics.js';
@@ -90,9 +90,15 @@ export function bookArchitectMessages(state, opts={}){
   // авторский оверрайд (project.sceneWords) — тогда диапазон шире (300-4000):
   // осознанный выбор автора не зажимаем той же вилкой, что защищает только
   // автоформулу от вырожденных случаев общего объёма (спека §12.1).
+  // Возрастной объём сцены встроен ТОЛЬКО в автоветку: явный p.sceneWords —
+  // осознанный выбор автора, его перебивать нельзя. Автоформула же не опускается
+  // ниже 700 слов, а сцена книги для 3–6 лет — это ~250: без этой ветки
+  // Архитектор ставил детской книге объём взрослого романа, и дальше вся
+  // цепочка (Прозаик, проверка недобора длины, откат короткого черновика)
+  // тянула текст к взрослому размеру, сколько бы ни просили «пиши проще».
   const wPerScene = p.sceneWords>0
     ? Math.max(300, Math.min(4000, p.sceneWords))
-    : Math.max(700, Math.min(2000, Math.round(totalWords / 60)));
+    : (ageSceneWords(p.ageGroup) || Math.max(700, Math.min(2000, Math.round(totalWords / 60))));
   const targetScenes = Math.max(6, Math.round(totalWords / wPerScene));
   // При «Улучшении» (opts.previousSkeleton) книга уже разбита на реальные
   // главы/сцены — просить «раздели на N глав» по формуле общего объёма
@@ -148,6 +154,14 @@ export function bookArchitectMessages(state, opts={}){
     `Жанр: ${p.genre||'роман'}${p.subgenre?', '+p.subgenre:''}.`,
     p.era ? `Эпоха: ${p.era}.` : '',
     p.audience ? `Аудитория: ${p.audience}.` : '',
+    // Возраст читателя доходит и до СТРУКТУРЫ, а не только до прозы: у детской
+    // книги другой масштаб события в сцене и другие допустимые повороты. Без
+    // этого Архитектор строил скелет взрослого романа и для шестилетних, а
+    // Прозаик потом получал бриф со смертью в кадре и честно его исполнял —
+    // возрастное ограничение в промпте прозы не спасало, потому что событие
+    // было уже заложено в задании.
+    ageProseNote(p.ageGroup) ? 'ВОЗРАСТ ЧИТАТЕЛЯ — учитывай при выборе событий, поворотов и масштаба сцены. ' + ageProseNote(p.ageGroup) : '',
+    ageContentNote(p.ageGroup),
     `Идея/синопсис: ${p.synopsis || p.idea || '(не задан)'}`,
     p.type==='series' ? `Серия: «${p.seriesTitle||'(без названия)'}» — книга ${p.seriesBook||1} из ${p.seriesTotal||3}.` : '',
     seriesArcNote,
@@ -318,7 +332,7 @@ export async function runBookArchitect(state, opts={}){
   // провоцируя обрезание JSON именно тогда, когда включён sceneWords.
   const wPerScene = p.sceneWords>0
     ? Math.max(300, Math.min(4000, p.sceneWords))
-    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
+    : (ageSceneWords(p.ageGroup) || Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60))));
   const targetScenes = Math.max(6, Math.round((p.targetWords||80000) / wPerScene));
   // При «Улучшении» формула-предсказание может недооценить фактический размер
   // книги — живой пример: формула по общему объёму предсказала 60 сцен
@@ -459,7 +473,7 @@ export function bookArchitectPatchMessages(state, { affectedChapters, hint }){
 
   const wPerScene = p.sceneWords>0
     ? Math.max(300, Math.min(4000, p.sceneWords))
-    : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60)));
+    : (ageSceneWords(p.ageGroup) || Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/60))));
   const wMin = Math.round(wPerScene*0.80), wMax = Math.round(wPerScene*1.20);
 
   const sys = [

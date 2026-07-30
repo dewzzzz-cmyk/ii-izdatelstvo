@@ -28,7 +28,7 @@ import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, sugges
          hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck,
          passivityIsSystemic } from '../bookreview.js';
 import { extractCraftSignature, detectRepeatingHumorPattern, dominantExpositionChannel } from '../craftsignals.js';
-import { GENRES, ERAS } from '../genres.js';
+import { GENRES, ERAS, AGE_GROUPS, ageSceneWords } from '../genres.js';
 import { suggestMissingWorldFacts, suggestWorldFacts } from '../world.js';
 import { saveUploadedItem, removeCover, coverHasBakedAuthor } from '../illustrations.js';
 
@@ -265,6 +265,13 @@ export function renderConcept(els){
         <input type="text" id="genreCustom" value="${_showCustom?esc(p.genre):''}" placeholder="Свой жанр…" style="${_showCustom?'':'display:none'}">
       </div>
 
+      <div class="field"><label>Возраст читателя <span class="hint">задаёт длину фразы, лексику и границы содержания для Прозаика, а Оценщику запрещает штрафовать простой язык как «бедный»</span></label>
+        <select id="ageGroup">
+          ${AGE_GROUPS.map(a=>`<option value="${esc(a.v)}"${String(p.ageGroup||'')===a.v?' selected':''}>${esc(a.label)}</option>`).join('')}
+        </select>
+        ${ageSceneWords(p.ageGroup) ? `<div class="hint" style="margin-top:4px">Рекомендуемый объём сцены для этого возраста — около ${ageSceneWords(p.ageGroup)} слов.</div>` : ''}
+      </div>
+
       <div class="field"><label>Режим работы</label>
         <div class="mode-switch" id="modeSwitch">
           <div class="mode-opt ${p.mode==='director'?'sel':''}" data-mode="director">Режиссёр<small>обязательная правка рукой · стоп после каждой главы</small></div>
@@ -448,6 +455,11 @@ export function renderConcept(els){
     };
   }
   if(genreCustom) genreCustom.addEventListener('input', e=>{ p.genre=e.target.value; });
+  // Возраст читателя. render() после сохранения нужен, чтобы обновилась подсказка
+  // о рекомендуемом объёме сцены под селектом — и чтобы автор сразу видел, что
+  // выбор что-то меняет, а не просто записался в невидимое поле.
+  const ageSel = document.getElementById('ageGroup');
+  if(ageSel) ageSel.onchange = ()=>{ p.ageGroup = ageSel.value; save(); renderConcept(els); };
   bind('seriesTitle', e=>{ p.seriesTitle=e.target.value; });
   bind('seriesBook',  e=>{
     p.seriesBook=Math.max(1,parseInt(e.target.value)||1);

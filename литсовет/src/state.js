@@ -7,7 +7,7 @@ import { TEXT_PROVIDERS, matchTextProvider, MODEL_PRICES } from './providers.js'
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.76.2';
+export const APP_VERSION = '1.77.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Единый источник —
 // providers.js (та же таблица кормит подсказку цены прямо в селекте модели,
@@ -28,6 +28,12 @@ export function defaultState(){
       author: '',              // имя на обложке и в метаданных EPUB
       idea: '',                // «о чём книга» — один вопрос онбординга
       genre: '', subgenre: '', audience: '', era: '',
+      // Возраст читателя по фиксированной шкале (AGE_GROUPS в genres.js).
+      // Отдельно от свободного audience: из строки «для детей» нельзя вывести
+      // ни длину фразы, ни границы содержания, а из '3-6' — можно. audience
+      // остаётся как есть (маркетинговое описание аудитории для рецензии и
+      // обложки), ageGroup управляет самой прозой.
+      ageGroup: '',
       synopsis: '',
       coverDataUrl: '',        // обложка (dataURL jpeg/png) — попадает в EPUB
       bookUuid: '',            // постоянный уникальный идентификатор книги (dc:identifier)
