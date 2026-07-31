@@ -13,7 +13,7 @@ import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './d
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup, capBibleSize } from '../memory.js';
-import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords, findGhostCharacters } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords, findGhostCharacters, FRAME_ARCS } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter, isChapterLocked } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -2504,15 +2504,24 @@ function exportStructurePdf(s){
   const totalScenes = (s.structure||[]).filter(n=>n.type==='scene').length;
   const totalWords = (s.structure||[]).filter(n=>n.type==='scene').reduce((a,n)=>a+(n.targetWords||0),0);
 
+  // Номер главы считаем БЕЗ рамочных глав: пролог не «Глава 1», и следующая
+  // за ним завязка должна остаться первой главой книги, а не второй.
+  let номерГлавы = 0;
   const structureHtml = !chapters.length ? '<p class="muted">Скелет ещё не сгенерирован.</p>' : chapters.map((ch,ci)=>{
+    const рамка = FRAME_ARCS.has(ch.arc);
+    if(!рамка) номерГлавы++;
+    const nCh = номерГлавы;
     const scenesHtml = scenesOf(ch.id).map((sc,si)=>`
       <div class="skel-scene">
-        <div class="skel-scene-h">${ci+1}.${si+1}. «${esc(sc.title)}» <span class="skel-tag">${sc.sceneType==='sequel'?'секвель':'сцена'}</span> <span class="skel-tag">~${sc.targetWords||0} сл.</span></div>
+        <div class="skel-scene-h">${рамка ? '' : nCh+'.'}${si+1}. «${esc(sc.title)}» <span class="skel-tag">${sc.sceneType==='sequel'?'секвель':'сцена'}</span> <span class="skel-tag">~${sc.targetWords||0} сл.</span></div>
         ${sc.brief?`<div class="skel-field"><b>Бриф:</b> ${esc(sc.brief)}</div>`:''}
         ${sc.emotion?`<div class="skel-field"><b>Эмоция:</b> ${esc(sc.emotion)}</div>`:''}
         ${sc.entryState?`<div class="skel-field"><b>На входе:</b> ${esc(sc.entryState)}</div>`:''}
       </div>`).join('');
-    return `<div class="skel-chapter"><h3>Глава ${ci+1}: ${esc(ch.title)} <span class="skel-tag">${esc(ch.arc||'')}</span></h3>${scenesHtml}</div>`;
+    // Пролог и эпилог — не «Глава N», иначе в превью скелета выходит
+    // «Глава 1: Пролог», а вся нумерация книги сдвигается на рамочную главу.
+    const заголовок = рамка ? esc(ch.title) : `Глава ${nCh}: ${esc(ch.title)}`;
+    return `<div class="skel-chapter"><h3>${заголовок} <span class="skel-tag">${esc(ch.arc||'')}</span></h3>${scenesHtml}</div>`;
   }).join('');
 
   const bible = s.bible||[];
