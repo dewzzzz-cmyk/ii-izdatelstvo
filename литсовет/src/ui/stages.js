@@ -7,7 +7,8 @@ import { runAgentOnDemand, patchScene } from '../ondemand.js';
 import { extractVoice, analyzeStyleManner } from '../voice.js';
 import { AUTHOR_STYLES, styleMatchesGenre } from '../styles.js';
 import { ART_STYLES } from '../artStyles.js';
-import { runScene, isRunning, requestCancel, isCancelRequested } from '../pipeline.js';
+import { runScene, isRunning, requestCancel, isCancelRequested,
+         isRejectedNote, rejectNoteByAuthor } from '../pipeline.js';
 import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './diagnostics.js';
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
@@ -108,6 +109,14 @@ let _runCurrent = '';       // что происходит прямо сейча
 let _edReviewOn = false;    // редактор в режиме ручного ревью (подсветка правок в тексте)
 let _edSuggestions = [];    // необработанные предложения редактора текущей сцены
 let _edReviewSceneId = null; // id сцены, к которой относятся _edSuggestions (сброс при смене сцены)
+// Подсветка ЗАМЕЧАНИЙ (Оценщик + Стражи) прямо в тексте — отдельный слой от
+// правок Линейного редактора выше. Тот предлагает готовую замену («было → стало»),
+// а замечание только указывает на место и говорит, что с ним не так: решение и
+// формулировка остаются за автором. До этого замечания жили списком в правой
+// панели, и найти их место в тексте глазами было отдельной работой.
+let _edFlagsOn = false;
+let _edFlagMarks = [];      // [{quote, заголовок, detail, роль, severity}]
+let _edFlagsSceneId = null;
 let _autoClosingChapters = new Set(); // главы, которые сейчас автозакрываются в «Фабрике» (защита от повторного вызова)
 let _conceptAdvOpen = false; // «Дополнительные настройки» в Концепции — раскрыто/свёрнуто, переживает save()→rerender()
 // Последние разборы Бета-ридера/Критика/Ружей Чехова — модалка закрывается по
@@ -1685,6 +1694,7 @@ export function renderWrite(els){
   const scene = scenes.find(x=>x.id===s.ui.activeScene);
   // Смена сцены во время ручного ревью редактора — подсветка относилась к другой сцене.
   if(_edReviewOn && _edReviewSceneId !== scene.id){ _edReviewOn=false; _edSuggestions=[]; }
+  if(_edFlagsOn && _edFlagsSceneId !== scene.id){ _edFlagsOn=false; _edFlagMarks=[]; }
 
   els.left.innerHTML = `<div class="ph">Сцены</div>${renderSceneList(s)}`;
   els.left.querySelectorAll('.scene-row').forEach(r=>r.onclick=()=>{ if(_busy){ return; } s.ui.activeScene=r.dataset.sc; save(); });
@@ -1749,11 +1759,14 @@ export function renderWrite(els){
         <button class="ed-mode-btn ${!s.ui.editorAuto?'on':''}" data-edmode="manual">Ручной</button>
         <button class="ed-mode-btn ${s.ui.editorAuto?'on':''}" data-edmode="auto">Авто</button>
       </div>`:''}
+      ${scene.text && !_edReviewOn && collectSceneMarks(scene).length
+        ? `<button class="iconbtn" id="edFlags" data-tip="Подсвечивает в тексте фрагменты, к которым есть замечания Оценщика и Стражей после последнего прогона. По клику на подсветку — что не так и что можно сделать: исправить точечно, отклонить как приём или оставить и решить самому.">${_edFlagsOn?'✕ Снять подсветку':`💡 Замечания (${collectSceneMarks(scene).length})`}</button>`
+        : ''}
       <button class="iconbtn" id="edUndo" data-tip="Отменить изменение в тексте (Ctrl+Z)">↶</button>
       <button class="iconbtn" id="edRedo" data-tip="Вернуть изменение (Ctrl+Shift+Z)">↷</button>
       ${scene.text?`<button class="chat-clear" id="clearScene" data-tip="Стереть текст сцены и сбросить статус на «не написана». Прошлый текст остаётся в истории — можно вернуть кнопкой ↶ ниже, как после обычной перегенерации.">🗑 Очистить сцену</button>`:''}
     </div>
-    <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${_edReviewOn?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):esc(scene.text)):'Проза появится здесь после запуска агентов.'}</div>
+    <div class="editor ${scene.text?'':'empty'}" id="editor" ${scene.text?`contenteditable="${(_edReviewOn||_edFlagsOn)?'false':'true'}" spellcheck="false"`:''}>${scene.text?(_edReviewOn?markedEditorHtml(scene.text):(_edFlagsOn?flagMarkedHtml(scene.text, scene):esc(scene.text))):'Проза появится здесь после запуска агентов.'}</div>
     <div id="selMenu" class="sel-menu" style="display:none"></div>
     <div id="edPopup" class="ed-popup" style="display:none"></div>
     ${uncommittedDraft(scene) ? `<div style="margin-top:10px;border:1px solid var(--warn,#c9a227);border-radius:8px;padding:11px 13px;background:var(--surface-2)">
@@ -1849,6 +1862,7 @@ export function renderWrite(els){
     initSelectionMenu(edEl, scene, els);
   }
   if(scene.text && _edReviewOn) bindEditorMarks(edEl, scene, els);
+  if(scene.text && _edFlagsOn) bindFlagMarks(edEl, scene, els);
 
   // инлайн-директива
   const runWith = (directive)=>doRun(els, s, scene, directive);
@@ -2146,6 +2160,122 @@ function openProofreadModal(scene, res){
   };
 }
 
+// ── Замечания Оценщика и Стражей прямо в тексте ──
+//
+// Собираем всё, к чему привязан КОНКРЕТНЫЙ фрагмент: цитаты стражей
+// (flags[].quote) и разборы Оценщика, где фрагменты приходят списками (клише,
+// механический повтор имени, абстракции, вода). Замечания без цитаты (общие
+// notes Оценщика) сюда не попадают — их некуда подсветить, они остаются
+// списком в правой панели «Анализ».
+//
+// Погашенные автором находки (кнопка «✕ Это приём») не показываем: автор уже
+// принял решение, и возвращать ему то же самое подсветкой значит спорить с ним.
+function collectSceneMarks(scene){
+  if(!scene || !scene.text) return [];
+  const собрано = [];
+  const добавить = (quote, заголовок, detail, роль, severity)=>{
+    const q = String(quote||'').trim();
+    if(q.length < 8) return;                    // короткий фрагмент подсветит пол-текста
+    if(!scene.text.includes(q)) return;         // текст правился после прогона
+    if(isRejectedNote(заголовок + ': ' + (detail||''), scene.rejectedNotes)) return;
+    собрано.push({ quote:q, заголовок, detail:detail||'', роль, severity: severity||'warning' });
+  };
+  Object.entries(scene.flags||{}).forEach(([role, arr])=>{
+    (arr||[]).forEach(f=>{
+      if(f.severity==='ok') return;
+      добавить(f.quote, f.title||'Замечание', f.detail, FLAG_ROLE_LABELS[role] || role, f.severity);
+    });
+  });
+  const v = scene.lastEval || {};
+  (v.cliches||[]).forEach(c=>добавить(c, 'Клише', 'Оценщик отметил это как штамп — замени на деталь, которой в других книгах нет.', 'Оценщик'));
+  (v.repetition||[]).forEach(c=>добавить(c, 'Механический повтор имени', 'Имя героя стоит там, где хватило бы местоимения или вообще ничего.', 'Оценщик'));
+  (v.abstractions||[]).forEach(c=>добавить(c, 'Абстракция вместо конкретного', 'Названо словом-обобщением. Покажи через то, что видно, слышно или происходит.', 'Оценщик'));
+  (v.padding||[]).forEach(c=>добавить(c, 'Сцена топчется на месте', 'Деталь есть, движения нет — этот кусок можно сжать или убрать.', 'Оценщик'));
+  // Дубли по одной цитате схлопываем: два агента часто указывают на одно место,
+  // а автору незачем разбирать одно и то же дважды.
+  const поЦитате = new Map();
+  собрано.forEach(m=>{
+    const прежний = поЦитате.get(m.quote);
+    if(!прежний){ поЦитате.set(m.quote, m); return; }
+    прежний.detail = (прежний.detail + ' • ' + m.роль + ': ' + m.detail).slice(0, 400);
+    if(m.severity === 'critical') прежний.severity = 'critical';
+  });
+  return [...поЦитате.values()];
+}
+
+// Подписи ролей для подсветки. Держать в синхроне с GUARD_LABELS в pipeline.js
+// и ui/diagnostics.js — три места, потому что модули не импортируют друг друга.
+const FLAG_ROLE_LABELS = { voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность', rhythm:'Однообразие входов', repeatact:'Повтор действия' };
+
+// Разметка текста по собранным замечаниям. Пересечения не допускаем — приоритет
+// у более раннего вхождения, как и у правок редактора ниже.
+function flagMarkedHtml(text, scene){
+  _edFlagMarks = collectSceneMarks(scene);
+  _edFlagsSceneId = scene.id;
+  const ranges = [];
+  _edFlagMarks.forEach((m, idx)=>{
+    let from = 0, pos;
+    while((pos = text.indexOf(m.quote, from)) >= 0){
+      const end = pos + m.quote.length;
+      if(!ranges.some(r=>pos<r.end && end>r.start)){ ranges.push({start:pos, end, idx}); break; }
+      from = pos + 1;
+    }
+  });
+  ranges.sort((a,b)=>a.start-b.start);
+  let html = '', cursor = 0;
+  ranges.forEach(r=>{
+    html += esc(text.slice(cursor, r.start));
+    const крит = _edFlagMarks[r.idx].severity === 'critical' ? ' crit' : '';
+    html += `<mark class="ed-flag${крит}" data-fidx="${r.idx}">${esc(text.slice(r.start, r.end))}</mark>`;
+    cursor = r.end;
+  });
+  html += esc(text.slice(cursor));
+  return html;
+}
+
+// Клик по подсветке: что не так и три пути. Автоматически не делается ничего —
+// автор решает сам, ради этого подсветка и вводилась.
+function bindFlagMarks(edEl, scene, els){
+  const popup = document.getElementById('edPopup');
+  if(!popup) return;
+  const close = ()=>{ popup.style.display='none'; };
+  edEl.querySelectorAll('.ed-flag').forEach(mk=>{
+    mk.onclick = (e)=>{
+      e.stopPropagation();
+      const m = _edFlagMarks[parseInt(mk.dataset.fidx, 10)];
+      if(!m) return;
+      const rect = mk.getBoundingClientRect();
+      const appRect = document.getElementById('app').getBoundingClientRect();
+      popup.innerHTML = `
+        <div class="ed-pop-reason" style="margin-bottom:6px"><b>${esc(m.роль)}</b> · ${esc(m.заголовок)}</div>
+        ${m.detail?`<div class="ed-pop-reason">${esc(m.detail)}</div>`:''}
+        <div class="ed-pop-acts" style="gap:6px;flex-wrap:wrap">
+          <button class="btn" id="flagFix" style="font-size:11px;padding:2px 8px">✎ Переписать фрагмент</button>
+          <button class="btn" id="flagReject" style="font-size:11px;padding:2px 8px">✕ Это приём</button>
+          <button class="btn" id="flagSkip" style="font-size:11px;padding:2px 8px">Оставить</button>
+        </div>`;
+      popup.style.display = 'block';
+      popup.style.top = (rect.bottom - appRect.top + 6) + 'px';
+      popup.style.left = Math.max(8, Math.min(rect.left - appRect.left, appRect.width - 300)) + 'px';
+      document.getElementById('flagSkip').onclick = close;
+      // «Переписать» — та же точечная правка, что и кнопки в панели «Анализ»
+      // (_activeFlagFix → doRun с директивой), только адресно по этому месту.
+      document.getElementById('flagFix').onclick = ()=>{
+        close();
+        const директива = `Точечно перепиши ТОЛЬКО этот фрагмент: «${m.quote}». Причина (${m.роль}): ${m.заголовок}. ${m.detail} Остальной текст сцены не трогай.`;
+        if(_activeFlagFix) _activeFlagFix(директива, false);
+      };
+      document.getElementById('flagReject').onclick = ()=>{
+        rejectNoteByAuthor(scene, m.заголовок + ': ' + m.detail);
+        save(); close(); renderWrite(els);
+      };
+    };
+  });
+  if(_edPopupHide) document.removeEventListener('mousedown', _edPopupHide);
+  _edPopupHide = (e)=>{ if(!popup.contains(e.target) && !e.target.classList.contains('ed-flag')) close(); };
+  document.addEventListener('mousedown', _edPopupHide);
+}
+
 // ── Редактор (стилистическая правка с подсветкой в тексте) ──
 
 // Строит HTML текста с <mark> вокруг непересекающихся вхождений _edSuggestions.
@@ -2185,6 +2315,15 @@ function bindEditorButton(els, s, scene){
     s.ui.editorAuto = b.dataset.edmode==='auto';
     save();
   });
+  // Подсветка замечаний — просто переключатель режима отображения, без вызовов
+  // ИИ: всё уже посчитано прошлым прогоном и лежит в scene.flags/scene.lastEval.
+  const flagsBtn = document.getElementById('edFlags');
+  if(flagsBtn) flagsBtn.onclick = ()=>{
+    _edFlagsOn = !_edFlagsOn;
+    if(_edFlagsOn){ _edReviewOn = false; _edSuggestions = []; _edFlagsSceneId = scene.id; }
+    else _edFlagMarks = [];
+    save();
+  };
   const btn = document.getElementById('edStyle');
   if(!btn) return;
   if(_edReviewOn){ btn.onclick = ()=>{ _edReviewOn=false; _edSuggestions=[]; _edReviewSceneId=null; save(); }; return; }

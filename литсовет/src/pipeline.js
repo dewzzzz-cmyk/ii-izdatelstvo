@@ -12,7 +12,7 @@ import { voiceGuardMessages, logicGuardMessages, eventsGuardMessages,
          imageryGuardMessages, povGuardMessages, dialogueGuardMessages, resolutionGuardMessages,
          atmosphereGuardMessages, humorGuardMessages, findDuplicatePhrases, findBoundaryRepeat,
          looksTokenTruncated, coercePassive,
-         findMonotonousOpenings, MONOTONY_THRESHOLD } from './guards.js';
+         findMonotonousOpenings, MONOTONY_THRESHOLD, findRepeatedActions } from './guards.js';
 import { startRun, logStep, endRun, agentEnabled } from './diagnostics.js';
 import { tokensOf, tfvec, cosine } from './bible.js';
 import { recordObservedPattern, ag, effectiveRules, llmFor } from './state.js';
@@ -50,7 +50,7 @@ function isFactualGuard(state, role){
   return !!(a.custom && a.factual);
 }
 
-const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность', rhythm:'Однообразие входов'};
+const GUARD_LABELS = {voiceguard:'Страж голоса', logic:'Страж логики', events:'Страж событий', styleguard:'Страж стиля', reader:'Читатель', imagery:'Страж образов', pov:'Страж точки зрения', dialogue:'Страж диалога', resolution:'Страж развязки', atmosphere:'Страж атмосферы', humor:'Страж жанра', repeat:'Проверка повторов', freshness:'Повтор между сценами', boundary:'Повтор стыка сцен', script:'Инородная письменность', rhythm:'Однообразие входов', repeatact:'Повтор действия'};
 function guardLabel(state, role){ return GUARD_LABELS[role] || ag(state, role).name || role; }
 
 // Похожесть двух коротких замечаний (TF-IDF косинус на стеммированных токенах,
@@ -895,6 +895,25 @@ export async function runScene(state, scene, opts={}, onProgress){
       if(однообразие){
         onProgress && onProgress({log:{icon:'🎼',
           text:`Вход «герой + глагол»: ${однообразие.однотипных} из ${однообразие.предложений} предложений (${однообразие.доля}%). Для сравнения на тех же объёмах: Чехов 1.1%, Куприн 2.7–5.7%, Бунин 3.7–7.3%. Это справка автору, а не правка Прозаику.`}});
+      }
+
+      // Повтор одного и того же ДЕЙСТВИЯ в сцене (см. findRepeatedActions).
+      // Живой случай: в финале сказки трижды вносят одно тело, и Оценщик дал
+      // сцене высший балл книги — он этого не видит. Проверка кодовая, поэтому
+      // и severity ставим по факту: два повтора — предупреждение (бывает
+      // намеренный рефрен), три и больше — обязательная правка.
+      const повторыДействий = findRepeatedActions(pRes.text);
+      if(повторыДействий.length){
+        flags.repeatact = повторыДействий.slice(0, 3).map(г=>({
+          severity: г.повторов >= 3 ? 'critical' : 'warning',
+          title: `Одно и то же действие повторяется ${г.повторов} раза`,
+          detail: 'Это разные формулировки одного события, а не развитие: '
+            + г.фразы.map(f=>`№${f.n} «${f.текст}…»`).join('; ')
+            + '. Оставь ОДНО место, где действие происходит, остальные убери или замени тем, что двигает сцену дальше.',
+          quote: г.фразы[0].текст,
+        }));
+        onProgress && onProgress({log:{icon:'♻️',
+          text:`Повтор действия: ${повторыДействий.map(г=>г.повторов+'×').join(', ')} — отправлено Прозаику`}});
       }
 
       // Клише этого черновика (verdict.cliches) против clichés из ДРУГИХ сцен книги
