@@ -1316,3 +1316,82 @@ test('Страж развязки проверяет проговорённую 
   assert.match(sys, /раскрывает ЕГО характер/,
     'реплика персонажа с моралью — законный поступок, её флагать нельзя');
 });
+
+// ── Рамочные главы и мир как источник конфликта ──
+// Пролог/эпилог не существовали как понятие: ARCS знал только четыре дуги
+// основной арки, и сцену, которой герой не мог видеть (событие до начала книги,
+// другой POV, точка развилки в альтистории), поставить было некуда.
+test('пролог и эпилог доезжают до Архитектора и до Прозаика', async () => {
+  const { bookArchitectMessages, FRAME_ARCS, validateSkeleton } = await import('../src/architect-book.js');
+  const state = { project:{ title:'Т', genre:'фэнтези', synopsis:'С' }, bible:[], structure:[], agents:{} };
+  const sys = bookArchitectMessages(state)[0].content;
+  const user = bookArchitectMessages(state)[1].content;
+  const весь = sys + '\n' + user;
+  assert.match(весь, /ПРОЛОГ И ЭПИЛОГ/, 'без этого Архитектор о рамочных главах не знает');
+  assert.match(весь, /пролог\|завязка/, 'схема JSON должна разрешать рамочные дуги, иначе модель их не вернёт');
+  assert.ok(FRAME_ARCS.has('пролог') && FRAME_ARCS.has('эпилог'));
+  assert.ok(!FRAME_ARCS.has('завязка'), 'основная арка в рамку не входит');
+
+  // Валидатор не должен молча переписывать пролог в «развитие».
+  const res = validateSkeleton(JSON.stringify({ chapters:[
+    { title:'Пролог', arc:'пролог', scenes:[{ title:'с', brief:'б', targetWords:900 }] },
+    { title:'Гл 1',   arc:'завязка', scenes:[{ title:'с', brief:'б', targetWords:900 }] },
+    { title:'Гл 2',   arc:'развязка', scenes:[{ title:'с', brief:'б', targetWords:900 }] },
+  ]}));
+  assert.equal(res.ok, true, res.error);
+  assert.equal(res.skeleton.chapters[0].arc, 'пролог');
+});
+
+test('Прозаик получает отдельную установку для пролога и эпилога', async () => {
+  const { CHAPTER_ARC_NOTE } = await import('../src/context.js');
+  assert.match(CHAPTER_ARC_NOTE['пролог'], /СЦЕНА/, 'главный провал пролога — справка вместо сцены');
+  assert.match(CHAPTER_ARC_NOTE['эпилог'], /Не пересказывай финал/);
+});
+
+// Факты мира доходили до Архитектора с единственной инструкцией «не противоречь
+// им» — то есть работали как список запретов, а не как материал сюжета.
+test('мир доезжает до Архитектора как источник конфликта, а не только как запрет', async () => {
+  const { bookArchitectMessages } = await import('../src/architect-book.js');
+  const state = { project:{ title:'Т', genre:'фэнтези', synopsis:'Целительница платит за магию годами жизни.' }, agents:{}, structure:[],
+    bible:[{ source:'world', category:'магия/технология', keys:'магия, цена, жизнь', text:'Магия берёт год жизни за каждое исцеление.' }] };
+  const весь = bookArchitectMessages(state).map(m=>m.content).join('\n');
+  assert.match(весь, /ИСТОЧНИК КОНФЛИКТА/, 'иначе богатый мир не влияет на сюжет ни в одной сцене');
+  assert.match(весь, /невозможны в другом мире/);
+});
+
+test('жанр определяет, какие факты нужны миру', async () => {
+  const { worldSuggestMessages } = await import('../src/world.js');
+  const сказка = { project:{ genre:'сказка', genres:[], synopsis:'С' }, bible:[] };
+  const детектив = { project:{ genre:'детектив', genres:[], synopsis:'С' }, bible:[] };
+  const s1 = worldSuggestMessages(сказка, 'культура')[0].content;
+  const s2 = worldSuggestMessages(детектив, 'культура')[0].content;
+  assert.match(s1, /ПРАВИЛА И ЗАПРЕТЫ/, 'мир сказки — не справочник государств');
+  assert.match(s2, /РАССЛЕДОВАНИЕ/);
+  assert.notEqual(s1, s2, 'жанр обязан менять промпт генерации мира');
+});
+
+// Мультижанр: «альтернативная история» вторым жанром молча выключала главное
+// правило жанра — точку развилки.
+test('альт-история требует точку развилки, даже если это не ведущий жанр', async () => {
+  const { worldSuggestMessages, missingPOD } = await import('../src/world.js');
+  const state = { project:{ genre:'фэнтези', genres:['альтернативная история'], synopsis:'С' }, bible:[] };
+  assert.match(worldSuggestMessages(state, 'история')[0].content, /точки развилки/);
+  assert.equal(missingPOD(state), true, 'без факта «истории» напоминание обязано сработать');
+  state.bible.push({ source:'world', category:'история', keys:'развилка', text:'1917: съезд не состоялся.' });
+  assert.equal(missingPOD(state), false);
+});
+
+// Пролог из одной сцены — норма жанра. Проверка «часть сцен не доехала»
+// (глава меньше трети самой полной) отбраковала бы такой скелет и заставила
+// платно перезапрашивать его, пока модель не выбросит пролог.
+test('короткий пролог не считается потерянными сценами', async () => {
+  const { validateSkeleton } = await import('../src/architect-book.js');
+  const глава = (n)=>Array.from({length:n},(_,i)=>({ title:'с'+i, brief:'б', targetWords:900 }));
+  const скелет = (arcПервой)=>JSON.stringify({ chapters:[
+    { title:'Первая', arc:arcПервой, scenes:глава(1) },
+    { title:'Гл 1', arc:'завязка',   scenes:глава(4) },
+    { title:'Гл 2', arc:'развязка',  scenes:глава(4) },
+  ]});
+  assert.equal(validateSkeleton(скелет('пролог')).ok, true, 'пролог из одной сцены — законный');
+  assert.equal(validateSkeleton(скелет('завязка')).ok, false, 'а обычная глава-огрызок по-прежнему ошибка');
+});
