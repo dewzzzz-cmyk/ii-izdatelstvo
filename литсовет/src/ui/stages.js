@@ -2054,10 +2054,24 @@ export function renderWrite(els){
   bindEditorButton(els, s, scene);
 
   // Автопилот: глава целиком / книга целиком — два независимых запуска
+  // Ни один выход отсюда не должен быть молчаливым. Живой инцидент: клик по
+  // «Написать книгу целиком» полтора часа не давал ничего — ни запуска, ни
+  // ошибки, ни изменения кнопки, и понять причину со стороны было невозможно.
+  // Тот же класс, что уже дважды всплывал сегодня: тихий return в обработчике.
+  // Причина показывается там же, где автопилот показывает свои ошибки
+  // (_autoError над кнопками), а не в alert — alert теряется в автопрогоне.
   const startAutopilot = (crossChapters)=>{
-    if(_busy) return;
-    if(!s.global.apiKey){ alert('Задайте API-ключ в настройках (⚙).'); return; }
-    if(ch && isChapterLocked(s, ch.id)){ alert('Глава заблокирована: закройте предыдущую главу, прежде чем писать здесь.'); return; }
+    const стоп = (почему)=>{ _autoError = почему; renderWrite(els); };
+    if(_busy) return стоп('Уже идёт прогон сцены — дождитесь конца или нажмите 🛑 Стоп.');
+    if(_autoChapter) return стоп('Автопилот уже запущен.');
+    if(!ch) return стоп('Не выбрана глава: откройте любую сцену книги и повторите.');
+    if(!llmFor(s, ag(s,'prose')).apiKey) return стоп('Не задан API-ключ Прозаика — проверьте настройки (⚙).');
+    if(isChapterLocked(s, ch.id)) return стоп('Глава заблокирована: сначала закройте предыдущую.');
+    const остались = crossChapters
+      ? (s.structure||[]).filter(n=>n.type==='scene' && n.status!=='done').length
+      : scenesOfChapter(s, ch.id).filter(x=>x.status!=='done').length;
+    if(!остались) return стоп(crossChapters ? 'Все сцены книги уже написаны.' : 'Все сцены этой главы уже написаны.');
+    _autoError = '';
     runChapterAutopilot(els, s, ch, crossChapters);
   };
   const acOnly = document.getElementById('autoChapterOnly');
