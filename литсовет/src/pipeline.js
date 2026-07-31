@@ -529,8 +529,8 @@ export async function runScene(state, scene, opts={}, onProgress){
         // +20% по запросу автора (общий проход по всем лимитам токенов приложения).
         const cap = Math.round(Math.min(70000, Math.max(2500, Math.round(prevDraft.length/2) + debateAllowance)) * 1.2);
         const reviseMsgs = stagnantLastIter
-          ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style))
-          : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style));
+          ? radicalReviseMessages(prevDraft, directive, effectiveRules(state.style, state.project))
+          : surgicalReviseMessages(prevDraft, directive, effectiveRules(state.style, state.project));
         const reviseMaxTk = Math.max(proseAg.maxTokens ?? cap, cap);
         pRes = await callLLM({ ...llmFor(state,proseAg), temperature:0.4, messages: reviseMsgs, maxTokens: reviseMaxTk }, streamCb, streamRetry);
         let parsed = parseDebateRevision(pRes.text);
@@ -687,7 +687,7 @@ export async function runScene(state, scene, opts={}, onProgress){
           const sorted = [...doneWords].sort((a,b)=>a-b);
           paceBaseline = { medianWords: sorted[Math.floor(sorted.length/2)], sceneWords: (pRes.text.match(/\S+/g)||[]).length };
         }
-        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline, recentEndings: state.recentSceneEndings });
+        const eMsgs = evaluatorMessages(scene, pRes.text, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style, state.project), { usedCliches: state.usedCliches, paceBaseline, recentEndings: state.recentSceneEndings });
         // ЗДЕСЬ БЫЛ ЯКОРЬ: Оценщику дописывали оси черновика 1 «чтобы он не
         // дрейфовал между итерациями». Замер на одном и том же тексте показал,
         // что лекарство хуже болезни:
@@ -975,7 +975,7 @@ export async function runScene(state, scene, opts={}, onProgress){
             // включённым и был уверен, что проверка идёт, хотя guardJobs её
             // просто никогда не получал. Теперь явно предупреждаем, как и там.
             if((state.style?.rules||[]).filter(Boolean).length)
-              guardJobs.push(guardJob(state,'styleguard', styleGuardMessages(pRes.text, effectiveRules(state.style), ag(state,'styleguard').strictness), flags, onProgress));
+              guardJobs.push(guardJob(state,'styleguard', styleGuardMessages(pRes.text, effectiveRules(state.style, state.project), ag(state,'styleguard').strictness), flags, onProgress));
             else
               onProgress && onProgress({log:{icon:'🚦', text:'Страж стиля: пропущен — добавьте правила автора в настройках «Голос»', state:'warn'}});
           }
@@ -1554,7 +1554,7 @@ export async function runScene(state, scene, opts={}, onProgress){
             const sorted2 = [...doneWords2].sort((a,b)=>a-b);
             paceBaseline2 = { medianWords: sorted2[Math.floor(sorted2.length/2)], sceneWords: (best.match(/\S+/g)||[]).length };
           }
-          const fMsgs = evaluatorMessages(scene, best, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style), { usedCliches: state.usedCliches, paceBaseline: paceBaseline2, recentEndings: state.recentSceneEndings });
+          const fMsgs = evaluatorMessages(scene, best, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style, state.project), { usedCliches: state.usedCliches, paceBaseline: paceBaseline2, recentEndings: state.recentSceneEndings });
           const fMaxTk = evalAg.maxTokens ?? 1080;
           let fRes = await callLLM({ ...llmFor(state,evalAg), temperature:evalAg.temp??0.2, messages:fMsgs, maxTokens:fMaxTk });
           let fVerdict = parseEvaluator(fRes.text, threshold, { skipAxes: evalSkipAxes });

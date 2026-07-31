@@ -35,7 +35,7 @@ export async function runAgentOnDemand(state, scene, agent){
   const role = agent.role;
 
   if(role==='evaluator'){
-    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style));
+    const msgs = evaluatorMessages(scene, draft, state.voice?.examples, bookContextBlock(state, scene), effectiveRules(state.style, state.project));
     const res = await callLLM({ ...base, temperature:agent.temp??0.2, messages:msgs, maxTokens:agent.maxTokens??4200 });
     // Тот же принцип, что в pipeline.js: без образцов голоса ось «Голос»
     // судить не по чему — исключаем её из балла, а не даём модели выдумать
@@ -84,7 +84,7 @@ export async function runAgentOnDemand(state, scene, agent){
   else if(role==='logic')    msgs = logicGuardMessages(state, scene, draft, agent.strictness);
   else if(role==='events')   msgs = eventsGuardMessages(state, scene, draft, agent.strictness);
   else if(role==='styleguard'){
-    const rules = effectiveRules(state.style);
+    const rules = effectiveRules(state.style, state.project);
     if(!rules.length) throw new Error('Нет правил автора — добавьте их на вкладке «Голос» или кнопкой «⊕ В правило».');
     msgs = styleGuardMessages(draft, rules, agent.strictness);
   }

@@ -77,7 +77,7 @@ export function buildSceneContext(state, scene, opts={}){
   // 1b. Правила автора (do/don't) — фикс, не режется. Профилактика: Прозаик не порождает.
   // effectiveRules() подмешивает сюда же настройку мата (style.profanity) —
   // единая точка сборки, см. её комментарий в state.js.
-  const rules = effectiveRules(style);
+  const rules = effectiveRules(style, state.project);
   if(rules.length) layers.push({ name:'rules', text:'=== ПРАВИЛА АВТОРА (соблюдай неукоснительно) ===\n'+rules.map(r=>'— '+r).join('\n'), fixed:true });
 
   // 1c. Замеченные паттерны (мягкая память, не rules): категории клише, которые Оценщик

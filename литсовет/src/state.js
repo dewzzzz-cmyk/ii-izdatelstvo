@@ -4,10 +4,11 @@
 import { saveProject, loadProject, pushToServer, syncFromServer, getServerProject, lastPushConflict } from './storage.js';
 import { rebuildBibleVecs, tokensOf, tfvec, cosine } from './bible.js';
 import { TEXT_PROVIDERS, matchTextProvider, MODEL_PRICES } from './providers.js';
+import { ageContentNote } from './genres.js';
 
 // Версия приложения — единственный источник правды (дублируется в package.json
 // для npm, но UI читает отсюда, чтобы не тянуть package.json в браузер).
-export const APP_VERSION = '1.81.0';
+export const APP_VERSION = '1.82.0';
 
 // Цены за 1M токенов (вход/выход) — грубая оценка стоимости. Единый источник —
 // providers.js (та же таблица кормит подсказку цены прямо в селекте модели,
@@ -930,8 +931,18 @@ const PROFANITY_NOTES = {
   moderate: '', // естественный уровень — модель решает сама, без явного ограничения
   strict: 'В кризисных и эмоционально сильных сценах допустима откровенная нецензурная лексика в речи персонажей, если того требует ситуация.',
 };
-export function effectiveRules(style){
+// Второй аргумент (project) появился ради возрастных границ содержания.
+// Возраст задавал требования Прозаику и Архитектору, но ПРОВЕРЯЛ их только сам
+// Прозаик — судьи о них не знали. Живой прогон сказки для 7–10 лет: смерть
+// царя показана прямо в кадре (удар клювом в темя), хотя правило требует
+// держать смерть за кадром для этого возраста, — и ни один страж не возразил.
+// Возрастные границы по своей природе то же самое, что правило автора: жёсткое
+// «так нельзя». Поэтому подмешиваем их в общий список правил — и Страж стиля,
+// который правила и проверяет, начинает ловить их без нового агента и без
+// лишнего вызова модели.
+export function effectiveRules(style, project){
   const base = (style?.rules||[]).filter(Boolean);
   const note = PROFANITY_NOTES[style?.profanity] || '';
-  return note ? [note, ...base] : base;
+  const age = ageContentNote(project?.ageGroup) || '';
+  return [note, age, ...base].filter(Boolean);
 }
