@@ -318,12 +318,18 @@ function ядроНазвания(t){
 // Одинаково названные главы. Возвращает группы, а не булев флаг: в сообщении
 // об ошибке нужны номера глав, иначе автор не поймёт, где искать.
 export function findDuplicateChapterTitles(chapters){
+  // Номера — те же, что автор видит в интерфейсе: рамочные главы в счёт не
+  // идут. Иначе сообщение противоречит само себе — заголовок «Глава 4», а
+  // номера «5, 7, 14», потому что позицию сдвинул пролог.
+  let n = 0;
   const по = new Map();
-  (chapters||[]).forEach((ch,i)=>{
+  (chapters||[]).forEach((ch)=>{
+    const рамка = FRAME_ARCS.has(ch.arc);
+    if(!рамка) n++;
     const ключ = ядроНазвания(ch.title);
     if(!ключ) return;
     if(!по.has(ключ)) по.set(ключ, { title: ch.title, numbers: [] });
-    по.get(ключ).numbers.push(i+1);
+    по.get(ключ).numbers.push(рамка ? (ch.arc||'рамка') : n);
   });
   return [...по.values()].filter(g => g.numbers.length > 1);
 }
@@ -419,7 +425,8 @@ export function validateSkeleton(raw, opts={}){
   }
   const слот = chapters.findIndex(ch => titleIsArcLabel(ch.title, ch.arc));
   if(слот >= 0){
-    return { ok:false, kind:'content', error:`глава ${слот+1} названа «${chapters[слот].title}» — это имя слота структуры, а не название главы: у Архитектора кончился сюжет` };
+    const номер = chapters.slice(0, слот+1).filter(c=>!FRAME_ARCS.has(c.arc)).length;
+    return { ok:false, kind:'content', error:`глава ${номер} названа «${chapters[слот].title}» — это имя слота структуры, а не название главы: у Архитектора кончился сюжет` };
   }
   return { ok:true, skeleton:{ chapters } };
 }
