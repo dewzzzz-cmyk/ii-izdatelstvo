@@ -195,6 +195,33 @@ export function bookArchitectMessages(state, opts={}){
     'ПОЛЕ entryState: заполняй его ТОЛЬКО когда на входе в сцену у героя появилось что-то новое (предмет, знание, место, союзник), чего не было в предыдущей сцене этой же цепочки — одной строкой, что именно и откуда оно взялось. Если между сценами ничего не изменилось — оставляй пустую строку, не дублируй бриф.',
     PACING_NOTES[p.pacing] || PACING_NOTES.balanced,
   ].join('\n');
+  // ── ДВА ПРОХОДА ВМЕСТО ОДНОГО ──
+  // Скелет книги генерировался одним запросом на ~44 тыс. токенов выдачи.
+  // Модель, дописывающая бриф главы 13, свой собственный текст главы 3 уже не
+  // видит — он ушёл далеко назад. Отсюда всё, что мерили: одинаковое число
+  // сцен во всех главах, один и тот же виток под тремя названиями, обрывы JSON
+  // на первой попытке. Две попытки починить это текстом промпта (1.84.0 и
+  // 1.86.0) дали ноль и хуже — см. замеры в комментариях рядом.
+  // Теперь: сначала ТОЛЬКО список глав (17 строк, ~1 тыс. токенов — влезает в
+  // поле зрения целиком, и модель физически способна заметить повтор), потом
+  // сцены по главам пачками, с полным списком глав в контексте.
+  const mode = opts.outlineOnly ? 'outline' : (opts.forChapters ? 'scenes' : 'legacy');
+  const sysOutline = [
+    'Ты — книжный архитектор. Сейчас ты проектируешь ТОЛЬКО скелет глав книги: названия, дуги и главный поворот каждой главы. Сцены и брифы будут писаться отдельно — не пиши их сейчас.',
+    ARC_DISTRIBUTION_NOTE,
+    FRAME_CHAPTERS_NOTE,
+    // Правило необратимости имеет смысл именно здесь и только здесь: на этапе
+    // списка глав модель видит все главы разом и может сверить главу 13 с
+    // главой 3. В одном большом проходе (1.86.0) то же правило не сработало —
+    // сверять было не с чем, предыдущие главы уже вышли из поля зрения.
+    'НЕОБРАТИМОСТЬ: каждая глава обязана менять положение героя так, чтобы вернуться к прежнему состоянию было нельзя. Книга не должна дважды проходить одну и ту же точку.',
+    'Запрещено: побеждать одного и того же противника больше одного раза; повторно добывать, терять и снова добывать один и тот же предмет; возвращать героя туда, откуда он уже уходил, если там его ждёт та же задача; заново узнавать то, что он уже знает.',
+    'Переименование не считается решением: «поиск артефакта», «потерянное заклинание» и «путь к хранилищу» — одна и та же глава под тремя вывесками.',
+    'ПЕРЕД ВЫДАЧЕЙ перечитай собственный список глав целиком и проверь его как список: если два пункта пересказываются одной фразой — это повтор, объедини их. Список короткий, ты видишь его весь, отговорки «не заметил» нет.',
+    'Если сюжета не хватает на запрошенное число глав — НЕ разбавляй его витками одного и того же. Верни МЕНЬШЕ глав и укрупни события: десять глав, где каждая меняет положение необратимо, лучше восемнадцати с тремя одинаковыми витками. Вернуть меньше глав, чем запрошено, — разрешено и приветствуется.',
+    'Противник, если он один на всю книгу, между появлениями обязан МЕНЯТЬСЯ: узнавать о герое больше, менять цель, поднимать ставку, терять или приобретать союзников. Одинаковое столкновение дважды — топтание, а не нагнетание.',
+  ].filter(Boolean).join('\n');
+
   // Нарративная инструкция по позиции в серии
   let seriesArcNote = '';
   if(p.type==='series'){
@@ -287,11 +314,9 @@ export function bookArchitectMessages(state, opts={}){
     })() : '',
     opts.hint ? `\nПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ:\n${opts.hint}` : '',
     '',
-    opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. В том числе сохрани sceneType (сцена/секвель) у сцен, которых правка не касается напрямую, — не перетасовывай ритм сцена/секвель заново без причины, только потому что переписываешь скелет. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
-    '{ "chapters": [ { "title": "название главы", "arc": "пролог|завязка|развитие|кульминация|развязка|эпилог", "scenes": [ { "title": "название сцены", "brief": "3-4 предложения (см. БРИФ СЦЕНЫ выше): что происходит → ключевой конфликт или открытие → конкретная сенсорная деталь кульминационного момента → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "entryState": "если на входе в сцену у героя уже есть предмет/знание/состояние, не самоочевидное из предыдущего брифа — одной строкой что и откуда; иначе пустая строка", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
-    `Итого ${targetChapters} глав, ~${prevSceneCount || targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
+    ...tailFor(mode, opts, { targetChapters, targetScenes, prevSceneCount, totalWords }),
   ].filter(Boolean).join('\n');
-  return [{role:'system',content:sys},{role:'user',content:user}];
+  return [{role:'system',content: mode==='outline' ? sysOutline : sys},{role:'user',content:user}];
 }
 
 // Нормализация одной главы из сырого ответа LLM — общая часть validateSkeleton
@@ -299,28 +324,149 @@ export function bookArchitectMessages(state, opts={}){
 // глава без title или без единой валидной сцены.
 function normalizeChapterRaw(ch){
   if(!ch || typeof ch.title!=='string') return null;
-  // Принимаем любую сцену, у которой есть title (brief может быть null/undefined — LLM иногда
-  // использует "description" или вовсе не заполняет поле; не выбрасываем главу из-за этого).
-  const scenes = Array.isArray(ch.scenes) ? ch.scenes.filter(s=>s && s.title) : [];
-  if(!scenes.length) return null;
+  const scenes = normalizeScenesRaw(ch.scenes);
+  if(!scenes) return null;
   return {
     title: ch.title.trim(),
     arc: ARCS.includes(ch.arc) ? ch.arc : 'развитие',
-    scenes: scenes.map(s=>({
+    scenes,
+  };
+}
+
+// Вынесено из normalizeChapterRaw: второй проход двухпроходной генерации
+// возвращает главы БЕЗ названия (оно уже утверждено в списке глав), только
+// number и scenes, — а normalizeChapterRaw требует title и выбросил бы их все.
+function normalizeScenesRaw(raw){
+  // Принимаем любую сцену, у которой есть title (brief может быть null/undefined — LLM иногда
+  // использует "description" или вовсе не заполняет поле; не выбрасываем главу из-за этого).
+  const scenes = Array.isArray(raw) ? raw.filter(s=>s && s.title) : [];
+  if(!scenes.length) return null;
+  return scenes.map(s=>({
       title: (s.title||'Без названия').trim(),
       // Fallback: brief → description → summary → пустая строка
       brief: (typeof s.brief==='string' ? s.brief : typeof s.description==='string' ? s.description : typeof s.summary==='string' ? s.summary : '').trim(),
       emotion: (s.emotion||'').trim(),
       entryState: (typeof s.entryState==='string' ? s.entryState : '').trim(),
       targetWords: Number(s.targetWords)>0 ? Math.round(Number(s.targetWords)) : 700,
-      sceneType: s.sceneType==='sequel' ? 'sequel' : 'scene',
-    })),
-  };
+    sceneType: s.sceneType==='sequel' ? 'sequel' : 'scene',
+  }));
+}
+
+// Первый проход: только список глав. Проверки здесь те же, что у полного
+// скелета, но включаются они НА ПОРЯДОК раньше и дешевле — модель получает
+// отказ, потратив ~1 тыс. токенов вместо 44 тыс., и переделывает список, а не
+// всю книгу с брифами.
+export function validateOutline(raw){
+  let j = extractJSON(raw);
+  if(!j) return { ok:false, error:'не удалось распарсить JSON' };
+  if(!Array.isArray(j.chapters)){
+    const nested = Object.values(j).find(v => v && Array.isArray(v.chapters));
+    if(nested) j = nested;
+  }
+  if(!Array.isArray(j.chapters) || !j.chapters.length) return { ok:false, error:'нет массива chapters' };
+  const chapters = j.chapters
+    .filter(ch => ch && typeof ch.title === 'string' && ch.title.trim())
+    .map(ch => ({
+      title: ch.title.trim(),
+      arc: ARCS.includes(ch.arc) ? ch.arc : 'развитие',
+      turn: (typeof ch.turn === 'string' ? ch.turn : '').trim(),
+    }));
+  if(chapters.length < 2) return { ok:false, error:`в списке всего ${chapters.length} глав(ы) — это не книга` };
+  const дубли = findDuplicateChapterTitles(chapters);
+  if(дубли.length){
+    return { ok:false, kind:'content', error:`главы ${дубли[0].numbers.join(', ')} названы одинаково («${дубли[0].title}») — это один и тот же виток сюжета` };
+  }
+  const слот = chapters.findIndex(ch => titleIsArcLabel(ch.title, ch.arc));
+  if(слот >= 0){
+    const номер = chapters.slice(0, слот+1).filter(c=>!FRAME_ARCS.has(c.arc)).length;
+    return { ok:false, kind:'content', error:`глава ${номер} названа «${chapters[слот].title}» — это имя слота структуры, а не название главы` };
+  }
+  // Пустой «поворот» — признак главы-наполнителя: модель не смогла назвать, что
+  // в ней необратимо меняется, потому что не меняется ничего.
+  const безПоворота = chapters.filter(ch => !ch.turn && !FRAME_ARCS.has(ch.arc)).length;
+  if(безПоворота > 0 && безПоворота >= Math.ceil(chapters.length / 2)){
+    return { ok:false, kind:'content', error:`у ${безПоворота} глав из ${chapters.length} не назван необратимый поворот — это главы-наполнители` };
+  }
+  return { ok:true, outline:{ chapters } };
+}
+
+// Второй проход: сцены для пачки глав. Главы приходят без названия — оно уже
+// утверждено в списке, — поэтому сверяем по номеру.
+export function validateSceneBatch(raw, allowedNumbers){
+  let j = extractJSON(raw);
+  if(!j) return { ok:false, error:'не удалось распарсить JSON' };
+  if(!Array.isArray(j.chapters)){
+    const nested = Object.values(j).find(v => v && Array.isArray(v.chapters));
+    if(nested) j = nested;
+  }
+  if(!Array.isArray(j.chapters) || !j.chapters.length) return { ok:false, error:'нет массива chapters' };
+  const allowed = new Set(allowedNumbers);
+  const byNumber = new Map();
+  for(const ch of j.chapters){
+    const number = Number(ch && ch.number);
+    if(!allowed.has(number) || byNumber.has(number)) continue;
+    const scenes = normalizeScenesRaw(ch.scenes);
+    if(scenes) byNumber.set(number, scenes);
+  }
+  const пропущены = allowedNumbers.filter(n => !byNumber.has(n));
+  if(пропущены.length){
+    return { ok:false, error:`не пришли сцены для глав: ${пропущены.join(', ')}` };
+  }
+  return { ok:true, byNumber };
 }
 
 // Валидация + нормализация скелета. Возвращает {ok, skeleton|error}.
 // opts.expectedScenes — сколько сцен просил промпт (если известно): нужно, чтобы
 // поймать «недовезённый» скелет, см. проверку целостности ниже.
+// Хвост промпта Архитектора — единственное, что различается между тремя
+// режимами. Всё, что выше (жанр, возраст, синопсис, мир, серия, предыдущий
+// скелет), у них общее, поэтому режимы делят одно тело функции: разъехавшиеся
+// копии контекста — ровно тот класс бага, который в этом файле уже ловили.
+function tailFor(mode, opts, n){
+  const { targetChapters, targetScenes, prevSceneCount, totalWords } = n;
+  if(mode === 'outline'){
+    return [
+      opts.previousSkeleton
+        ? 'Пересобери СПИСОК ГЛАВ: сохрани главы, которые работают, и исправь только названные проблемы. Верни JSON:'
+        : 'Спроектируй СПИСОК ГЛАВ книги (без сцен и брифов). Верни JSON:',
+      '{ "chapters": [ { "title": "название главы", "arc": "пролог|завязка|развитие|кульминация|развязка|эпилог", "turn": "одно предложение: что необратимо меняется в этой главе — какое положение героя становится невозможным вернуть" } ] }',
+      `Ориентир — ${targetChapters} глав, но вернуть меньше разрешено, если сюжет плотнее укладывается в меньшее число. Только JSON, без сцен.`,
+    ];
+  }
+  if(mode === 'scenes'){
+    const { outline, from, to } = opts.forChapters;
+    const списокКниги = outline.chapters
+      .map((c,i)=>`${i+1}. [${c.arc||'?'}] «${c.title}» — ${c.turn||'(поворот не указан)'}`).join('\n');
+    const пишем = outline.chapters.slice(from, to)
+      .map((c,i)=>`Глава ${from+i+1} [${c.arc||'?'}]: «${c.title}». Необратимый поворот главы: ${c.turn||'(не указан)'}`).join('\n');
+    const ужеЕсть = (opts.forChapters.doneScenes||[]).length
+      ? `\nСЦЕНЫ, УЖЕ НАПИСАННЫЕ В ПРЕДЫДУЩИХ ГЛАВАХ (не повторяй их события, продолжай оттуда):\n${(opts.forChapters.doneScenes||[]).join('\n')}`
+      : '';
+    const сценНаГлаву = Math.max(2, Math.round((prevSceneCount || targetScenes) / Math.max(1, targetChapters)));
+    return [
+      `\nСПИСОК ГЛАВ ВСЕЙ КНИГИ (уже утверждён — не меняй его, он нужен, чтобы ты видел, что было до и что будет после):\n${списокБезопасно(списокКниги)}`,
+      ужеЕсть,
+      `\nСЕЙЧАС РАСПИСЫВАЙ ПО СЦЕНАМ ТОЛЬКО ЭТИ ГЛАВЫ:\n${пишем}`,
+      `\nСцены должны привести главу ровно к её необратимому повороту, названному выше, — и не залезать в события соседних глав из списка. Ориентир: около ${сценНаГлаву} сцен на главу, но точное число определяй по событиям главы.`,
+      'Верни JSON ТОЛЬКО для перечисленных глав, в том же порядке:',
+      '{ "chapters": [ { "number": номер_главы, "scenes": [ { "title": "название сцены", "brief": "3-4 предложения (см. БРИФ СЦЕНЫ выше): что происходит → ключевой конфликт или открытие → конкретная сенсорная деталь кульминационного момента → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "entryState": "если на входе в сцену у героя уже есть предмет/знание/состояние, не самоочевидное из предыдущего брифа — одной строкой что и откуда; иначе пустая строка", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
+      'Брифы конкретные. Только JSON.',
+    ];
+  }
+  return [
+    opts.previousSkeleton ? 'Улучши структуру: сохрани рабочие элементы, точечно исправь проблемы. В том числе сохрани sceneType (сцена/секвель) у сцен, которых правка не касается напрямую, — не перетасовывай ритм сцена/секвель заново без причины, только потому что переписываешь скелет. Верни JSON:' : 'Спроектируй скелет. Верни JSON:',
+    '{ "chapters": [ { "title": "название главы", "arc": "пролог|завязка|развитие|кульминация|развязка|эпилог", "scenes": [ { "title": "название сцены", "brief": "3-4 предложения (см. БРИФ СЦЕНЫ выше): что происходит → ключевой конфликт или открытие → конкретная сенсорная деталь кульминационного момента → чем кончается и что изменилось", "emotion": "эмоция читателя в финале сцены", "entryState": "если на входе в сцену у героя уже есть предмет/знание/состояние, не самоочевидное из предыдущего брифа — одной строкой что и откуда; иначе пустая строка", "targetWords": число, "sceneType": "scene|sequel" } ] } ] }',
+    `Итого ${targetChapters} глав, ~${prevSceneCount || targetScenes} сцен, сумма targetWords ≈ ${totalWords}. Брифы конкретные. Только JSON.`,
+  ];
+}
+// Список глав уходит в промпт как данные. Собственный текст автора («turn»
+// пишет модель, но названия глав при «улучшении» приходят из прежнего скелета,
+// куда автор мог руками вписать что угодно) не должен уметь оборвать блок и
+// выдать себя за инструкцию.
+function списокБезопасно(s){
+  return String(s||'').replace(/```/g, '`​`​`');
+}
+
 // Модель почти всегда сама префиксует название («Глава 4: Возвращение в
 // Пустошь»), поэтому сравнивать заголовки как есть бесполезно — три одинаковые
 // главы отличались бы только номером в префиксе.
@@ -484,7 +630,6 @@ export async function runBookArchitect(state, opts={}){
   // используемый ниже в callLLM), не голый global.apiKey — тот же класс бага,
   // что уже чинили в ondemand.js/llmFor().
   if(!llmFor(state, architectAgent).apiKey) throw new Error('Не задан API-ключ.');
-  const msgs = bookArchitectMessages(state, opts);
   // ~140 токенов на сцену (русский бриф 1-2 предложения + поля) + накладные
   const p = state.project;
   // Та же формула wPerScene, что и в bookArchitectMessages — иначе при явном
@@ -538,7 +683,8 @@ export async function runBookArchitect(state, opts={}){
   // должен иметь ручку «дать ещё больше места», не дожидаясь очередного
   // ручного бампа константы в коде при каждой новой длинной книге.
   const archMult = state.global.architectTokenMultiplier || 1;
-  const archMaxTokens = Math.round(Math.max(4000, Math.min(200000, effectiveScenes * perSceneTokens + 1500)) * 1.2 * archMult);
+  // Единого потолка на всю книгу больше нет — лимит считается на КАЖДЫЙ запрос
+  // (список глав и пачка глав) ниже. Множитель автора применяется к обоим.
   // Лимит РАСТЁТ между попытками, если ответ обрубило. Раньше повтор уходил с
   // тем же самым archMaxTokens и лишь просил модель «верни полный JSON» — но
   // упирается-то не модель, а потолок: живой прогон дал две попытки подряд,
@@ -546,8 +692,6 @@ export async function runBookArchitect(state, opts={}){
   // деньги. Просить «будь полнее» при неизменном лимите нельзя в принципе.
   // Тот же приём «повтор с увеличенным лимитом», что уже стоит у Прозаика,
   // Оценщика, Стражей и пер-сценового Архитектора — здесь его не было.
-  let currentMaxTokens = archMaxTokens;
-  let lastErr = '';
   // Живой инцидент: автор видел «спиннер навсегда» на скелете из 47+ сцен —
   // единственный вызов callLLM во всём приложении без onToken (см. остальные
   // сайты в pipeline.js), хотя именно тут самый большой maxTokens (до 30000) и
@@ -565,56 +709,120 @@ export async function runBookArchitect(state, opts={}){
   // класс пробела, что уже чинили для Оценщика (см. evaluator-retry), только
   // здесь не хватало не ретрая, а самого факта логирования.
   startRun(null, 'Книжный архитектор');
-  for(let attempt=0; attempt<=(g.retries??2); attempt++){
-    streamedChars = 0;
-    const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens:currentMaxTokens }, onChunk);
-    // effectiveScenes — то же число, по которому считался бюджет: передаём его
-    // в валидацию, чтобы «недовоз» ловился по факту, а не на глаз.
-    const v = validateSkeleton(res.text, { expectedScenes: effectiveScenes });
-    logStep({ agent:'bookArchitect', iter:attempt+1, input:`(генерация скелета, лимит ${currentMaxTokens})`, output:res.text,
-      tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });
-    if(v.ok){
-      endRun('done');
-      // Нормализация targetWords: база = totalWords / фактич. число сцен.
-      // ЛЛМ может варьировать ±20% по событию — принимаем; за диапазон → клэмп.
-      const allScenes = v.skeleton.chapters.flatMap(ch=>ch.scenes||[]);
-      const norm = p.sceneWords>0
-        ? Math.max(300, Math.min(4000, p.sceneWords))
-        : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/Math.max(1,allScenes.length))));
-      const minW = Math.round(norm * 0.80);
-      const maxW = Math.round(norm * 1.20);
-      allScenes.forEach(sc=>{
-        const tw = Number(sc.targetWords)||0;
-        // Симметрично верхнему краю: клэмп в minW, а не в norm — иначе
-        // намеренно короткая переходная/экспозиционная сцена (промпт сам
-        // просит писать такие короче среднего) принудительно раздувалась
-        // до полного среднего объёма без предупреждения.
-        if(tw < minW) sc.targetWords = minW;
-        else if(tw > maxW) sc.targetWords = maxW;
-      });
-      return v.skeleton;
+
+  // Общий цикл повторов для обоих проходов. Раньше он был вписан прямо в тело
+  // runBookArchitect и обслуживал единственный запрос; теперь запросов много
+  // (один на список глав + по одному на пачку глав), и копировать эту логику
+  // в каждый — ровно тот класс бага «починили в одном пути, забыли в соседнем»,
+  // который в этом файле уже ловили не раз.
+  async function askWithRetries({ label, messages, maxTokens, validate, contentHint }){
+    let msgsLocal = messages.slice();
+    let limit = maxTokens;
+    let lastError = '';
+    for(let attempt=0; attempt<=(g.retries??2); attempt++){
+      const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgsLocal, maxTokens:limit }, onChunk);
+      const v = validate(res.text);
+      logStep({ agent:'bookArchitect', iter:attempt+1, input:`(${label}, лимит ${limit})`, output:res.text,
+        tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });
+      if(v.ok) return v;
+      lastError = v.error;
+      const текст = (res.text||'').trim();
+      const preview = текст.slice(0, 120).replace(/\n/g,' ');
+      if(текст.endsWith('"') || текст.endsWith(',') || !текст.endsWith('}')){
+        // Обрыв — следующей попытке нужно БОЛЬШЕ места, а не просьба «будь полнее»:
+        // при неизменном лимите она упрётся в тот же потолок.
+        limit = Math.min(200000, Math.round(limit * 1.6));
+        msgsLocal = msgsLocal.concat([{ role:'user', content:`JSON обрезан (ответ не закончен). Повтори запрос: верни ТОЛЬКО полный JSON-объект с chapters, без пояснений.` }]);
+      } else if(v.kind === 'content'){
+        // JSON пришёл целым — беда в содержании, и просьба «верни строго JSON»
+        // здесь только путает: формат был в порядке.
+        msgsLocal = msgsLocal.concat([{ role:'user', content:`Отклонено: ${v.error}. Формат JSON был в порядке — переделай СОДЕРЖАНИЕ. ${contentHint} Верни полный JSON заново.` }]);
+      } else {
+        msgsLocal = msgsLocal.concat([{ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[...]} без лишнего текста.` }]);
+      }
     }
-    lastErr = v.error;
-    const preview = (res.text||'').slice(0, 120).replace(/\n/g,' ');
-    // на ретрае — сообщаем модели что конкретно не так
-    if((res.text||'').trim().endsWith('"') || (res.text||'').trim().endsWith(',') || !(res.text||'').trim().endsWith('}')){
-      // Обрыв — значит следующей попытке нужно БОЛЬШЕ места, а не просто просьба
-      // «будь полнее»: при неизменном лимите она упрётся в тот же потолок (живой
-      // прогон: две попытки, обрубленные на 17 130 и 17 115 символах).
-      currentMaxTokens = Math.min(200000, Math.round(currentMaxTokens * 1.6));
-      msgs.push({ role:'user', content:`JSON обрезан (ответ не закончен). Повтори запрос: верни ТОЛЬКО полный JSON-объект с chapters, без пояснений. Пример начала: {"chapters":[{"title":"...` });
-    } else if(v.kind === 'content'){
-      // JSON пришёл целым — беда в содержании, и просьба «верни строго JSON»
-      // здесь только путает: формат был в порядке. Говорим модели ровно то,
-      // что она сделала не так, и чего от неё хотят вместо этого.
-      msgs.push({ role:'user', content:`Скелет отклонён: ${v.error}. Формат JSON был в порядке — переделай СОДЕРЖАНИЕ. Одинаковых названий глав быть не должно: если сюжет упирается в повтор одного и того же события, значит глав слишком много для этой истории — СОКРАТИ число глав и укрупни события, а не выдумывай новые витки того же конфликта. Каждая глава должна менять положение героя необратимо. Верни полный JSON заново.` });
-    } else {
-      msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[...]} без лишнего текста.` });
-    }
+    throw new Error(lastError || 'не удалось получить валидный ответ');
   }
-  endRun('error');
-  throw new Error(`Книжный архитектор вернул невалидный скелет: ${lastErr}`);
+
+  try{
+    // ── ПРОХОД 1: только список глав ──
+    // ~120 токенов на главу (название + дуга + одно предложение поворота).
+    // Число глав берём из уже посчитанного здесь targetScenes — отдельная
+    // копия формулы объёма сцены была бы четвёртой в файле и неминуемо
+    // разъехалась бы с остальными (ровно это и стережёт инвариант-тест).
+    const prevChapterCount = opts.previousSkeleton ? opts.previousSkeleton.chapters.length : 0;
+    const targetChaptersRun = opts.chapters || prevChapterCount || Math.max(3, Math.min(25, Math.round(targetScenes / 3.5)));
+    const outlineTokens = Math.round(Math.max(1500, targetChaptersRun * 160 + 800) * archMult);
+    const ov = await askWithRetries({
+      label: 'список глав',
+      messages: bookArchitectMessages(state, { ...opts, outlineOnly:true }),
+      maxTokens: outlineTokens,
+      validate: raw => validateOutline(raw),
+      contentHint: 'Одинаковых названий и глав-наполнителей быть не должно: если сюжет упирается в повтор, СОКРАТИ число глав и укрупни события. Вернуть меньше глав, чем запрошено, — разрешено.',
+    });
+    const outline = ov.outline;
+    opts.onOutline && opts.onOutline(outline);
+
+    // ── ПРОХОД 2: сцены по главам, пачками ──
+    // Пачку подбираем так, чтобы один ответ оставался в разумных пределах
+    // (~12 сцен): именно объём одного ответа и был причиной, по которой модель
+    // теряла из виду начало книги.
+    const сценНаГлаву = Math.max(2, Math.round(effectiveScenes / Math.max(1, outline.chapters.length)));
+    const главВПачке = Math.max(1, Math.min(6, Math.round(12 / сценНаГлаву)));
+    const собранные = new Map();
+    const доСих = [];
+    for(let from=0; from<outline.chapters.length; from+=главВПачке){
+      const to = Math.min(outline.chapters.length, from + главВПачке);
+      const номера = [];
+      for(let i=from; i<to; i++) номера.push(i+1);
+      const bv = await askWithRetries({
+        label: `сцены глав ${номера.join(', ')}`,
+        messages: bookArchitectMessages(state, { ...opts, forChapters:{ outline, from, to, doneScenes: доСих.slice(-24) } }),
+        maxTokens: Math.round(Math.max(3000, (to-from) * сценНаГлаву * perSceneTokens * 1.3) * archMult),
+        validate: raw => validateSceneBatch(raw, номера),
+        contentHint: 'Верни сцены для КАЖДОЙ перечисленной главы, с полем number.',
+      });
+      номера.forEach(n=>{
+        const scenes = bv.byNumber.get(n);
+        собранные.set(n, scenes);
+        const c = outline.chapters[n-1];
+        scenes.forEach(s=>доСих.push(`гл.${n} «${c.title}» → «${s.title}»`));
+      });
+      opts.onProgress && opts.onProgress(to, outline.chapters.length);
+    }
+
+    // ── Сборка и финальная проверка ──
+    // Собранный скелет проходит ТУ ЖЕ validateSkeleton, что и одноразовая
+    // генерация: правила про огрызки глав, дубли названий и главы-слоты должны
+    // работать одинаково, каким бы способом скелет ни получили.
+    const assembled = { chapters: outline.chapters.map((c,i)=>({
+      title: c.title, arc: c.arc, scenes: собранные.get(i+1) || [],
+    })).filter(c=>c.scenes.length) };
+    const fv = validateSkeleton(JSON.stringify(assembled), { expectedScenes: effectiveScenes });
+    if(!fv.ok) throw new Error(fv.error);
+
+    endRun('done');
+    // Нормализация targetWords: база = totalWords / фактич. число сцен.
+    const allScenes = fv.skeleton.chapters.flatMap(ch=>ch.scenes||[]);
+    const norm = p.sceneWords>0
+      ? Math.max(300, Math.min(4000, p.sceneWords))
+      : Math.max(700, Math.min(2000, Math.round((p.targetWords||80000)/Math.max(1,allScenes.length))));
+    const minW = Math.round(norm * 0.80);
+    const maxW = Math.round(norm * 1.20);
+    allScenes.forEach(sc=>{
+      const tw = Number(sc.targetWords)||0;
+      // Симметрично верхнему краю: клэмп в minW, а не в norm — иначе намеренно
+      // короткая переходная сцена принудительно раздувалась до среднего объёма.
+      if(tw < minW) sc.targetWords = minW;
+      else if(tw > maxW) sc.targetWords = maxW;
+    });
+    return fv.skeleton;
+  }catch(e){
+    endRun('error');
+    throw new Error(`Книжный архитектор вернул невалидный скелет: ${e.message}`);
+  }
 }
+
 
 // ── Точечная правка скелета (structurePatchMode) ──
 // Вместо пересборки ВСЕЙ книги (bookArchitectMessages — даже нетронутые главы

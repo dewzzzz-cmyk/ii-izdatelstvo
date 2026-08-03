@@ -1479,3 +1479,85 @@ test('содержательная ошибка скелета помечена 
   const мусор = validateSkeleton('это не json');
   assert.notEqual(мусор.kind, 'content', 'сломанный JSON — это формат, а не содержание');
 });
+
+// ── Двухпроходная генерация скелета ──
+// Скелет строился одним запросом на ~44 тыс. токенов выдачи: модель, дописывая
+// главу 13, свой текст главы 3 уже не видела. Отсюда одинаковое число сцен во
+// всех главах, витки под новыми названиями и обрывы JSON. Две попытки починить
+// это текстом промпта (1.84.0, 1.86.0) дали ноль и хуже.
+test('первый проход просит только список глав, без сцен', async () => {
+  const { bookArchitectMessages } = await import('../src/architect-book.js');
+  const state = { project:{ title:'Т', genre:'фэнтези', synopsis:'С', targetWords:80000 }, agents:{}, structure:[], bible:[] };
+  const [sys, user] = bookArchitectMessages(state, { outlineOnly:true });
+  const весь = sys.content + '\n' + user.content;
+  assert.match(user.content, /"turn"/, 'без поворота глава не проверяема на повтор');
+  assert.ok(!/"scenes"/.test(user.content), 'сцены на первом проходе не запрашиваются');
+  assert.ok(!/БРИФ СЦЕНЫ/.test(весь), 'правила брифа на этом проходе только раздувают промпт');
+  assert.match(весь, /НЕОБРАТИМОСТЬ/, 'правило повтора имеет смысл там, где виден весь список');
+  assert.match(весь, /перечитай собственный список глав/,
+    'самопроверка возможна только на коротком списке — ради этого проход и разделён');
+  assert.match(весь, /Вернуть меньше глав, чем запрошено, — разрешено/,
+    'иначе модель добивает число глав витками одного и того же');
+});
+
+test('второй проход видит весь список глав и уже написанные сцены', async () => {
+  const { bookArchitectMessages } = await import('../src/architect-book.js');
+  const state = { project:{ title:'Т', genre:'фэнтези', synopsis:'С', targetWords:80000 }, agents:{}, structure:[], bible:[] };
+  const outline = { chapters:[
+    { title:'Ящик', arc:'завязка', turn:'герой больше не может отказаться' },
+    { title:'Контора', arc:'развитие', turn:'героя перестают отпускать домой' },
+    { title:'Дно', arc:'развязка', turn:'ящик уходит на дно навсегда' },
+  ]};
+  const [sys, user] = bookArchitectMessages(state, { forChapters:{ outline, from:1, to:2, doneScenes:['гл.1 «Ящик» → «Причал»'] } });
+  assert.match(user.content, /СПИСОК ГЛАВ ВСЕЙ КНИГИ/);
+  assert.match(user.content, /Дно/, 'модель должна видеть и то, что будет ПОСЛЕ текущей пачки');
+  assert.match(user.content, /«Причал»/, 'и то, что уже написано ДО неё');
+  assert.match(user.content, /ТОЛЬКО ЭТИ ГЛАВЫ:\nГлава 2/, 'расписываем ровно запрошенную пачку');
+  assert.match(sys.content + user.content, /БРИФ СЦЕНЫ/, 'правила брифа нужны именно здесь');
+  assert.match(user.content, /"number"/, 'главы возвращаются по номеру — название уже утверждено');
+});
+
+test('список глав отбраковывается за повторы и главы-наполнители', async () => {
+  const { validateOutline } = await import('../src/architect-book.js');
+  const гл = (title, arc, turn='нечто меняется навсегда') => ({ title, arc, turn });
+
+  const ok = validateOutline(JSON.stringify({ chapters:[гл('Ящик','завязка'), гл('Контора','развитие'), гл('Дно','развязка')] }));
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.outline.chapters[0].turn, 'нечто меняется навсегда');
+
+  const дубль = validateOutline(JSON.stringify({ chapters:[
+    гл('Глава 1: Возвращение','завязка'), гл('Глава 2: Возвращение','развитие'), гл('Дно','развязка')] }));
+  assert.equal(дубль.ok, false);
+  assert.equal(дубль.kind, 'content');
+  assert.match(дубль.error, /названы одинаково/);
+
+  const слот = validateOutline(JSON.stringify({ chapters:[гл('Ящик','завязка'), гл('Кульминация','кульминация'), гл('Дно','развязка')] }));
+  assert.equal(слот.ok, false);
+  assert.match(слот.error, /имя слота структуры/);
+
+  // Половина глав без названного поворота — это главы-наполнители.
+  const пустые = validateOutline(JSON.stringify({ chapters:[
+    гл('Ящик','завязка'), гл('А','развитие',''), гл('Б','развитие',''), гл('Дно','развязка')] }));
+  assert.equal(пустые.ok, false);
+  assert.match(пустые.error, /не назван необратимый поворот/);
+});
+
+test('пачка сцен принимается по номерам и ловит пропущенную главу', async () => {
+  const { validateSceneBatch } = await import('../src/architect-book.js');
+  const сц = t => ({ title:t, brief:'б', targetWords:900, sceneType:'scene' });
+
+  const ok = validateSceneBatch(JSON.stringify({ chapters:[
+    { number:2, scenes:[сц('а'), сц('б')] },
+    { number:3, scenes:[сц('в')] },
+  ]}), [2,3]);
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.byNumber.get(2).length, 2);
+  assert.equal(ok.byNumber.get(3)[0].title, 'в');
+
+  // Глава без названия — норма для этого прохода: название уже утверждено.
+  assert.equal(validateSceneBatch(JSON.stringify({ chapters:[{ number:2, scenes:[сц('а')] }] }), [2]).ok, true);
+
+  const пропуск = validateSceneBatch(JSON.stringify({ chapters:[{ number:2, scenes:[сц('а')] }] }), [2,3]);
+  assert.equal(пропуск.ok, false);
+  assert.match(пропуск.error, /не пришли сцены для глав: 3/);
+});
