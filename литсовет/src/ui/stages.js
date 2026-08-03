@@ -13,7 +13,7 @@ import { renderDiagnostics, renderSceneAnalysis, renderAgentPipeline } from './d
 import { renderMemory } from './memory.js';
 import { renderChat } from './chat.js';
 import { summarizeScene, driftCheck, maybeRollup, capBibleSize } from '../memory.js';
-import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords, findGhostCharacters, FRAME_ARCS } from '../architect-book.js';
+import { runBookArchitect, applySkeleton, runBookArchitectPatch, applySkeletonPatch, regenerateScene, regenerateDownstream, regenerateChapter, pushSceneVersion, revertScene, revertSkeleton, runStructureEval, clampSceneTargetWords, findGhostCharacters, FRAME_ARCS, findWeakBriefs } from '../architect-book.js';
 import { chapterOf, chapterComplete, chapterClosed, needsAuthorHand, scenesOfChapter, closeChapter, isChapterLocked } from './author-control.js';
 import { exportMd, exportDocx, exportEpub, exportJson } from '../export.js';
 import { parseFile } from '../import.js';
@@ -1379,6 +1379,20 @@ export function renderStructure(els){
         ${s.illustrationsRelinked.orphaned ? '<div style="font-size:12px;margin-top:6px">Осиротевшие картинки не удалены — они оплачены и лежат в галерее на вкладке «Иллюстрации». Их можно привязать к другой сцене или удалить вручную.</div>' : ''}
         <div style="margin-top:8px"><button class="btn" id="dismissIllustRelink" style="font-size:11px;padding:2px 9px">Понятно</button></div>
       </div>` : ''}
+      ${(()=>{
+        // Брифы-пересказы. Не отбраковка и не платная проверка — просто список
+        // сцен, где герою что-то сообщают/показывают, а цены выбора в брифе нет.
+        // Именно эти сцены Прозаик пишет как сводку событий: инструкция
+        // BRIEF_CHOICE_NOTE у Архитектора есть, а проверки после генерации не было.
+        const слабые = findWeakBriefs((s.structure||[]).filter(n=>n.type==='scene'));
+        const всего = (s.structure||[]).filter(n=>n.type==='scene').length;
+        if(!слабые.length || !всего) return '';
+        return `<div style="margin-top:14px;border:1px solid var(--warn,#c9a227);border-radius:8px;padding:12px 14px;background:var(--surface-2)">
+        <div style="font-size:12px">⚠ Брифы без цены выбора: <b>${слабые.length}</b> из ${всего}. В этих сценах герою что-то сообщают, объясняют или показывают, но не сказано, чем он рискует и что теряет. Прозаик напишет их как пересказ событий.</div>
+        <div style="font-size:12px;margin-top:6px;color:var(--muted)">${слабые.slice(0,12).map(w=>esc(w.title||'без названия')).join(' · ')}${слабые.length>12?` … и ещё ${слабые.length-12}`:''}</div>
+        <div style="font-size:12px;margin-top:6px">Правится не перегенерацией всего скелета, а дописыванием в бриф одной строки: чем герой рискует, если поступит так, и чем — если иначе.</div>
+      </div>`;
+      })()}
       <div id="missingFactsBlock"></div>
 
       ${scenes.length?`<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn btn-primary" id="toWrite">К Написанию →</button></div>`:''}
