@@ -600,7 +600,13 @@ export function validateSkeleton(raw, opts={}){
 // текущей книге), помеченные полем "number". Контекстные главы, которые ей
 // показали для стыка ритма, но просили не редактировать, отфильтровываются
 // здесь же — если модель всё равно их вернула, просто игнорируем.
-export function validateSkeletonPatch(raw, allowedNumbers){
+// otherTitles — названия глав книги, которых правка НЕ касается. Точечная
+// правка видит только несколько глав и потому легко переименовывает одну из них
+// в то, что уже есть в невидимой ей части книги: тот самый виток, который
+// полная генерация теперь ловит на первом проходе, а этот путь не ловил вовсе.
+// Пути разъезжались ровно так же, как это уже случалось в файле с targetWords
+// и с проверкой ключа — поэтому проверка одна и та же функция на обоих путях.
+export function validateSkeletonPatch(raw, allowedNumbers, otherTitles){
   let j = extractJSON(raw);
   if(!j) return { ok:false, error:'не удалось распарсить JSON' };
   if(!Array.isArray(j.chapters)){
@@ -619,6 +625,16 @@ export function validateSkeletonPatch(raw, allowedNumbers){
     if(norm) chapters.push({ number, ...norm });
   }
   if(!chapters.length) return { ok:false, error:'ни одной валидной главы из запрошенных номеров' };
+  // Дубли ищем и внутри самой правки, и против остальной книги.
+  const все = chapters.concat((otherTitles||[]).map(t=>({ title:t })));
+  const дубли = findDuplicateChapterTitles(все);
+  if(дубли.length){
+    return { ok:false, kind:'content', error:`глава названа «${дубли[0].title}» — так уже называется другая глава книги` };
+  }
+  const слот = chapters.findIndex(ch => titleIsArcLabel(ch.title, ch.arc));
+  if(слот >= 0){
+    return { ok:false, kind:'content', error:`глава ${chapters[слот].number} названа «${chapters[слот].title}» — это имя слота структуры, а не название главы` };
+  }
   return { ok:true, chapters };
 }
 
@@ -937,13 +953,20 @@ export async function runBookArchitectPatch(state, opts={}){
   for(let attempt=0; attempt<=(g.retries??2); attempt++){
     const res = await callLLM({ ...llmFor(state,architectAgent), temperature:architectAgent.temp??0.6, messages:msgs, maxTokens });
     assertNotTruncated(res, 'Книжный архитектор');
-    const v = validateSkeletonPatch(res.text, affectedChapters);
+    // Названия глав, которых правка не касается: без них дубль против
+    // невидимой части книги не обнаружить.
+    const чужиеНазвания = chapterNodes.filter((_,i)=>!affectedChapters.includes(i+1)).map(c=>c.title);
+    const v = validateSkeletonPatch(res.text, affectedChapters, чужиеНазвания);
     logStep({ agent:'bookArchitectPatch', iter:attempt+1, input:`(правка глав ${affectedChapters.join(', ')}, лимит ${maxTokens})`, output:res.text,
       tokensIn:res.tokensIn, tokensOut:res.tokensOut, cost:res.cost, verdict:{ ok:v.ok, error:v.ok?undefined:v.error } });
     if(v.ok){ endRun('done'); return v.chapters; }
     lastErr = v.error;
     const preview = (res.text||'').slice(0, 120).replace(/\n/g,' ');
-    msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[{"number":...,...}]} только для глав ${affectedChapters.join(', ')}, без лишнего текста.` });
+    if(v.kind === 'content'){
+      msgs.push({ role:'user', content:`Отклонено: ${v.error}. Формат JSON был в порядке — переделай СОДЕРЖАНИЕ: дай главе название, которого в книге ещё нет, и другое событие. Верни JSON заново.` });
+    } else {
+      msgs.push({ role:'user', content:`Ответ невалиден (${v.error}). Начало ответа: «${preview}». Верни СТРОГО JSON {"chapters":[{"number":...,...}]} только для глав ${affectedChapters.join(', ')}, без лишнего текста.` });
+    }
   }
   endRun('error');
   throw new Error(`Архитектор (точечная правка) вернул невалидный ответ: ${lastErr}`);

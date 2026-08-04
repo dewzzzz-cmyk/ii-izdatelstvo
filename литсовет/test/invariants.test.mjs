@@ -1561,3 +1561,31 @@ test('пачка сцен принимается по номерам и лови
   assert.equal(пропуск.ok, false);
   assert.match(пропуск.error, /не пришли сцены для глав: 3/);
 });
+
+// Точечная правка видит только несколько глав и потому легко переименовывает
+// одну из них в то, что уже есть в невидимой ей части книги. Полная генерация
+// такой виток ловит на первом проходе (validateOutline), а этот путь не ловил
+// вовсе — пути разъехались ровно так же, как это уже случалось с targetWords.
+test('точечная правка не может продублировать название чужой главы', async () => {
+  const { validateSkeletonPatch } = await import('../src/architect-book.js');
+  const сц = t => ({ title:t, brief:'б', targetWords:900 });
+  const ответ = JSON.stringify({ chapters:[{ number:5, title:'Глава 5: Возвращение в Пустошь', arc:'развитие', scenes:[сц('а')] }] });
+
+  const чужие = ['Глава 1: Ящик', 'Глава 9: Возвращение в Пустошь', 'Глава 12: Дно'];
+  const плохо = validateSkeletonPatch(ответ, [5], чужие);
+  assert.equal(плохо.ok, false, 'дубль против невидимой части книги должен ловиться');
+  assert.equal(плохо.kind, 'content');
+  assert.match(плохо.error, /так уже называется другая глава/);
+
+  const хорошо = validateSkeletonPatch(ответ, [5], ['Глава 1: Ящик', 'Глава 12: Дно']);
+  assert.equal(хорошо.ok, true, хорошо.error);
+  assert.equal(хорошо.chapters[0].number, 5);
+
+  // Обратная совместимость: без списка чужих названий работает как раньше.
+  assert.equal(validateSkeletonPatch(ответ, [5]).ok, true);
+
+  const слот = validateSkeletonPatch(
+    JSON.stringify({ chapters:[{ number:5, title:'Кульминация', arc:'кульминация', scenes:[сц('а')] }] }), [5], []);
+  assert.equal(слот.ok, false);
+  assert.match(слот.error, /имя слота структуры/);
+});
