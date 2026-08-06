@@ -24,6 +24,15 @@ const path = require('node:path');
 const pkg = require('./package.json');
 
 const PORT = process.env.PORT || 8788;
+// Интерфейс, на котором слушаем. По умолчанию все — так требует Railway
+// (контейнер должен принимать соединения снаружи). Но на домашнем компьютере
+// это означает две неприятности сразу: Windows при первом запуске показывает
+// запрос брандмауэра «Разрешить доступ?», а если разрешить — книги автора и
+// открытый прокси к его оплаченному API становятся доступны любому в той же
+// сети (кафе, коворкинг, гостиница). Локальная установка ставит
+// HOST=127.0.0.1 и получает и то и другое: ни запроса брандмауэра, ни
+// доступа извне.
+const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = __dirname;
 // DATA_DIR указывает на смонтированный persistent volume (Railway и т.п.) —
 // без него чекпоинты и серверная синхронизация проектов жили в обычной
@@ -898,6 +907,6 @@ http.createServer(async (req,res)=>{
   if(req.method==='GET' && req.url==='/api/version') return send(res,200,JSON.stringify({name:pkg.name,version:pkg.version}),'application/json; charset=utf-8');
   if(req.method==='GET') return serveStatic(req,res);
   send(res,405,'Method not allowed');
-}).listen(PORT, ()=>{
+}).listen(PORT, HOST, ()=>{
   console.log(`Литсовет → http://localhost:${PORT}`);
 });

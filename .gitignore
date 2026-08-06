@@ -8,3 +8,7 @@ data/
 
 .worktrees/
 .superpowers/
+
+# промежуточная сборка установщика
+литсовет/installer/pkg/
+литсовет/installer/*.zip
