@@ -269,6 +269,12 @@ async function handleGenerate(req, res){
     const baseURL = (b.baseURL||'https://api.deepseek.com').replace(/\/+$/,'');
     const model = b.model || 'deepseek-chat';
     if(!apiKey) return send(res, 400, 'NO_KEY: не задан API-ключ (откройте настройки).');
+    // HTTP-заголовок обязан быть Latin-1 (коды 0–255); настоящий API-ключ
+    // всегда в этот диапазон укладывается. Если нет — в поле вписан не ключ,
+    // а что-то другое (случайно вставленный русский текст и т.п.), и без этой
+    // проверки fetch() падает с нечитаемым «Cannot convert argument to a
+    // ByteString» вместо понятной причины.
+    if(/[^ -ÿ]/.test(apiKey)) return send(res, 400, 'BAD_KEY: в поле API-ключа не сам ключ, а какой-то другой текст (есть кириллица или другие не-латинские символы). Откройте Настройки и вставьте ключ заново.');
     if(isAnthropicURL(baseURL)) return handleAnthropicGenerate(b, res, apiKey, baseURL, model, wantStream);
     let up;
     try{
