@@ -3,7 +3,7 @@ chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
 echo.
-echo  Litsovet - Deploy
+echo  II-Izdatelstvo - Deploy
 echo.
 
 echo [1/4] Node.js...
@@ -29,9 +29,9 @@ exit /b 1
 :check_files
 echo [2/4] Files...
 if not exist server.js  goto missing
+if not exist app.js     goto missing
 if not exist index.html goto missing
 if not exist styles.css goto missing
-if not exist src\state.js goto missing
 echo      OK
 goto check_folder
 
@@ -42,25 +42,25 @@ exit /b 1
 
 :check_folder
 echo [3/4] Folders...
-if not exist data mkdir data
+if not exist backups mkdir backups
 echo      OK
 
-echo [4/4] Port 8788...
-netstat -ano 2>nul | findstr ":8788 " | findstr "LISTENING" >nul 2>&1
+echo [4/4] Port 8787...
+netstat -ano 2>nul | findstr ":8787 " | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 (
     echo      Already running!
-    start "" "http://localhost:8788"
+    start "" "http://localhost:8787"
     pause
     exit /b 0
 )
 echo      OK
 
 echo.
-echo  URL: http://localhost:8788
+echo  URL: http://localhost:8787
 echo  DO NOT CLOSE THIS WINDOW!
 echo.
 
-start "" cmd /c "timeout /t 2 >nul 2>&1 & start http://localhost:8788"
+start "" cmd /c "timeout /t 2 >nul 2>&1 & start http://localhost:8787"
 node server.js
 
 echo  Server stopped.
