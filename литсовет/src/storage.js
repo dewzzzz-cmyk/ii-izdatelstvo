@@ -203,6 +203,33 @@ export async function pushToServer(state, precomputedJson){
   }catch(e){ console.warn('sync push failed',e); return false; }
 }
 
+// ── История ревизий проекта на сервере ──
+// Сервер держит несколько предыдущих ревизий каждого проекта (см. BACKUP_DIR
+// в server.js). Появились после того, как обычное сохранение стёрло 12 глав и
+// текст двух готовых сцен без всякой возможности отката.
+export async function listBackups(id){
+  try{
+    const r = await fetch('/api/backups?id='+encodeURIComponent(id));
+    if(!r.ok) return [];
+    const d = await r.json();
+    return d.backups || [];
+  }catch{ return []; }
+}
+
+// Возвращает {ok, rev} либо {ok:false, error}. Восстановление создаёт НОВУЮ
+// ревизию поверх текущей, а не откатывает счётчик назад: иначе другие открытые
+// вкладки получили бы конфликт ревизий и не смогли сохраниться.
+export async function restoreBackup(id, file){
+  try{
+    const r = await fetch('/api/backup/restore', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ id, file }),
+    });
+    if(!r.ok) return { ok:false, error:'HTTP '+r.status+': '+(await r.text().catch(()=>'')) };
+    return await r.json();
+  }catch(e){ return { ok:false, error:e.message }; }
+}
+
 export async function deleteFromServer(id){
   try{ await fetch('/api/sync/'+encodeURIComponent(id),{method:'DELETE'}); }catch{}
 }

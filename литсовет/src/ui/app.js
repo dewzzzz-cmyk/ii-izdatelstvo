@@ -7,7 +7,7 @@ import { renderDiagnostics } from './diagnostics.js';
 import { renderIllustrations } from './illustrations.js';
 import { renderWorld } from './world.js';
 import { renderPublish } from './publish.js';
-import { exportCheckpoint, listProjects, listServerProjects, deleteProject, deleteFromServer } from '../storage.js';
+import { exportCheckpoint, listProjects, listServerProjects, deleteProject, deleteFromServer , listBackups, restoreBackup } from '../storage.js';
 import { initTooltips } from './tooltips.js';
 import { callLLM } from '../llm.js';
 import { MODEL_OPTIONS } from '../imagegen.js';
@@ -229,6 +229,7 @@ async function openSettings(){
               <span class="proj-item-date">${escAttr(fmtProjDate(p.updated))}</span>
               ${p.onServer?'<span class="proj-item-badge">☁</span>':''}
             </button>
+            ${p.onServer?`<button class="btn proj-item-hist" data-pid="${escAttr(p.id)}" data-title="${escAttr(p.title||'(без названия)')}" title="Предыдущие версии книги на сервере" style="padding:2px 7px;flex-shrink:0">🕘</button>`:''}
             <button class="btn proj-item-del" data-pid="${escAttr(p.id)}" data-title="${escAttr(p.title||'(без названия)')}" title="Удалить книгу безвозвратно" style="padding:2px 7px;flex-shrink:0">🗑</button>
           </div>`).join('')}
       </div>
@@ -428,6 +429,36 @@ async function openSettings(){
       btn.disabled = true; btn.textContent = '⏳ Загрузка…';
       const ok = await switchProject(pid);
       if(ok){ close(); } else { btn.textContent = '⚠ Не найден'; btn.disabled=false; }
+    };
+  });
+  // Предыдущие версии книги. Сервер держит несколько последних ревизий (см.
+  // BACKUP_DIR в server.js) — до этого любое сохранение было необратимым, и
+  // случайная перегенерация или давно открытая вкладка стирали написанные
+  // главы насовсем. Список показываем прямо в настройках, рядом с книгой.
+  document.getElementById('projList')?.querySelectorAll('.proj-item-hist').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const pid = btn.dataset.pid;
+      const title = btn.dataset.title || '(без названия)';
+      btn.disabled = true; const было = btn.textContent; btn.textContent = '⏳';
+      const копии = await listBackups(pid);
+      btn.disabled = false; btn.textContent = было;
+      if(!копии.length){ alert(`Для книги «${title}» сохранённых версий пока нет.\n\nОни появляются при каждом сохранении: сервер откладывает предыдущую версию перед тем, как записать новую.`); return; }
+      const когда = ts => new Date(ts).toLocaleString('ru', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+      const мб = b => (b/1024/1024).toFixed(2)+' МБ';
+      const строки = копии.map((b,i)=>`${i+1}) ревизия ${b.rev} — ${когда(b.ts)}, ${мб(b.size)}`).join('\n');
+      const ответ = prompt(
+        `Предыдущие версии книги «${title}»:\n\n${строки}\n\n`+
+        `Введите номер, чтобы вернуть книгу к этой версии.\n`+
+        `Текущее содержимое при этом тоже сохранится в историю — откат можно будет отменить.`, '');
+      const n = Number(ответ);
+      if(!ответ || !Number.isFinite(n) || n < 1 || n > копии.length) return;
+      const цель = копии[n-1];
+      if(!confirm(`Вернуть «${title}» к ревизии ${цель.rev} от ${когда(цель.ts)}?`)) return;
+      const res = await restoreBackup(pid, цель.file);
+      if(!res?.ok){ alert('Не удалось восстановить: '+(res?.error||'неизвестная ошибка')); return; }
+      // Локальная копия в IndexedDB устарела — перечитываем книгу с сервера.
+      if(pid === curId){ await switchProject(pid); close(); }
+      else { alert(`Готово: «${title}» возвращена к ревизии ${цель.rev}.`); await openSettings(); }
     };
   });
   // Удаление книги — безвозвратно, локально (IndexedDB) и с сервера. Если

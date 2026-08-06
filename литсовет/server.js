@@ -36,8 +36,24 @@ const SYNC_DIR = path.join(DATA_DIR, 'data', 'projects');
 // а не рядом с проектами: rebuildSyncIndex() сканирует SYNC_DIR по маске
 // *.json и принял бы дамп конфликта за ещё один проект с тем же id.
 const CONFLICT_DIR = path.join(DATA_DIR, 'data', 'conflicts');
+// Предыдущие ревизии проектов. До этого сервер писал новую ревизию ПОВЕРХ
+// старой и не оставлял ничего: копия сохранялась только при конфликте ревизий
+// (см. handleSyncSave), а обычное сохранение было необратимым. Живой инцидент:
+// скрипт подменил структуру проекта и сохранил — 12 глав и текст двух готовых
+// сцен исчезли безвозвратно, потому что откатываться было некуда: ни
+// чекпоинтов, ни истории версий, ни резервной копии. Тот же исход даёт давно
+// открытая вкладка, обрыв посреди прогона или «перегенерировать» не на той
+// книге. Теперь перед каждой перезаписью предыдущее содержимое уезжает сюда.
+const BACKUP_DIR = path.join(DATA_DIR, 'data', 'backups');
+// Сколько ревизий держим на проект. Книга бывает в несколько МБ (реальный
+// проект сессии — 10 МБ), поэтому глубина маленькая, а сверху ещё общий потолок
+// по объёму папки: место на volume ограничено, и бэкапы не должны вытеснить
+// сами проекты.
+const BACKUPS_PER_PROJECT = 5;
+const BACKUP_DIR_LIMIT = 300 * 1024 * 1024;
 ensureDir(SYNC_DIR);
 ensureDir(CONFLICT_DIR);
+ensureDir(BACKUP_DIR);
 
 // Страховка: без этого необработанная ошибка в любом асинхронном обработчике
 // (оборванное клиентом стриминг-соединение, гонка res.writeHead/res.end и т.п.)
@@ -592,6 +608,51 @@ async function handleAnalyzeImage(req, res){
 
 function safeFile(name){ return (name||'').replace(/[/\\]/g,'').replace(/[^a-zA-Zа-яА-Я0-9_.-]/g,'_'); }
 
+// ── Резервные копии ревизий ──
+// Имя: {id}.r{rev}.{ts}.json — ревизия нужна человеку («верни то, что было до
+// перегенерации»), метка времени разводит копии, если ревизия почему-то
+// повторилась (пересобранный индекс, ручная правка файла на диске).
+function backupName(id, rev){ return `${safeFile(id)}.r${rev||0}.${Date.now()}.json`; }
+function parseBackupName(f){
+  const m = f.match(/^(.+)\.r(\d+)\.(\d+)\.json$/);
+  return m ? { id:m[1], rev:Number(m[2]), ts:Number(m[3]), file:f } : null;
+}
+function listBackups(id){
+  let files = [];
+  try{ files = fs.readdirSync(BACKUP_DIR); }catch{ return []; }
+  const want = id ? safeFile(id) : null;
+  return files.map(parseBackupName).filter(Boolean)
+    .filter(b => !want || b.id === want)
+    .map(b => { try{ b.size = fs.statSync(path.join(BACKUP_DIR,b.file)).size; }catch{ b.size = 0; } return b; })
+    .sort((a,b)=> b.ts - a.ts);
+}
+// Чистка идёт в два прохода: сначала глубина по проекту, потом общий потолок
+// объёма. Без второго книга на 10 МБ съела бы volume за десяток сохранений, а
+// упавший на нехватке места сервер — это потеря уже всех проектов, а не одного.
+function pruneBackups(id){
+  try{
+    listBackups(id).slice(BACKUPS_PER_PROJECT).forEach(b=>{
+      try{ fs.unlinkSync(path.join(BACKUP_DIR, b.file)); }catch{}
+    });
+    const все = listBackups(null).sort((a,b)=> a.ts - b.ts);   // старые первыми
+    let сумма = все.reduce((n,b)=>n+b.size, 0);
+    for(const b of все){
+      if(сумма <= BACKUP_DIR_LIMIT) break;
+      try{ fs.unlinkSync(path.join(BACKUP_DIR, b.file)); сумма -= b.size; }catch{}
+    }
+  }catch{}
+}
+// Копия ДО перезаписи. Никогда не роняет сохранение: потерять новую ревизию
+// из-за сбоя резервного копирования было бы хуже, чем остаться без копии.
+function backupBeforeWrite(id, fp, rev){
+  try{
+    if(!fs.existsSync(fp)) return;
+    ensureDir(BACKUP_DIR);
+    fs.copyFileSync(fp, path.join(BACKUP_DIR, backupName(id, rev)));
+    pruneBackups(id);
+  }catch(e){ console.error('backup failed', id, e.message); }
+}
+
 // ── Синхронизация проектов между устройствами ──
 // Данные хранятся в ./data/projects/{id}.json
 // Без Railway Volume сбрасываются при рестарте контейнера (настройте Volume на /app/data)
@@ -687,6 +748,8 @@ function handleSyncSave(req, res, id){
         try{ writeFileAtomic(path.join(CONFLICT_DIR, safeFile(id)+'.'+Date.now()+'.json'), raw); }catch{}
         return send(res,409,JSON.stringify({error:'REV_CONFLICT', serverRev:existingRev, clientRev}),'application/json; charset=utf-8');
       }
+      // Копия предыдущей ревизии — ДО того, как она перестанет существовать.
+      backupBeforeWrite(id, fp, existingRev);
       parsed.rev = existingRev + 1;
       const out = JSON.stringify(parsed);
       // Атомарно (см. writeFileAtomic): это единственная точка, где на диск
@@ -696,6 +759,57 @@ function handleSyncSave(req, res, id){
       writeSyncIndex(idx);
       send(res,200,JSON.stringify({ok:true, rev:parsed.rev}),'application/json; charset=utf-8');
     }catch(e){ send(res,500,'WRITE_ERROR: '+e.message); }
+  });
+}
+
+// GET /api/backups?id=… — какие ревизии есть. Отдаём метаданные, не содержимое:
+// список открывается ради выбора, а файл может весить мегабайты.
+function handleBackupList(req, res){
+  const u = new URL(req.url, 'http://x');
+  const id = u.searchParams.get('id') || '';
+  if(!id) return send(res,400,'NO_ID');
+  const list = listBackups(id).map(b=>({ rev:b.rev, ts:b.ts, size:b.size, file:b.file }));
+  send(res,200,JSON.stringify({ ok:true, backups:list }),'application/json; charset=utf-8');
+}
+
+// GET /api/backup?file=… — содержимое одной копии.
+function handleBackupRead(req, res){
+  const u = new URL(req.url, 'http://x');
+  const file = safeFile(u.searchParams.get('file') || '');
+  if(!file || !parseBackupName(file)) return send(res,400,'BAD_FILE');
+  const fp = path.join(BACKUP_DIR, file);
+  if(!fp.startsWith(BACKUP_DIR)) return send(res,403,'FORBIDDEN');
+  try{ send(res,200,fs.readFileSync(fp,'utf8'),'application/json; charset=utf-8'); }
+  catch{ send(res,404,'NOT_FOUND'); }
+}
+
+// POST /api/backup/restore {id, file} — вернуть проект к сохранённой ревизии.
+// Текущее содержимое перед этим тоже уходит в копию: откат не должен быть
+// необратим сам по себе — иначе мы просто меняем одну потерю на другую.
+function handleBackupRestore(req, res){
+  readBody(req, res, 1e6, (raw)=>{
+    try{
+      const { id, file } = JSON.parse(raw||'{}');
+      const имя = safeFile(file||'');
+      const мета = parseBackupName(имя);
+      if(!id || !мета) return send(res,400,'BAD_REQUEST');
+      if(мета.id !== safeFile(id)) return send(res,400,'ID_MISMATCH');
+      const src = path.join(BACKUP_DIR, имя);
+      const fp = path.join(SYNC_DIR, safeFile(id)+'.json');
+      if(!src.startsWith(BACKUP_DIR) || !fp.startsWith(SYNC_DIR)) return send(res,403,'FORBIDDEN');
+      const данные = JSON.parse(fs.readFileSync(src,'utf8'));
+      let idx = readSyncIndex(); if(!idx) idx = rebuildSyncIndex();
+      const текущаяRev = idx[id]?.rev || 0;
+      backupBeforeWrite(id, fp, текущаяRev);
+      // Ревизию продолжаем вперёд, а не откатываем назад: иначе открытые
+      // вкладки с более новым rev получат REV_CONFLICT и не смогут сохраниться.
+      данные.rev = текущаяRev + 1;
+      данные.id = id;
+      writeFileAtomic(fp, JSON.stringify(данные));
+      idx[id] = indexEntry(данные);
+      writeSyncIndex(idx);
+      send(res,200,JSON.stringify({ ok:true, rev:данные.rev, восстановлено:мета.rev }),'application/json; charset=utf-8');
+    }catch(e){ send(res,500,'RESTORE_ERROR: '+e.message); }
   });
 }
 
@@ -777,6 +891,10 @@ http.createServer(async (req,res)=>{
     if(req.method==='DELETE') return handleSyncDelete(req,res,id);
   }
   if(req.method==='GET' && req.url==='/api/sync') return handleSyncList(req,res);
+  // Резервные копии ревизий проекта
+  if(req.method==='GET'  && req.url.startsWith('/api/backups'))        return handleBackupList(req,res);
+  if(req.method==='POST' && req.url==='/api/backup/restore')           return handleBackupRestore(req,res);
+  if(req.method==='GET'  && req.url.startsWith('/api/backup?'))        return handleBackupRead(req,res);
   if(req.method==='GET' && req.url==='/api/version') return send(res,200,JSON.stringify({name:pkg.name,version:pkg.version}),'application/json; charset=utf-8');
   if(req.method==='GET') return serveStatic(req,res);
   send(res,405,'Method not allowed');
