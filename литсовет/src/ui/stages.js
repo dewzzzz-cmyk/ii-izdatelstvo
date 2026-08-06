@@ -29,6 +29,7 @@ import { runBetaRead, runChekhovCheck, runCriticReview, canSuggestTitles, sugges
          hasWorldDepthFacts, runWorldDepthCheck, hasCharactersToCheck, runFlatCharacterCheck,
          passivityIsSystemic } from '../bookreview.js';
 import { extractCraftSignature, detectRepeatingHumorPattern, dominantExpositionChannel } from '../craftsignals.js';
+import { captureAuthorEdit, authorEditsStats } from '../authoredits.js';
 import { GENRES, ERAS, AGE_GROUPS, ageSceneWords, genresOf, MAX_GENRES } from '../genres.js';
 import { suggestMissingWorldFacts, suggestWorldFacts } from '../world.js';
 import { saveUploadedItem, removeCover, coverHasBakedAuthor } from '../illustrations.js';
@@ -1733,6 +1734,15 @@ export function renderWrite(els){
       ${(()=>{ const illust=illustrationForScene(s, scene.id); return illust?`<img class="scene-thumb" src="${illust}" alt="Иллюстрация сцены" data-tip="Иллюстрация сцены — клик открывает в полный размер" id="sceneThumb">`:''; })()}
       ${scene.stale?'<span class="stale-badge" title="сцена выше изменилась — проверьте, не противоречит ли">⚠ возможно устарела</span>':''}
       ${scene.handDone?'<span class="hand-badge" title="абзац переписан автором">✍ рука автора</span>':''}
+      ${(()=>{
+        // Сбор правок невидим для автора, а невидимая механика — это механика,
+        // в которую не верят и которую не используют. Показываем счётчик прямо
+        // рядом с отметкой «рука автора»: сколько его исправлений уже уходит
+        // Прозаику как образец вкуса.
+        const st = authorEditsStats(getState());
+        if(!st.всего) return '';
+        return `<span class="hand-badge" title="Ваши правки идут Прозаику как образец: что вы вычёркиваете и чем заменяете. Учитываются последние 6 при написании каждой новой сцены.">📝 учтено правок: ${st.всего} (сцен: ${st.сцен})</span>`;
+      })()}
       ${/* 0.6 → 0.7: ровно тот же порог, по которому САМ пайплайн считает сцену
             «заметно короче цели» (tooShort в pipeline.js) и начинает глушить
             команды на сокращение. Раньше значения расходились, и в полосе
@@ -1872,7 +1882,14 @@ export function renderWrite(els){
     // Обнуляем оценку, только если текст на выходе реально отличается от снимка —
     // иначе клик в редактор + случайная правка, отменённая тем же Ctrl+Z до blur,
     // молча стирала действующую оценку сцены без единого фактического изменения.
-    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; if(scene.text!==editStartText){ scene.lastEval=null; scene.flags={}; } scene._dirty=false; save(); } });
+    edEl.addEventListener('blur', ()=>{ if(scene._dirty){ scene.words=(scene.text.match(/\S+/g)||[]).length; if(scene.text!==editStartText){ scene.lastEval=null; scene.flags={};
+      // Правка автора — единственный надёжный сигнал качества в этой цепочке,
+      // и до сих пор он выбрасывался: Оценщик судил, Стражи придирались, а то,
+      // что автор фактически исправил своей рукой, не доходило ни до кого.
+      // Ловим здесь, потому что именно тут уже есть снимок «до» и проверка,
+      // что текст реально изменился.
+      try{ captureAuthorEdit(getState(), scene, editStartText, scene.text); }catch(e){ console.warn('authorEdit capture failed', e); }
+    } scene._dirty=false; save(); } });
     initSelectionMenu(edEl, scene, els);
   }
   if(scene.text && _edReviewOn) bindEditorMarks(edEl, scene, els);

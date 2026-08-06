@@ -1632,3 +1632,94 @@ test('скелет без развязки отбраковывается', asyn
   assert.equal(validateSkeleton(JSON.stringify({ chapters:[гл('А','завязка'), гл('Б','развязка')] })).ok, true,
     'на двух главах о полной арке говорить нечего');
 });
+
+// ── Модули должны реально грузиться ──
+// `node --check` в этом проекте НЕ ловит битые импорты: в package.json нет
+// "type":"module", файл разбирается как CommonJS и синтаксис ES-модулей
+// проверяется вхолостую. Живой случай: строку `import … from './authoredits.js'`
+// вставило ВНУТРЬ многострочного импорта genres.js — `node --check` сказал OK,
+// а приложение в браузере не поднялось бы вообще. Единственная надёжная
+// проверка — попытаться модуль импортировать.
+test('все модули src/ импортируются без ошибок', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const url = await import('node:url');
+  const корень = path.resolve('src');
+  const файлы = [
+    ...fs.readdirSync(корень).filter(f=>f.endsWith('.js')).map(f=>path.join(корень,f)),
+    ...fs.readdirSync(path.join(корень,'ui')).filter(f=>f.endsWith('.js')).map(f=>path.join(корень,'ui',f)),
+  ];
+  const сломаны = [];
+  for(const f of файлы){
+    try{ await import(url.pathToFileURL(f).href); }
+    catch(e){
+      // Модули интерфейса при загрузке трогают DOM — это не ошибка разбора.
+      if(/document|window|indexedDB|localStorage|navigator/.test(e.message)) continue;
+      сломаны.push(path.basename(f) + ': ' + e.message.split('\n')[0]);
+    }
+  }
+  assert.deepEqual(сломаны, [], 'модули не грузятся');
+});
+
+// ── Авторские правки как сигнал качества ──
+// Оценщик сцене по брифу С выбором дал 7,0, а по брифу БЕЗ выбора — 7,3, и
+// ставит одну и ту же шестёрку за «Свежесть» нашей прозе, Чехову и Бунину.
+// Настоящий критерий у автора есть — он просто выбрасывался.
+test('правка автора превращается в пару «было/стало»', async () => {
+  const { captureAuthorEdit, authorEditsBlock, diffАбзацы } = await import('../src/authoredits.js');
+  const было = 'Он очень сильно расстроился и долго не мог успокоиться.\n\nЗа окном шёл дождь.';
+  const стало = 'Он три раза перечитал одну и ту же строку.\n\nЗа окном шёл дождь.';
+  const state = { memory:{} };
+  const n = captureAuthorEdit(state, { id:'s1', title:'Сцена' }, было, стало);
+  assert.equal(n, 1, 'изменённый абзац — одна пара; нетронутый в счёт не идёт');
+  const [пара] = state.memory.authorEdits;
+  assert.match(пара.было, /расстроился/);
+  assert.match(пара.стало, /три раза перечитал/);
+
+  const блок = authorEditsBlock(state);
+  assert.match(блок, /АВТОР УЖЕ ПРАВИЛ ЗА ТОБОЙ/);
+  assert.match(блок, /Перенимай ПРИЁМ/, 'иначе Прозаик скопирует чужую фразу дословно');
+
+  // Выброшенный абзац — тоже сигнал, и притом сильный.
+  const s2 = { memory:{} };
+  captureAuthorEdit(s2, { id:'s2' }, 'Это был очень длинный и совершенно лишний абзац с объяснением того, что и так понятно.\n\nОстаток.', 'Остаток.');
+  assert.match(authorEditsBlock(s2), /ВЫБРОСИЛ этот абзац целиком/);
+});
+
+test('опечатки и отсутствие правок не засоряют промпт', async () => {
+  const { captureAuthorEdit, authorEditsBlock } = await import('../src/authoredits.js');
+  const state = { memory:{} };
+  // Одна буква — это опечатка, а не урок вкуса.
+  assert.equal(captureAuthorEdit(state, { id:'s' },
+    'Матвей нащупал в иле металлический ящик без опознавательных знаков.',
+    'Матвей нащупал в иле металличeский ящик без опознавательных знаков.'), 0);
+  assert.equal(captureAuthorEdit(state, { id:'s' }, 'Текст.', 'Текст.'), 0, 'текст не менялся');
+  assert.equal(captureAuthorEdit(state, { id:'s' }, '', 'Новый текст.'), 0, 'первая запись сцены — не правка');
+  assert.equal(authorEditsBlock(state), '', 'пустая история не должна давать блок в промпт');
+});
+
+test('история правок не растёт бесконечно', async () => {
+  const { captureAuthorEdit } = await import('../src/authoredits.js');
+  const state = { memory:{} };
+  for(let i=0;i<60;i++){
+    captureAuthorEdit(state, { id:'s'+i }, `Он почувствовал сильное волнение номер ${i}.`, `Он сжал перила номер ${i}.`);
+  }
+  assert.ok(state.memory.authorEdits.length <= 40, 'кап не сработал: '+state.memory.authorEdits.length);
+  // Держим ПОСЛЕДНИЕ — вкус автора свежее важнее.
+  assert.match(state.memory.authorEdits.at(-1).было, /номер 59/);
+});
+
+test('правки автора доезжают до Прозаика и не режутся бюджетом', async () => {
+  const { buildSceneContext } = await import('../src/context.js');
+  const { captureAuthorEdit } = await import('../src/authoredits.js');
+  const state = { project:{ title:'Т', genre:'детектив', synopsis:'С' }, style:{}, voice:{}, bible:[],
+                  characters:[], structure:[], memory:{}, global:{ budgetTokens: 4000 } };
+  captureAuthorEdit(state, { id:'s1', title:'Ночная смена' },
+    'Зимин ощутил смутную тревогу по поводу происходящего.',
+    'Зимин трижды пересчитал ключи на связке и всё равно сбился.');
+  const ctx = buildSceneContext(state, { id:'s2', title:'Сцена', brief:'бриф' }, {});
+  const промпт = ctx.messages.map(m=>m.content).join('\n');
+  assert.match(промпт, /ПРАВКИ АВТОРА/);
+  assert.match(промпт, /трижды пересчитал ключи/, 'без этого правка автора никуда не влияет');
+  assert.ok(ctx.layers.some(l=>l.name==='authorEdits'), 'слой должен быть виден в диагностике');
+});

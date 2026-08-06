@@ -10,6 +10,7 @@ import { charNamesMatch, effectiveRules } from './state.js';
 import { genreToneNote, genreJudgeNote, humorLevelNote,
          ageProseNote, ageContentNote, ageJudgeNote,
          genresOf, multiGenreNote } from './genres.js';
+import { authorEditsBlock } from './authoredits.js';
 
 const SEP = '\n\n';
 
@@ -87,6 +88,17 @@ export function buildSceneContext(state, scene, opts={}){
   // снова всплывёт и придётся дорабатывать сцену по кругу.
   const observed = (style.observed||[]).filter(o=>!o.dismissed && o.count>=2).sort((a,b)=>b.count-a.count).slice(0,5);
   if(observed.length) layers.push({ name:'observed', text:'=== УЖЕ ЗАМЕЧАЛОСЬ В ЭТОЙ КНИГЕ (постарайся не повторять) ===\n'+observed.map(o=>'— '+o.category).join('\n') });
+
+  // 1c-бис. Что автор ПЕРЕПИСАЛ своей рукой в предыдущих сценах. Стоит сразу
+  // после правил автора и наблюдаемых претензий, и это не случайно: правила
+  // автор объявил заранее, наблюдения собрал Оценщик, а здесь — то, что автор
+  // фактически сделал руками, увидев готовый текст. Из трёх источников этот
+  // самый достоверный, и до сих пор он единственный, который никуда не шёл.
+  // fixed:true — режется в последнюю очередь: остальные слои можно ужать, но
+  // вкус автора обязан доехать целиком, иначе Прозаик снова напишет то, что
+  // автор уже один раз вычеркнул, и заставит его править то же самое.
+  const editsBlock = authorEditsBlock(state, 6);
+  if(editsBlock) layers.push({ name:'authorEdits', text:'=== ПРАВКИ АВТОРА ===\n'+editsBlock, fixed:true });
 
   // 1d. Открытые сюжетные линии (чеховские ружья без развязки) — копится в
   // closeChapter() (author-control.js) на каждой границе главы. Мягкий совет,
